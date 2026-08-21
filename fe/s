@@ -1,0 +1,3 @@
+#!/bin/bash
+# Shorthand for serve.sh — keeps the port flag in one place.
+exec "$(dirname "$0")/serve.sh" "$@"
