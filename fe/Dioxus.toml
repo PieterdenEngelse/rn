@@ -1,0 +1,11 @@
+[application]
+name = "fe"
+
+[web.app]
+title = "rn"
+base_path = "/"
+
+[web.watcher]
+watch_path = ["src", "assets"]
+reload_html = true
+index_on_404 = true

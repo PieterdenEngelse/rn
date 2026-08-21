@@ -1,0 +1,14 @@
+{
+  "name": "rn-fe",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "css:build": "tailwindcss -i ./assets/styling/index.css -o ./assets/styling/output.css --minify",
+    "css:watch": "tailwindcss -i ./assets/styling/index.css -o ./assets/styling/output.css --watch"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.1.14",
+    "daisyui": "^5.0.0",
+    "tailwindcss": "^4.1.14"
+  }
+}

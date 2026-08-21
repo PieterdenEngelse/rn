@@ -1,0 +1,15 @@
+@import "tailwindcss";
+@plugin "daisyui";
+
+/* Explicit content scope — Tailwind v4 scans these for class names.
+ * Keep it tight so it never walks target/ or node_modules. */
+@source "../../src";
+@source "../../index.html";
+
+/* Enable class-based dark mode for Tailwind v4 */
+@custom-variant dark (&:where(.dark &));
+
+/* DaisyUI theme configuration — dark only. The app is dark-only by design. */
+@theme {
+  --daisyui-themes: dark;
+}
