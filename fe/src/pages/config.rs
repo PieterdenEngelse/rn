@@ -29,7 +29,6 @@ pub fn Config() -> Element {
                         supervised: resp.supervised,
                         reload,
                     }
-                    RuntimeBoard { effective: resp.effective.clone() }
                     ParamBoards { resp: resp.clone(), reload }
                     ProcessPanel { reload }
                 },
@@ -96,7 +95,41 @@ fn ParamBoards(resp: ParamsResponse, reload: Signal<u32>) -> Element {
 
     let params = resp.params.clone();
 
+    // Which runtime runs the app is a different question from how that runtime
+    // is tuned, so it gets its own section rather than sitting between Memory
+    // and Network. The measured state sits beside the controls that set it.
+    let runtime_rows: Vec<RuntimeParam> =
+        params.iter().filter(|p| p.category == "runtime").cloned().collect();
+    let tuning: Vec<String> = categories.into_iter().filter(|c| c != "runtime").collect();
+    let runtime_rows_empty = runtime_rows.is_empty();
+
     rsx! {
+        Panel {
+            title: "Runtime".to_string(),
+            subtitle: Some("which runtime runs the app".to_string()),
+
+            p { class: "text-gray-400 mb-3",
+                "What the launcher started, and what it should start next time. Changing either dropdown takes effect on restart."
+            }
+
+            div { class: "flex flex-wrap gap-4 items-stretch",
+                RuntimeBoard { effective: resp.effective.clone() }
+                if !runtime_rows.is_empty() {
+                    CategoryBoard {
+                        title: "Selection".to_string(),
+                        rows: runtime_rows,
+                        draft,
+                    }
+                }
+            }
+
+            if !runtime_rows_empty {
+                p { class: "text-gray-400 mt-3",
+                    "Both sections share one draft — use Save below to apply changes made here."
+                }
+            }
+        }
+
         Panel {
             title: "Runtime settings".to_string(),
             subtitle: Some(format!("{} of 1,035 Node flags", resp.params.len())),
@@ -106,39 +139,26 @@ fn ParamBoards(resp: ParamsResponse, reload: Signal<u32>) -> Element {
             }
 
             div { class: "flex flex-wrap gap-4 items-stretch",
-                for category in categories {
+                for category in tuning {
                     {
                         let rows: Vec<RuntimeParam> = params
                             .iter()
                             .filter(|p| p.category == category)
                             .cloned()
                             .collect();
-                        let all_restart = rows.iter().all(|p| p.applies_at == "restart");
                         rsx! {
-                            div { class: PARAM_BOARD_CLASS,
-                                div { class: "flex items-center gap-2 mb-3",
-                                    span { class: PARAM_BOARD_TITLE_CLASS,
-                                        "{category_title(&category)}"
-                                    }
-                                    if all_restart {
-                                        span { class: PARAM_BOARD_NOTE_CLASS, "(restart required)" }
-                                    }
-                                }
-                                div { class: PARAM_COLUMN_CLASS,
-                                    for p in rows.iter() {
-                                        ParamBlock {
-                                            param: p.clone(),
-                                            draft,
-                                            show_applies: !all_restart,
-                                        }
-                                    }
-                                }
+                            CategoryBoard {
+                                title: category_title(&category).to_string(),
+                                rows,
+                                draft,
                             }
                         }
                     }
                 }
             }
 
+            // One Save for the whole page — both sections share `draft`, so the
+            // note says so rather than letting the runtime panel look unsaved.
             div { class: "flex items-center gap-3 mt-4 pt-3 border-t border-gray-700",
                 button {
                     class: "btn btn-primary btn-sm",
@@ -195,6 +215,32 @@ fn ParamBoards(resp: ParamsResponse, reload: Signal<u32>) -> Element {
                         code { class: "text-gray-200", "{w.flag}" }
                         p { class: "text-gray-400", "{w.reason}" }
                     }
+                }
+            }
+        }
+    }
+}
+
+/// One category's parameters as a board. Extracted so the runtime board can sit
+/// in its own section without duplicating the markup.
+#[component]
+fn CategoryBoard(
+    title: String,
+    rows: Vec<RuntimeParam>,
+    draft: Signal<BTreeMap<String, serde_json::Value>>,
+) -> Element {
+    let all_restart = rows.iter().all(|p| p.applies_at == "restart");
+    rsx! {
+        div { class: PARAM_BOARD_CLASS,
+            div { class: "flex items-center gap-2 mb-3",
+                span { class: PARAM_BOARD_TITLE_CLASS, "{title}" }
+                if all_restart {
+                    span { class: PARAM_BOARD_NOTE_CLASS, "(restart required)" }
+                }
+            }
+            div { class: PARAM_COLUMN_CLASS,
+                for p in rows.iter() {
+                    ParamBlock { param: p.clone(), draft, show_applies: !all_restart }
                 }
             }
         }
