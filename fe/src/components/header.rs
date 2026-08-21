@@ -2,7 +2,7 @@ use crate::app::Route;
 use dioxus::prelude::*;
 use dioxus_router::{use_route, Link};
 
-/// Nav link colors — active vs idle. Same palette as RERAG's header.
+/// Nav link colors — active vs idle.
 const NAV_ACTIVE: &str = "#7C2A02";
 const NAV_IDLE: &str = "white";
 
@@ -16,7 +16,9 @@ pub fn Header() -> Element {
     let mut menu_open = use_signal(|| false);
     let current_route = use_route::<Route>();
 
-    let header_bg = "bg-gray-900";
+    // gray-700 (#374151) sits ~20% of the way from gray-900 (#111827) to white —
+    // a lighter grey than the page shell, still on the Tailwind palette.
+    let header_bg = "bg-gray-700";
 
     let monitor_color = if matches!(current_route, Route::Monitor {}) {
         NAV_ACTIVE
