@@ -267,3 +267,69 @@ pub fn copy_to_clipboard(text: &str) {
         let _ = win.navigator().clipboard().write_text(text);
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct NodeMemory {
+    #[serde(rename = "heapUsedMB")] pub heap_used_mb: f64,
+    #[serde(rename = "heapTotalMB")] pub heap_total_mb: f64,
+    #[serde(rename = "heapLimitMB")] pub heap_limit_mb: f64,
+    #[serde(rename = "heapUsedPct")] pub heap_used_pct: f64,
+    #[serde(rename = "rssMB")] pub rss_mb: f64,
+    #[serde(rename = "externalMB")] pub external_mb: f64,
+    #[serde(rename = "arrayBuffersMB")] pub array_buffers_mb: f64,
+    #[serde(rename = "largestSpace")] pub largest_space: LargestSpace,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct LargestSpace {
+    pub name: String,
+    #[serde(rename = "usedMB")] pub used_mb: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct NodeEventLoop {
+    #[serde(rename = "meanMs")] pub mean_ms: f64,
+    #[serde(rename = "p50Ms")] pub p50_ms: f64,
+    #[serde(rename = "p99Ms")] pub p99_ms: f64,
+    #[serde(rename = "maxMs")] pub max_ms: f64,
+    #[serde(rename = "utilizationPct")] pub utilization_pct: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct NodeCpu {
+    #[serde(rename = "userPct")] pub user_pct: f64,
+    #[serde(rename = "systemPct")] pub system_pct: f64,
+    pub cores: u32,
+    pub load1: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct NodeConcurrency {
+    #[serde(rename = "threadpoolSize")] pub threadpool_size: u32,
+    #[serde(rename = "activeResources")] pub active_resources: std::collections::BTreeMap<String, u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct NodeHost {
+    #[serde(rename = "totalMemMB")] pub total_mem_mb: f64,
+    #[serde(rename = "freeMemMB")] pub free_mem_mb: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct NodeMetrics {
+    pub memory: NodeMemory,
+    #[serde(rename = "eventLoop")] pub event_loop: NodeEventLoop,
+    pub cpu: NodeCpu,
+    pub concurrency: NodeConcurrency,
+    pub host: NodeHost,
+    pub versions: std::collections::BTreeMap<String, String>,
+    #[serde(rename = "uptimeMs")] pub uptime_ms: f64,
+}
+
+pub async fn fetch_node_metrics() -> Result<NodeMetrics, String> {
+    let resp = gloo_net::http::Request::get(&format!("{API_BASE}/api/node"))
+        .send()
+        .await
+        .map_err(|e| format!("{e}"))?;
+    resp.json::<NodeMetrics>().await.map_err(|e| format!("{e}"))
+}

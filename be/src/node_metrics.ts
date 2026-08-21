@@ -15,20 +15,33 @@ import { monitorEventLoopDelay, performance } from "node:perf_hooks";
 import { getHeapStatistics, getHeapSpaceStatistics } from "node:v8";
 import { availableParallelism, loadavg, totalmem, freemem } from "node:os";
 
+const MB = 1024 * 1024;
+const NS_TO_MS = 1e6;
+
 /**
  * Event-loop delay histogram. Started once at import and left running — it
  * samples cheaply in the background and is meaningless without history.
  */
-const loopDelay = monitorEventLoopDelay({ resolution: 10 });
+const LOOP_RESOLUTION_MS = 10;
+const loopDelay = monitorEventLoopDelay({ resolution: LOOP_RESOLUTION_MS });
 loopDelay.enable();
+
+/**
+ * The histogram measures the gap between scheduled and actual timer fires, so
+ * every reading includes the sampling interval itself — an idle loop reports
+ * ~10ms, not ~0. Subtract it so the number means "how late the loop was",
+ * which is the thing worth watching.
+ */
+function delayMs(nanos: number): number {
+    const ms = nanos / NS_TO_MS - LOOP_RESOLUTION_MS;
+    return Number(Math.max(0, ms).toFixed(2));
+}
 
 /** Baseline for CPU and utilisation deltas, so rates are "since last asked". */
 let lastCpu = process.cpuUsage();
 let lastElu = performance.eventLoopUtilization();
 let lastSample = Date.now();
 
-const MB = 1024 * 1024;
-const NS_TO_MS = 1e6;
 
 export interface NodeMetrics {
     memory: {
@@ -110,10 +123,10 @@ export function collect(): NodeMetrics {
             },
         },
         eventLoop: {
-            meanMs: round(loopDelay.mean / NS_TO_MS, 2),
-            p50Ms: round(loopDelay.percentile(50) / NS_TO_MS, 2),
-            p99Ms: round(loopDelay.percentile(99) / NS_TO_MS, 2),
-            maxMs: round(loopDelay.max / NS_TO_MS, 2),
+            meanMs: delayMs(loopDelay.mean),
+            p50Ms: delayMs(loopDelay.percentile(50)),
+            p99Ms: delayMs(loopDelay.percentile(99)),
+            maxMs: delayMs(loopDelay.max),
             utilizationPct: round(elu.utilization * 100),
         },
         cpu: {
