@@ -28,6 +28,7 @@ import { config } from "./config.ts";
 const EXIT_RESTART = 75;
 import { step } from "./log.ts";
 import * as jobs from "./jobs.ts";
+import { collect as collectNodeMetrics } from "./node_metrics.ts";
 
 function send(res: ServerResponse, code: number, body: unknown): void {
     const json = JSON.stringify(body);
@@ -98,6 +99,11 @@ export function createApp() {
                 supervised: isSupervised(),
                 pending: pendingRestart(settings),
             });
+            return done(200);
+        }
+
+        if (url.pathname === "/api/node" && req.method === "GET") {
+            send(res, 200, collectNodeMetrics());
             return done(200);
         }
 

@@ -1,6 +1,6 @@
 use crate::api::{fetch_params, save_settings, ParamsResponse, RuntimeParam};
 use crate::components::param::*;
-use crate::components::{InfoButton, Panel, ProcessPanel, RestartBanner, RuntimeBoard};
+use crate::components::{InfoButton, Panel, RestartBanner, RuntimeBoard};
 use dioxus::prelude::*;
 use std::collections::BTreeMap;
 
@@ -30,7 +30,6 @@ pub fn Config() -> Element {
                         reload,
                     }
                     ParamBoards { resp: resp.clone(), reload }
-                    ProcessPanel { reload }
                 },
                 Some(Err(err)) => rsx! {
                     Panel { title: "Runtime settings".to_string(),

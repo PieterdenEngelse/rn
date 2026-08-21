@@ -1,5 +1,6 @@
 use crate::components::header::Header;
-use crate::pages::{Config, Home, Monitor, PageNotFound};
+use crate::components::SubNav;
+use crate::pages::{Config, ConfigProcess, Home, Monitor, MonitorJobs, PageNotFound};
 use dioxus::prelude::*;
 use dioxus_router::{Outlet, Routable, Router};
 
@@ -11,8 +12,12 @@ pub enum Route {
         Home {},
         #[route("/monitor")]
         Monitor {},
+        #[route("/monitor/jobs")]
+        MonitorJobs {},
         #[route("/config")]
         Config {},
+        #[route("/config/process")]
+        ConfigProcess {},
         #[route("/:..segments")]
         PageNotFound { segments: Vec<String> },
 }
@@ -46,6 +51,9 @@ fn Layout() -> Element {
         div { class: "min-h-screen bg-gray-900 text-white",
 
             Header {}
+
+            // Section bar: the pages under whichever header link you are in.
+            SubNav {}
 
             main {
                 Outlet::<Route> {}

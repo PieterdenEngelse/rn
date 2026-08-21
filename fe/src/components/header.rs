@@ -1,4 +1,5 @@
 use crate::app::Route;
+use crate::components::sub_nav::in_section;
 use crate::components::StatusLight;
 use dioxus::prelude::*;
 use dioxus_router::{use_route, Link};
@@ -21,12 +22,12 @@ pub fn Header() -> Element {
     // a lighter grey than the page shell, still on the Tailwind palette.
     let header_bg = "bg-gray-700";
 
-    let monitor_color = if matches!(current_route, Route::Monitor {}) {
+    let monitor_color = if in_section(&current_route, "Monitor") {
         NAV_ACTIVE
     } else {
         NAV_IDLE
     };
-    let config_color = if matches!(current_route, Route::Config {}) {
+    let config_color = if in_section(&current_route, "Config") {
         NAV_ACTIVE
     } else {
         NAV_IDLE

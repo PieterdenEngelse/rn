@@ -7,6 +7,8 @@ pub mod process_panel;
 pub use process_panel::ProcessPanel;
 pub mod restart_banner;
 pub mod status_light;
+pub mod sub_nav;
+pub use sub_nav::SubNav;
 pub use status_light::StatusLight;
 pub use restart_banner::RestartBanner;
 pub mod param;

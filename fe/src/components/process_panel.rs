@@ -14,10 +14,18 @@ const START_COMMAND: &str = "./launcher/target/debug/rn";
 /// already reports them. Printing the same fact twice on one page invites the
 /// reader to wonder which one is authoritative.
 ///
-/// Start is deliberately a copyable command rather than a button. A web page
-/// cannot spawn a local process — if the backend is down there is nothing left
-/// to receive the request, and the browser sandbox forbids it regardless. A
-/// button that only works when it isn't needed would be worse than none.
+/// Start is deliberately a copyable command rather than a button, but not for
+/// the reason it first looks like. A page can perfectly well cause a local
+/// process to start: Restart, three rows up, does exactly that — it asks the
+/// backend to exit, and the launcher supervising it starts a fresh one. What
+/// cannot work is the bootstrap case. With the backend stopped there is no
+/// listener on the API port, so there is nobody left to ask, and a button that
+/// only worked when it was not needed would be worse than none.
+///
+/// (The one real exception is a registered URL scheme — rn://start — which the
+/// OS would hand to a local handler. It costs install-time registration, a
+/// confirmation prompt, and gives no way to report failure back to the page,
+/// which is a lot of machinery for something a copyable command solves.)
 #[component]
 pub fn ProcessPanel(reload: Signal<u32>) -> Element {
     let status = use_resource(fetch_status);
@@ -178,7 +186,7 @@ pub fn ProcessPanel(reload: Signal<u32>) -> Element {
             // ── Start ─────────────────────────────────────────────────
             div { class: "mt-3 pt-3 border-t border-gray-700",
                 p { class: "text-gray-400",
-                    "To start rn, run this in a terminal — a web page cannot launch a local process, and once the backend is stopped there is nothing here left to ask:"
+                    "To start rn, run this in a terminal. Restart above works by asking the running backend to exit so its launcher replaces it — but once nothing is running, there is nobody left to ask, so the first start has to come from outside the page:"
                 }
                 div { class: "flex items-center gap-2 mt-1",
                     code { class: "text-gray-200 bg-gray-900 rounded px-2 py-1", "{START_COMMAND}" }
