@@ -1,6 +1,6 @@
 use crate::api::{fetch_params, save_settings, ParamsResponse, RuntimeParam};
 use crate::components::param::*;
-use crate::components::{InfoButton, Panel, RestartBanner, RuntimeBoard};
+use crate::components::{InfoButton, Panel, ProcessPanel, RestartBanner, RuntimeBoard};
 use dioxus::prelude::*;
 use std::collections::BTreeMap;
 
@@ -130,6 +130,7 @@ fn ParamBoards(resp: ParamsResponse, reload: Signal<u32>) -> Element {
                         draft,
                     }
                 }
+                ProcessPanel { reload }
             }
 
             if !runtime_rows_empty {

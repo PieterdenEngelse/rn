@@ -2,7 +2,7 @@ use crate::api::{
     copy_to_clipboard, fetch_status, restart_backend, stop_backend, wait_until_healthy,
     StatusResponse,
 };
-use crate::components::Panel;
+use crate::components::param::{PARAM_BOARD_CLASS, PARAM_BOARD_TITLE_CLASS};
 use dioxus::prelude::*;
 
 /// The command that starts rn. Shown rather than run: see the note below.
@@ -75,7 +75,10 @@ pub fn ProcessPanel(reload: Signal<u32>) -> Element {
     };
 
     rsx! {
-        Panel { title: "Process".to_string(),
+        div { class: PARAM_BOARD_CLASS,
+            div { class: "flex items-center gap-2 mb-3",
+                span { class: PARAM_BOARD_TITLE_CLASS, "Restart" }
+            }
             match &*status.read_unchecked() {
                 Some(Ok(s)) => rsx! { StatusRows { status: s.clone() } },
                 Some(Err(e)) => rsx! { p { class: "text-red-400", "Status unavailable: {e}" } },
