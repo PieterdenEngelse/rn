@@ -10,24 +10,39 @@
       "options": [
         {
           "value": "node",
-          "label": "Node — the default"
+          "label": "Node — the default",
+          "info": {
+            "what": "The runtime rn ships with: a Node binary inside the install directory, launched by absolute path. Never the Node on the user's PATH — a machine that \"has Node\" often has one installed through nvm, which a desktop launcher or systemd unit cannot see.",
+            "why": "The baseline, for good reasons: the largest package ecosystem, the runtime every dependency is tested against, and the only one native addons are compiled for here. Stay on it unless one of the others names a problem you actually have.",
+            "ifWrong": "Nothing breaks — Node is the safe answer. The cost is roughly 40ms of startup per process, which only matters if automation fires many short-lived jobs, and a node_modules tree that has to exist wherever the app is installed."
+          }
         },
         {
           "value": "bun",
-          "label": "Bun — many short jobs"
+          "label": "Bun — many short jobs",
+          "info": {
+            "what": "A largely Node-compatible runtime with much faster process startup and a bundler that can compile a script and its dependencies into a single self-contained binary. The launcher starts it with `run <entry>` and lets it read .env from the working directory, since its --env-file has no if-exists form.",
+            "why": "The case is scheduling. A driver firing dozens of small scripts an hour pays Node's startup cost every time; Bun takes that from roughly 40ms to roughly 5ms. `bun build --compile` is the other draw — the automation becomes one file with no node_modules on the target machine.",
+            "ifWrong": "Native addons and the less-travelled corners of the Node API are where it frays: a dependency that is fine on Node can refuse to load. That fails loudly on the first run rather than subtly later. Note also that Bun reports a Node-compatibility version in process.version matching no Node here, so a selected Node line is reported as not applicable rather than as a mismatch."
+          }
         },
         {
           "value": "deno",
-          "label": "Deno — permissioned automation"
+          "label": "Deno — permissioned automation",
+          "info": {
+            "what": "A runtime where access is denied by default. The launcher grants exactly what the app needs and nothing more: --allow-env, --allow-read, --allow-write, --allow-sys, and a network grant scoped to the app's own bind address plus whatever Extra network hosts adds — not a blanket --allow-net.",
+            "why": "Containment, not speed. Automation holding API tokens and talking to the open internet is exactly the workload where the boundary should be enforced by the runtime rather than maintained by trusting every transitive dependency. Neither Node nor Bun has a network permission model at all.",
+            "ifWrong": "Too narrow and the job stops with a permission error naming the exact host it wanted — add that host to Extra network hosts. Too wide and you have given back the guarantee you switched runtimes for. Note the grant covers the whole process, so it is the union of what every job needs."
+          }
         }
       ],
       "appliesAt": "restart",
       "category": "runtime",
       "label": "JavaScript runtime",
       "info": {
-        "what": "Which runtime the launcher spawns. Only the bundled one is present in an install — this never reaches for a runtime on the user's PATH, because a machine that 'has Node' usually has one installed through nvm that a desktop launcher cannot see at all.",
-        "why": "Node is the baseline: the biggest ecosystem, the runtime dependencies are tested against, the one native addons are built for. Bun earns its place when automation fires many short jobs — it takes process startup from roughly 40ms to roughly 5ms, and can compile a script to a single binary with no node_modules on the target. Deno earns its place when scripts hold API tokens: access is denied by default and granted per host, enforced by the runtime rather than by trusting every transitive dependency. One caveat worth knowing before you pick it for that reason: the launcher currently grants a broad --allow-net rather than naming a host, which is precisely the part that would make Deno worth it. Narrowing it to the configured bind address needs the egress list of the job code, and that does not exist yet — so today Deno buys you the filesystem and environment grants, not the network one.",
-        "ifWrong": "Selecting a runtime that is not bundled saves the intent but cannot be honoured — the launcher reports it as unavailable at next start and stays on the bundled runtime rather than failing to boot. On Bun the real hazard is native addons refusing to load; that fails loudly on the first run rather than subtly later."
+        "what": "Which runtime the launcher spawns. Only a bundled runtime is ever used: this never reaches for one on the user's PATH. Select an option to see what it is good at.",
+        "why": "The three differ in what they are good at rather than in quality — ecosystem reach, process startup, and enforced permissions. The panel for each option makes the specific case.",
+        "ifWrong": "Selecting a runtime this install does not carry saves the intent but cannot be honoured: the launcher reports it as unavailable at next start and stays on the bundled runtime, rather than failing to boot and leaving no UI in which to change it back."
       }
     },
     {
@@ -54,15 +69,30 @@
       "options": [
         {
           "value": "20",
-          "label": "Node 20 — maintenance LTS"
+          "label": "Node 20 — maintenance LTS",
+          "info": {
+            "what": "The older long-term-support line. Still getting security fixes, but no further features or performance work.",
+            "why": "Worth pinning when a native addon or dependency has not been rebuilt for a newer line yet. It buys compatibility at the cost of being on a clock.",
+            "ifWrong": "It leaves support before the newer lines do. The failure is not dramatic: one day an advisory lands that is never patched for this line, and the upgrade you deferred becomes urgent."
+          }
         },
         {
           "value": "22",
-          "label": "Node 22 — active LTS"
+          "label": "Node 22 — active LTS",
+          "info": {
+            "what": "The current long-term-support line — the conservative choice for a shipped app.",
+            "why": "It is what most packages test against while still receiving fixes for years.",
+            "ifWrong": "Little goes wrong here, but note this install does not bundle it. Selecting it without a runtime-node22 directory present falls back to the bundled runtime and says so."
+          }
         },
         {
           "value": "24",
-          "label": "Node 24 — current (bundled)"
+          "label": "Node 24 — current (bundled)",
+          "info": {
+            "what": "The newest line, and the one this install actually carries — be/.nvmrc and be/runtime both say v24.19.0.",
+            "why": "It is already here, so it costs nothing. It gets V8 upgrades and new APIs first, and becomes an LTS line later.",
+            "ifWrong": "Native addons lag newest-line releases by weeks or months, so one with no prebuilt binary for this version tries to compile from source at install time — and fails on a machine with no toolchain."
+          }
         }
       ],
       "appliesAt": "restart",

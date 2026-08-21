@@ -18,6 +18,10 @@ pub struct ParamInfo {
 pub struct ParamOption {
     pub value: String,
     pub label: String,
+    /// Present when the option explains itself; the UI prefers it over the
+    /// parameter's own panel for the current selection.
+    #[serde(default)]
+    pub info: Option<ParamInfo>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]

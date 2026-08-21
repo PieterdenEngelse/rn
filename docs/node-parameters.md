@@ -28,11 +28,11 @@ scales with installed RAM, so expect a different number elsewhere.
 
 ### JavaScript runtime — `runtime`
 
-**What it does.** Which runtime the launcher spawns. Only the bundled one is present in an install — this never reaches for a runtime on the user's PATH, because a machine that 'has Node' usually has one installed through nvm that a desktop launcher cannot see at all.
+**What it does.** Which runtime the launcher spawns. Only a bundled runtime is ever used: this never reaches for one on the user's PATH. Select an option to see what it is good at.
 
-**Why you would change it.** Node is the baseline: the biggest ecosystem, the runtime dependencies are tested against, the one native addons are built for. Bun earns its place when automation fires many short jobs — it takes process startup from roughly 40ms to roughly 5ms, and can compile a script to a single binary with no node_modules on the target. Deno earns its place when scripts hold API tokens: access is denied by default and granted per host, enforced by the runtime rather than by trusting every transitive dependency. One caveat worth knowing before you pick it for that reason: the launcher currently grants a broad --allow-net rather than naming a host, which is precisely the part that would make Deno worth it. Narrowing it to the configured bind address needs the egress list of the job code, and that does not exist yet — so today Deno buys you the filesystem and environment grants, not the network one.
+**Why you would change it.** The three differ in what they are good at rather than in quality — ecosystem reach, process startup, and enforced permissions. The panel for each option makes the specific case.
 
-**If it's wrong.** Selecting a runtime that is not bundled saves the intent but cannot be honoured — the launcher reports it as unavailable at next start and stays on the bundled runtime rather than failing to boot. On Bun the real hazard is native addons refusing to load; that fails loudly on the first run rather than subtly later.
+**If it's wrong.** Selecting a runtime this install does not carry saves the intent but cannot be honoured: the launcher reports it as unavailable at next start and stays on the bundled runtime, rather than failing to boot and leaving no UI in which to change it back.
 
 Default: node · Takes effect: on restart · Settings key: `jsRuntime`
 

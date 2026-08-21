@@ -229,6 +229,10 @@ fn ParamBlock(
         .and_then(|v| v.as_bool())
         .unwrap_or_else(|| param.default.as_bool().unwrap_or(false));
 
+    let current_str = current
+        .as_ref()
+        .and_then(|v| v.as_str().map(str::to_string));
+
     let unit = param.unit.clone().unwrap_or_default();
     let id_for_num = id.clone();
     let id_for_text = id.clone();
@@ -329,11 +333,33 @@ fn ParamBlock(
                         }
                     },
                 }
-                InfoButton {
-                    title: param.label.clone(),
-                    what: param.info.what.clone(),
-                    why: param.info.why.clone(),
-                    if_wrong: param.info.if_wrong.clone(),
+                {
+                    // An enum option may explain itself. When it does, the panel
+                    // follows the selection — one panel covering every choice is
+                    // several explanations nobody reads.
+                    let selected = param
+                        .options
+                        .as_ref()
+                        .and_then(|opts| opts.iter().find(|o| Some(&o.value) == current_str.as_ref()))
+                        .or_else(|| {
+                            // Nothing chosen yet: fall back to the default's panel.
+                            param.options.as_ref().and_then(|opts| {
+                                let d = param.default.as_str()?;
+                                opts.iter().find(|o| o.value == d)
+                            })
+                        });
+                    let (title, info) = match selected.and_then(|o| o.info.as_ref().map(|i| (o.label.clone(), i))) {
+                        Some((label, info)) => (label, info.clone()),
+                        None => (param.label.clone(), param.info.clone()),
+                    };
+                    rsx! {
+                        InfoButton {
+                            title,
+                            what: info.what.clone(),
+                            why: info.why.clone(),
+                            if_wrong: info.if_wrong.clone(),
+                        }
+                    }
                 }
             }
         }

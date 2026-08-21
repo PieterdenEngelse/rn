@@ -1,4 +1,7 @@
-use crate::api::{copy_to_clipboard, fetch_status, stop_backend, StatusResponse};
+use crate::api::{
+    copy_to_clipboard, fetch_status, restart_backend, stop_backend, wait_until_healthy,
+    StatusResponse,
+};
 use crate::components::Panel;
 use dioxus::prelude::*;
 
@@ -21,7 +24,47 @@ pub fn ProcessPanel(reload: Signal<u32>) -> Element {
     let mut busy = use_signal(|| false);
     let mut message = use_signal(|| Option::<String>::None);
     let mut confirm_force = use_signal(|| false);
+    let mut confirm_restart_force = use_signal(|| false);
     let mut copied = use_signal(|| false);
+
+    let supervised = match &*status.read_unchecked() {
+        Some(Ok(s)) => s.supervised,
+        _ => false,
+    };
+
+    // Same semantics as the restart banner: wait for running work by default,
+    // interrupt only on an explicit second click.
+    let do_restart = move |now: bool| {
+        spawn(async move {
+            busy.set(true);
+            message.set(None);
+            match restart_backend(now).await {
+                Ok(o) if o.scheduled => {
+                    let names: Vec<String> = o.running.iter().map(|j| j.name.clone()).collect();
+                    message.set(Some(format!(
+                        "Queued — rn will restart when {} finishes.",
+                        names.join(", "),
+                    )));
+                    confirm_restart_force.set(true);
+                }
+                Ok(_) => {
+                    if wait_until_healthy(20).await {
+                        message.set(Some("Restarted.".to_string()));
+                        confirm_restart_force.set(false);
+                        let mut reload = reload;
+                        reload += 1;
+                    } else {
+                        message.set(Some(
+                            "Restarted, but the backend did not come back. Check the rn console."
+                                .to_string(),
+                        ));
+                    }
+                }
+                Err(e) => message.set(Some(e)),
+            }
+            busy.set(false);
+        });
+    };
 
     rsx! {
         Panel { title: "Process".to_string(),
@@ -32,6 +75,32 @@ pub fn ProcessPanel(reload: Signal<u32>) -> Element {
             }
 
             div { class: "flex flex-wrap items-center gap-3 mt-3 pt-3 border-t border-gray-700",
+
+                // ── Restart ───────────────────────────────────────────
+                // Always available, unlike the banner's button which only
+                // appears when something is pending. Wanting to restart is not
+                // always a reaction to a settings change.
+                button {
+                    class: "btn btn-primary btn-sm",
+                    disabled: busy() || !supervised,
+                    title: if supervised {
+                        "Restart the backend (waits for running work)"
+                    } else {
+                        "Not supervised — nothing can restart it"
+                    },
+                    onclick: move |_| do_restart(false),
+                    "Restart"
+                }
+
+                if confirm_restart_force() {
+                    button {
+                        class: "text-xs cursor-pointer hover:underline bg-transparent border-0 p-0",
+                        style: "color: #22d3ee;",
+                        disabled: busy(),
+                        onclick: move |_| do_restart(true),
+                        "Restart now, interrupting it"
+                    }
+                }
 
                 // ── Stop ──────────────────────────────────────────────
                 button {
