@@ -13,3 +13,46 @@
 @theme {
   --daisyui-themes: dark;
 }
+
+/* ── Parameter page layout ─────────────────────────────────────────────
+ * Carried from the RERAG hardware page. These back PARAM_COLUMN_CLASS and
+ * the number inputs used on Config.
+ */
+
+/* Number inputs fit content + arrows snugly instead of stretching */
+input[type="number"].input-xs {
+  width: auto !important;
+  min-width: 3.5rem !important;
+  max-width: 4rem !important;
+  padding-left: 0.5rem !important;
+  padding-right: 0.5rem !important;
+}
+
+/* Hide spinners — they leave a gray block when disabled */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+/* Disabled number inputs match enabled fields rather than going gray-on-gray */
+input[type="number"]:disabled {
+  border-color: transparent !important;
+  background-color: rgb(55 65 81) !important; /* bg-gray-700 */
+}
+
+/* Minimal vertical rhythm inside a parameter column */
+.param-column-spacing {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.param-column-spacing > * + * {
+  margin-top: 0;
+}

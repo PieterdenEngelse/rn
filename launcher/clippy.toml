@@ -1,0 +1,7 @@
+# Spawning Node with an inherited environment is the bug this project most wants
+# to prevent: a user's NODE_OPTIONS can stop the app booting before the first
+# line of our code runs. All spawning goes through NodeCommand, which seals the
+# environment in its constructor.
+disallowed-methods = [
+  { path = "std::process::Command::new", reason = "spawn Node via NodeCommand so the env is sealed" },
+]

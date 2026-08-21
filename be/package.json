@@ -1,0 +1,23 @@
+{
+  "name": "rn-be",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/main.ts",
+    "dev": "node --env-file-if-exists=.env --watch src/main.ts",
+    "start:sealed": "./runtime/bin/node --env-file-if-exists=.env src/main.ts",
+    "test": "node --test",
+    "typecheck": "tsc --noEmit",
+    "start:sealed:win": "runtime\\bin\\node.exe --env-file-if-exists=.env src/main.ts",
+    "params:build": "node tools/gen-params.ts",
+    "serve": "node --env-file-if-exists=.env src/server.ts"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0",
+    "@types/node": "^24.0.0"
+  }
+}

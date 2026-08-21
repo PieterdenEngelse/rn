@@ -1,0 +1,411 @@
+# Packaging: shipping rn as an installable app
+
+rn is meant to be installed by users, not cloned by developers. That single fact
+decides how Node is handled: **the app carries its own Node runtime and never
+looks for one on the machine.**
+
+This document covers what gets installed, why the runtime is private, the four
+ways a user's existing Node can still interfere, and how to stop each one.
+
+---
+
+## 1. What gets installed
+
+```
+/opt/rn/                    # or ~/.local/share/rn for a per-user install
+├── rn                      # Rust launcher — THE entry point the user runs
+├── runtime/
+│   ├── bin/node            # pinned private Node, invoked by absolute path
+│   └── LICENSE             # Node's MIT license — required for redistribution
+├── app/
+│   ├── src/                # the be/ sources
+│   ├── node_modules/       # installed at build time, shipped as-is
+│   └── package.json
+└── config/
+    └── defaults.env        # shipped defaults; user config lives elsewhere
+```
+
+**The Rust launcher is the entry point, not a shell script.** It resolves its own
+location, spawns Node from `runtime/bin/node` by absolute path, constructs the
+child environment explicitly, supervises the process, and restarts it on crash.
+A shell wrapper can do some of this, but it inherits the user's environment by
+default — which is exactly the thing we're trying to prevent (§3).
+
+**Why the launcher is Rust**: `CLAUDE.md` says Rust sits underneath where it's
+reasonable. Process supervision, exact-path resolution, and a single dependency-
+free binary that must run before Node exists is precisely that case — Node can't
+bootstrap itself.
+
+---
+
+## 2. Why a private runtime
+
+**Two Node binaries cannot conflict with each other.** Node has no shared
+library, no global registry, no daemon, no shared runtime state. Two copies on
+one machine are as independent as two copies of `grep`. The bundled runtime is
+not a risk; relying on the *system's* runtime is.
+
+Two things verified on this machine make the case:
+
+**A user who "has Node" may have no Node your app can find.**
+
+```bash
+$ env -i bash -c 'command -v node'
+NOT FOUND
+```
+
+This machine has Node 24.19.0. It's on PATH only because nvm's shell profile
+puts it there. An app launched from a `.desktop` file, a systemd unit, or a GUI
+double-click gets a clean environment and finds nothing. Version managers (nvm,
+asdf, fnm) are shell-level; they don't exist for non-shell launches.
+
+**Even with your own binary, the user's environment can stop it booting.**
+
+```bash
+$ NODE_OPTIONS="--require=/nonexistent/thing.js" node -e 'console.log("hi")'
+node:internal/modules/cjs/loader:1520
+  throw err;
+exit=1
+```
+
+That's a user-set environment variable killing a process before your first line
+of code runs. Bundling the binary does not fix this — see §3.
+
+**The alternative — requiring a system Node — costs the user a manual install,
+exposes you to every version between 18 and whatever ships next, and breaks
+silently when they upgrade.** For a developer tool that's a defensible trade.
+For an installable app it isn't.
+
+---
+
+## 3. The four conflict vectors
+
+### 3.1 PATH
+
+**Rule**: never spawn `node`. Spawn `<install_dir>/runtime/bin/node`.
+
+The launcher resolves its own executable path and derives the runtime path from
+it, so a moved or relocated install still works:
+
+```rust
+let install_dir = std::env::current_exe()?
+    .parent().ok_or("no parent")?
+    .to_path_buf();
+let node = install_dir.join("runtime/bin/node");
+```
+
+**Change it when**: never for the production path. In development the launcher
+may fall back to PATH — gate that behind an explicit `RN_DEV=1`, so the
+fallback can't silently activate on a user's machine.
+
+### 3.2 `NODE_OPTIONS` and friends
+
+**Rule**: build the child environment from nothing. Allowlist, never blocklist —
+a blocklist is a list of the variables you've heard of.
+
+```rust
+let mut cmd = std::process::Command::new(&node);
+cmd.env_clear()                                   // drop everything
+   .env("PATH", "/usr/bin:/bin")                  // minimal, for child processes
+   .env("HOME", home)                             // needed for user data paths
+   .env("NODE_OPTIONS", "--max-old-space-size=512")  // OURS, not theirs
+   .env("RN_INSTALL_DIR", &install_dir)
+   .arg(install_dir.join("app/src/main.ts"));
+```
+
+Verified: `env -i` produces `NODE_OPTIONS is unset` — clearing works. The
+variables that matter are `NODE_OPTIONS`, `NODE_PATH`, `NODE_ENV`,
+`NODE_EXTRA_CA_CERTS`, and every `npm_config_*`, but the point of `env_clear()`
+is that you don't have to enumerate them correctly.
+
+**Change it when**: a user legitimately needs to pass something through — a
+proxy setting, a CA bundle. Add it to the allowlist explicitly, one variable at
+a time, and document why in this file.
+
+#### Enforcing it — because "remember to" is not a mechanism
+
+This rule feels paranoid right up until a user with `NODE_OPTIONS` in their
+`.bashrc` files a bug nobody can reproduce. A rule in a document doesn't survive
+that; it gets violated by someone in a hurry, six months from now, writing a
+one-off `Command::new("node")` to test something. Four layers, cheapest first —
+each one catches what the previous misses:
+
+**1. One chokepoint, in a type that cannot be misused.** Don't expose a
+`Command`. Expose a wrapper whose constructor has already sealed the environment
+and which never hands back the raw inner value:
+
+```rust
+pub struct NodeCommand(std::process::Command);   // private field — no way in
+
+impl NodeCommand {
+    pub fn new(install_dir: &Path) -> Self {
+        #[allow(clippy::disallowed_methods)]     // THE one sanctioned spawn site
+        let mut c = std::process::Command::new(install_dir.join("runtime/bin/node"));
+        c.env_clear();
+        c.env("PATH", "/usr/bin:/bin");
+        c.env("HOME", std::env::var("HOME").unwrap_or_default());
+        c.env("NODE_OPTIONS", "--max-old-space-size=512");
+        c.env("RN_ENV_SEALED", "1");
+        Self(c)
+    }
+
+    /// Pass exactly one ambient variable through, by name. The only door in.
+    pub fn allow_var(&mut self, key: &str) -> &mut Self {
+        if let Ok(v) = std::env::var(key) { self.0.env(key, v); }
+        self
+    }
+
+    pub fn spawn(&mut self) -> std::io::Result<std::process::Child> { self.0.spawn() }
+}
+```
+
+No `Deref`, no `inner()`, no `pub` field. A caller who wants to add a variable
+has to call `allow_var`, which is greppable and reviewable. The allowlist stops
+being a convention and becomes the only available API.
+
+**2. A lint that fails the build everywhere else.** `clippy.toml` at the crate
+root:
+
+```toml
+disallowed-methods = [
+  { path = "std::process::Command::new", reason = "spawn Node via NodeCommand so the env is sealed" },
+]
+```
+
+Verified working — clippy reports the violation *and* prints the reason,
+naming the fix at the point of the mistake:
+
+```
+warning: use of a disallowed method `std::process::Command::new`
+ --> src/main.rs:2:13
+  = note: spawn Node via NodeCommand so the env is sealed
+```
+
+Run CI with `cargo clippy --all-targets -- -D warnings` and it's a build failure,
+not a warning someone scrolls past. The single `#[allow]` inside `NodeCommand::new`
+is the sanctioned exception — verified to pass under `-D warnings` — and its
+presence anywhere else is an obvious red flag in review.
+
+**3. A test that poisons the environment.** The lint checks the *shape* of the
+code; this checks the *behavior*, and it's the layer that survives a refactor
+that legitimately restructures the spawn path:
+
+```rust
+#[test]
+fn user_node_options_cannot_reach_the_child() {
+    // The exact thing that kills a process before its first line runs.
+    std::env::set_var("NODE_OPTIONS", "--require=/nonexistent/thing.js");
+
+    let out = NodeCommand::new(&install_dir())
+        .arg("-e")
+        .arg("process.stdout.write(process.env.NODE_OPTIONS ?? 'unset')")
+        .output()
+        .expect("node must start despite a poisoned parent environment");
+
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "--max-old-space-size=512");
+}
+```
+
+Delete `env_clear()` and this test fails immediately with a readable diff. That's
+the property you actually want protected, stated once, checked forever.
+(In edition 2024 `set_var` is `unsafe` — wrap it, or set the variable on the
+child launcher process in an integration test instead.)
+
+**4. A self-check on the Node side.** Layers 1–3 protect the launcher. This
+catches the other direction — someone running `node src/main.ts` directly against
+a production install and getting mysterious behaviour from their own shell
+environment:
+
+```ts
+if (process.env.RN_ENV_SEALED !== "1" && process.env.RN_DEV !== "1") {
+  throw new Error(
+    "rn: started with an unsealed environment. Launch via the rn binary, " +
+    "or set RN_DEV=1 if you know what you're doing.",
+  );
+}
+```
+
+The `RN_DEV` escape exists because `npm start` during development is a legitimate
+unsealed launch. Making the escape explicit is the point: it can't happen by
+accident on a user's machine.
+
+**And one diagnostic.** Log the constructed child environment at startup and
+surface it in an info panel. When a bug report does arrive, the first question —
+"what environment was Node actually running with?" — is already answered, which
+is the same reason `CLAUDE.md` asks for the runtime version and path to be
+visible.
+
+### 3.3 Native addons and the N-API ABI
+
+**Rule**: any native module is compiled against the **bundled** Node version and
+shipped prebuilt for each target platform.
+
+A native addon built against the user's Node 22 loaded into your Node 24 fails
+at load time with a module-version error, or worse, crashes at runtime. This is
+the conflict vector that produces the most baffling bug reports.
+
+Prefer packages using **N-API** (stable ABI across major versions) over raw V8
+bindings. Prefer pure-JS entirely where the performance difference doesn't
+matter — and where it does, `CLAUDE.md` says that work belongs in a Rust
+component invoked over a documented interface, which sidesteps the addon problem
+completely.
+
+**Change it when**: nothing to change — this is a constraint, not a preference.
+
+### 3.4 `node_modules` is built, not installed
+
+**Rule**: run `npm ci` at **build** time against the bundled runtime, and ship
+the resulting tree. The installed app never runs npm.
+
+**Why**: the user's machine may have no network, no npm, or a different registry.
+`npm ci` (not `npm install`) because it installs exactly the lockfile and fails
+if `package.json` and the lock disagree — build reproducibility is the whole
+point.
+
+Also: nothing at runtime should ever execute a package install script. Those run
+arbitrary code, and at install time on a user's machine that's a genuine
+security problem, not a theoretical one.
+
+---
+
+## 4. Getting the runtime into the build
+
+The build uses the **same script the developer runs**, pointed at the packaging
+output directory:
+
+```bash
+scripts/install-node.sh --dest dist/runtime --require-sig
+```
+
+That is the whole step. One implementation serves both callers so that what you
+develop against and what users receive cannot drift — see `docs/setup-js.md` §10
+for the script's properties.
+
+**`--require-sig` is mandatory for anything you ship.** Without it the script
+degrades to checksum-only verification, which is fine on a developer's machine
+but not for an artifact you hand to users: a checksum alone only proves the file
+matches a list that could itself have been swapped. The flag turns a missing or
+failed signature into a hard error.
+
+The script downloads from nodejs.org, verifies SHA-256 (always fatal on
+mismatch, and the bad artifact is deleted rather than cached), verifies the GPG
+signature, strips the binary, and keeps only:
+
+- `runtime/bin/node`
+- `runtime/LICENSE` — Node is MIT; the notice must ship
+- `runtime/VERSION` — what the launcher reports at startup
+
+**What it drops, deliberately**: `include/` (57 MB of C++ headers, for compiling
+addons), `lib/node_modules/` (npm itself, 13 MB), `share/` (man pages). The
+installed app never compiles anything and never runs npm.
+
+**Never vendor a runtime copied out of a developer's nvm directory.** Those
+aren't the official artifacts and you can't attest to what's in them.
+
+**GPG keys**: Node's release keys are listed in the nodejs/node README. Import
+them once in the build environment.
+
+## 5. Size budget
+
+Measured on this machine, for `v24.19.0` linux-x64:
+
+| Stage | Size |
+|---|---|
+| nvm's binary as-shipped | 120 MB |
+| after `strip` | **103 MB** (verified still runs: `v24.19.0`) |
+| stripped + gzip | 38.2 MB |
+| stripped + xz | **28.7 MB** |
+
+So the runtime costs about **29 MB in the installer** and 103 MB on disk. That's
+the normal price — every Electron app pays it — and it buys a version that can
+never drift.
+
+**Don't build Node from source to shrink it.** `--with-intl=small-icu` saves
+roughly 30 MB, at the cost of hours of build time per platform, a toolchain per
+target, and a permanent maintenance burden — and it breaks non-English date and
+number formatting. Revisit only if download size becomes a real complaint.
+
+---
+
+## 6. Single Executable Applications — considered, rejected
+
+Node 24 supports SEA (`--experimental-sea-config`, `node:sea`), producing one
+self-contained file.
+
+**Rejected here because**: it's the same size (the runtime is still in there),
+it's harder to debug (you can't inspect or patch a file inside the blob), native
+addons need special handling, and the app still needs a writable directory for
+config and data anyway — so "one file" never really means one file.
+
+A plain runtime directory is inspectable, and this project's stated goal is to
+make what's happening visible. A user being able to look at `runtime/bin/node`
+and see exactly what's running is aligned with that, not a leak.
+
+**Change it when**: distribution genuinely requires a single artifact — some
+enterprise deployment channels do.
+
+---
+
+## 7. Dev / production parity
+
+The developer runs nvm's Node from `be/.nvmrc`. The user runs the bundled one.
+**These must be the same version**, and drift between them is the classic source
+of "works on my machine".
+
+- `be/.nvmrc` is the single source of truth.
+- The packaging script reads `VERSION` from `.nvmrc` rather than hardcoding it.
+- The launcher logs the runtime version and path at startup, and surfaces both
+  in the UI — "running bundled Node v24.19.0 at /opt/rn/runtime". That is
+  exactly the kind of invisible detail `CLAUDE.md` asks to be made visible, and
+  it makes a mismatched build obvious in the first bug report.
+
+---
+
+## 8. Install location
+
+| Target | Path | Why |
+|---|---|---|
+| Per-user (default) | `~/.local/share/rn` | No root needed, no sudo prompt, uninstall is a delete |
+| System-wide | `/opt/rn` | Multiple users on one machine; requires root |
+
+Prefer per-user. It removes the privilege escalation from the install flow
+entirely, and an automation tool acting on a user's own files has no reason to
+need root.
+
+User data and config never go in the install directory — that gets replaced
+wholesale on upgrade. Use `~/.config/rn` and `~/.local/state/rn`.
+
+---
+
+## 9. Per-platform notes
+
+Only linux-x64 is in scope right now. When the others come:
+
+- **macOS**: separate arm64 and x64 builds (or a universal binary). The app must
+  be signed and notarized or Gatekeeper blocks it; an unsigned bundled binary is
+  a hard failure, not a warning.
+- **Windows**: `node.exe`, no `strip`, path separators, and a real caveat on
+  `env_clear()` — a fully empty Windows environment breaks winsock and the crypto
+  APIs, so networking and TLS fail in confusing ways. `SYSTEMROOT` (and usually
+  `TEMP`/`TMP`) must be re-added to the allowlist on that platform. The
+  allowlist approach handles this correctly; a naive `env_clear()` with nothing
+  added back does not.
+
+---
+
+## 10. Build checklist
+
+- [ ] `VERSION` read from `be/.nvmrc`, not hardcoded
+- [ ] Runtime installed via `scripts/install-node.sh --dest dist/runtime --require-sig`
+- [ ] Binary stripped; `include/`, `lib/node_modules/`, `share/` dropped (the script does this)
+- [ ] Node's `LICENSE` present in `runtime/`
+- [ ] `npm ci` run against the bundled runtime, `node_modules` shipped
+- [ ] Launcher spawns Node by absolute path — no `node` on PATH anywhere
+- [ ] Launcher uses `env_clear()` plus an explicit allowlist
+- [ ] `clippy.toml` bans `Command::new`; CI runs `clippy -- -D warnings`
+- [ ] Poisoned-`NODE_OPTIONS` test present and passing
+- [ ] `RN_ENV_SEALED` self-check in the Node entry point
+- [ ] Windows build re-adds `SYSTEMROOT`/`TEMP` to the allowlist
+- [ ] Any native addon prebuilt against the bundled version, per platform
+- [ ] Launcher logs runtime version + path at startup
+- [ ] Installed tree contains no user data paths

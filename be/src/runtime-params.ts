@@ -1,0 +1,381 @@
+/**
+ * The user-editable Node runtime parameters — the single source of truth.
+ *
+ * This file is the ONLY place these are described. Two things are generated
+ * from it, so nothing has to be kept in sync by hand:
+ *
+ *   docs/node-parameters.md   human reference          (npm run params:build)
+ *   be/runtime-params.json    machine-readable, for the Rust launcher
+ *
+ * Every entry carries its own info-panel text, because CLAUDE.md requires a
+ * control to ship with its explanation. Making that text data rather than
+ * markup means a parameter cannot be added without one.
+ *
+ * Note on `appliesAt`: almost everything here is read once at process start by
+ * libuv, ICU or the TLS stack, so changing it means relaunching. That is not a
+ * limitation to hide — the UI must say so.
+ */
+
+export type ParamKind = "env" | "node-option" | "launcher";
+export type ParamType = "int" | "string" | "bool" | "enum";
+export type AppliesAt = "restart" | "runtime";
+export type Category =
+    | "memory"
+    | "concurrency"
+    | "time"
+    | "network"
+    | "diagnostics"
+    | "output"
+    | "runtime";
+
+export interface RuntimeParam {
+    /** Stable key used in settings.json. Never rename — it's persisted. */
+    id: string;
+    /** The env var name, or the Node flag. */
+    flag: string;
+    kind: ParamKind;
+    type: ParamType;
+    /** null means "unset — inherit the system default". */
+    default: string | number | boolean | null;
+    unit?: string;
+    min?: number;
+    max?: number;
+    /** Required when type is "enum": the allowed values, in display order. */
+    options?: readonly { value: string; label: string }[];
+    appliesAt: AppliesAt;
+    category: Category;
+    label: string;
+    info: {
+        /** What it does, mechanically. */
+        what: string;
+        /** Why a user would touch it. */
+        why: string;
+        /** What they will see if it's wrong. */
+        ifWrong: string;
+    };
+}
+
+export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
+    {
+        id: "jsRuntime",
+        // kind "launcher": not an env var and not a Node flag. The launcher
+        // acts on it when choosing which binary to spawn, so resolveLaunch
+        // must not turn it into a NODE_OPTIONS entry.
+        flag: "runtime",
+        kind: "launcher",
+        type: "enum",
+        default: "node",
+        options: [
+            { value: "node", label: "Node — the default" },
+            { value: "bun", label: "Bun — many short jobs" },
+            { value: "deno", label: "Deno — permissioned automation" },
+        ],
+        appliesAt: "restart",
+        category: "runtime",
+        label: "JavaScript runtime",
+        info: {
+            what:
+                "Which runtime the launcher spawns. Only the bundled one is present " +
+                "in an install — this never reaches for a runtime on the user's PATH, " +
+                "because a machine that 'has Node' usually has one installed through " +
+                "nvm that a desktop launcher cannot see at all.",
+            why:
+                "Node is the baseline: the biggest ecosystem, the runtime dependencies " +
+                "are tested against, the one native addons are built for. Bun earns its " +
+                "place when automation fires many short jobs — it takes process startup " +
+                "from roughly 40ms to roughly 5ms, and can compile a script to a single " +
+                "binary with no node_modules on the target. Deno earns its place when " +
+                "scripts hold API tokens: access is denied by default and granted per " +
+                "host, enforced by the runtime rather than by trusting every transitive " +
+                "dependency. One caveat worth knowing before you pick it for that reason: " +
+                "the launcher currently grants a broad --allow-net rather than naming a " +
+                "host, which is precisely the part that would make Deno worth it. " +
+                "Narrowing it to the configured bind address needs the egress list of the " +
+                "job code, and that does not exist yet — so today Deno buys you the " +
+                "filesystem and environment grants, not the network one.",
+            ifWrong:
+                "Selecting a runtime that is not bundled saves the intent but cannot be " +
+                "honoured — the launcher reports it as unavailable at next start and " +
+                "stays on the bundled runtime rather than failing to boot. On Bun the " +
+                "real hazard is native addons refusing to load; that fails loudly on the " +
+                "first run rather than subtly later.",
+        },
+    },
+    {
+        id: "netAllowlist",
+        flag: "netAllowlist",
+        kind: "launcher",
+        type: "string",
+        default: null,
+        appliesAt: "restart",
+        category: "runtime",
+        label: "Extra network hosts",
+        info: {
+            what:
+                "Hosts the automation is allowed to reach, beyond the app's own " +
+                "listening socket, as a comma-separated list — \"api.example.com, " +
+                "10.0.0.5:5432\". The launcher always grants the bind address itself, " +
+                "so this is only for job code that calls outward.",
+            why:
+                "It is only enforced under Deno, and it is the whole reason to run " +
+                "there: the grant is checked by the runtime, so a dependency that " +
+                "quietly phones home is stopped rather than trusted. Under Node and " +
+                "Bun the value is recorded but nothing enforces it — neither has a " +
+                "network permission model.",
+            ifWrong:
+                "Too narrow and the job fails with a Deno permission error naming the " +
+                "exact host it wanted, which tells you what to add. Too wide and you " +
+                "have given back the guarantee you switched runtimes for.",
+        },
+    },
+    {
+        id: "nodeVersion",
+        flag: "nodeVersion",
+        kind: "launcher",
+        type: "enum",
+        default: null,
+        options: [
+            { value: "20", label: "Node 20 — maintenance LTS" },
+            { value: "22", label: "Node 22 — active LTS" },
+            { value: "24", label: "Node 24 — current (bundled)" },
+        ],
+        appliesAt: "restart",
+        category: "runtime",
+        label: "Node version line",
+        info: {
+            what:
+                "Which Node major line the app should run on. Unset means 'use whatever " +
+                "is bundled', which is the value in be/.nvmrc — currently v24.19.0.",
+            why:
+                "Pin an older line when a native addon has not been rebuilt for a newer " +
+                "one yet. It buys compatibility at the cost of being on a clock: a " +
+                "maintenance line stops getting fixes before the others do.",
+            ifWrong:
+                "The mismatch that actually bites is drift — settings asking for one " +
+                "line while the bundled binary is another. The active row above reports " +
+                "what the process really is, so trust that over this and treat any " +
+                "disagreement as the bug.",
+        },
+    },
+    {
+        id: "maxOldSpaceSize",
+        flag: "--max-old-space-size",
+        kind: "node-option",
+        type: "int",
+        default: null,
+        unit: "MB",
+        min: 64,
+        max: 32768,
+        appliesAt: "restart",
+        category: "memory",
+        label: "Memory limit",
+        info: {
+            what:
+                "Caps V8's old-space heap. Unset, Node picks a limit from installed RAM — " +
+                "on this machine that came out at 2240 MB.",
+            why:
+                "Raise it when a large job dies with 'JavaScript heap out of memory'. " +
+                "Lower it to stop rn competing for memory on a shared machine.",
+            ifWrong:
+                "Too low and the job dies part-way through. Note it sets old space, not " +
+                "the total: setting 256 produced a 2240 MB → 448 MB total limit, not 256.",
+        },
+    },
+    {
+        id: "threadpoolSize",
+        flag: "UV_THREADPOOL_SIZE",
+        kind: "env",
+        type: "int",
+        default: 4,
+        min: 1,
+        max: 1024,
+        appliesAt: "restart",
+        category: "concurrency",
+        label: "Worker threads",
+        info: {
+            what:
+                "Size of libuv's thread pool, which runs file system operations, DNS " +
+                "lookups, zlib and some crypto. Default 4, regardless of CPU count.",
+            why:
+                "The highest-leverage setting for file automation. A job touching " +
+                "thousands of files spends its time queued behind these 4 threads.",
+            ifWrong:
+                "Too high wastes memory and adds contention. Above 1024 libuv silently " +
+                "clamps — a value of 2000 starts with no warning and behaves as 1024.",
+        },
+    },
+    {
+        id: "timezone",
+        flag: "TZ",
+        kind: "env",
+        type: "string",
+        default: null,
+        appliesAt: "restart",
+        category: "time",
+        label: "Time zone",
+        info: {
+            what:
+                "The time zone every Date and every schedule is interpreted in. Unset, " +
+                "Node follows the operating system.",
+            why:
+                "Pin it when jobs must run at a fixed local time regardless of what the " +
+                "machine thinks, or when logs are compared across machines. Use an IANA " +
+                "name such as Europe/Amsterdam or UTC.",
+            ifWrong:
+                "Nothing errors. Timestamps are quietly wrong and scheduled jobs fire at " +
+                "the wrong hour — usually noticed only after a daylight-saving change.",
+        },
+    },
+    {
+        id: "extraCaCerts",
+        flag: "NODE_EXTRA_CA_CERTS",
+        kind: "env",
+        type: "string",
+        default: null,
+        appliesAt: "restart",
+        category: "network",
+        label: "Extra CA certificates",
+        info: {
+            what:
+                "Path to a PEM file of additional trusted certificate authorities, added " +
+                "to Node's built-in list.",
+            why:
+                "Needed behind a corporate proxy that re-signs TLS traffic — the classic " +
+                "'works at home, fails at the office' failure.",
+            ifWrong:
+                "A wrong path fails SILENTLY: Node starts with no warning and TLS keeps " +
+                "failing. rn validates the path itself and reports it, because Node won't.",
+        },
+    },
+    {
+        id: "traceWarnings",
+        flag: "--trace-warnings",
+        kind: "node-option",
+        type: "bool",
+        default: false,
+        appliesAt: "restart",
+        category: "diagnostics",
+        label: "Trace warnings",
+        info: {
+            what: "Prints a full stack trace with every process warning.",
+            why:
+                "A bare warning tells you something happened but not where. Turn this on " +
+                "when you need to find the origin.",
+            ifWrong: "Noisier logs. Nothing breaks.",
+        },
+    },
+    {
+        id: "traceDeprecation",
+        flag: "--trace-deprecation",
+        kind: "node-option",
+        type: "bool",
+        default: false,
+        appliesAt: "restart",
+        category: "diagnostics",
+        label: "Trace deprecations",
+        info: {
+            what: "Prints a stack trace when a deprecated API is used.",
+            why: "Shows what will break before a Node upgrade, and which code to fix.",
+            ifWrong: "Noisier logs. Nothing breaks.",
+        },
+    },
+    {
+        id: "stackTraceLimit",
+        flag: "--stack-trace-limit",
+        kind: "node-option",
+        type: "int",
+        default: 10,
+        min: 0,
+        max: 200,
+        appliesAt: "runtime",
+        category: "diagnostics",
+        label: "Stack trace depth",
+        info: {
+            what:
+                "How many frames an Error captures. The one setting here that takes " +
+                "effect immediately — it maps to Error.stackTraceLimit and needs no restart.",
+            why: "Raise it when a truncated trace hides the actual cause of a failure.",
+            ifWrong:
+                "Large values slow down code that throws frequently, since every Error " +
+                "captures more frames.",
+        },
+    },
+    {
+        id: "heapSnapshotSignal",
+        flag: "--heapsnapshot-signal",
+        kind: "node-option",
+        type: "string",
+        default: null,
+        appliesAt: "restart",
+        category: "diagnostics",
+        label: "Heap snapshot signal",
+        info: {
+            what:
+                "Writes a V8 heap snapshot when the process receives this signal, " +
+                "e.g. SIGUSR2.",
+            why: "Captures memory state from a running job to diagnose a leak.",
+            ifWrong:
+                "Snapshots are large and pause the process while written. Choosing a " +
+                "signal the process uses for something else can kill it.",
+        },
+    },
+    {
+        id: "color",
+        flag: "NO_COLOR",
+        kind: "env",
+        type: "bool",
+        default: false,
+        appliesAt: "restart",
+        category: "output",
+        label: "Disable colored output",
+        info: {
+            what: "Suppresses ANSI color codes in rn's output.",
+            why: "Logs piped to a file or a viewer that doesn't understand escape codes.",
+            ifWrong:
+                "Cosmetic only — no job behaves differently. Turning it on when your " +
+                "terminal does support color makes output harder to scan, not broken.",
+        },
+    },
+] as const;
+
+/**
+ * Parameters deliberately NOT offered to users, and why. Kept in code rather
+ * than in a document so the reasoning is in front of whoever is tempted to add
+ * one, and so the generated reference can print it.
+ */
+export const WITHHELD: readonly { flag: string; reason: string }[] = [
+    {
+        flag: "--inspect / --inspect-brk",
+        reason:
+            "Opens a debugger port on the user's machine. Anything that can reach it can " +
+            "run code in the process. A gated diagnostic at most, never a checkbox.",
+    },
+    {
+        flag: "--require / --import",
+        reason:
+            "Preloads arbitrary code. This is the injection vector the launcher's sealed " +
+            "environment exists to block; offering it in the UI reopens the door by hand.",
+    },
+    {
+        flag: "NODE_TLS_REJECT_UNAUTHORIZED",
+        reason:
+            "Disables certificate validation entirely. Users find it on forums as the fix " +
+            "for a TLS error. Use the Extra CA certificates setting instead.",
+    },
+    {
+        flag: "--no-deprecation",
+        reason:
+            "Hides warnings. This app exists to make what is happening visible; a control " +
+            "whose purpose is concealment contradicts that.",
+    },
+    {
+        flag: "--jitless, --expose-gc, --prof",
+        reason:
+            "Developer tools with real costs and no user-comprehensible benefit. " +
+            "--jitless in particular makes everything slower with no visible cause.",
+    },
+];
+
+export function paramById(id: string): RuntimeParam | undefined {
+    return RUNTIME_PARAMS.find((p) => p.id === id);
+}

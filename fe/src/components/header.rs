@@ -1,4 +1,5 @@
 use crate::app::Route;
+use crate::components::StatusLight;
 use dioxus::prelude::*;
 use dioxus_router::{use_route, Link};
 
@@ -44,6 +45,7 @@ pub fn Header() -> Element {
                     style: "font-family: ui-sans-serif, system-ui, sans-serif; font-size: 0.975rem; color: {BRAND};",
                     "rn"
                 }
+                StatusLight {}
             }
 
             div { class: "flex-shrink-0 flex justify-end items-center",

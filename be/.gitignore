@@ -1,0 +1,13 @@
+node_modules/
+runtime/
+# Alternative bundled runtimes, resolved by launcher/src/layout.rs
+runtime-bun/
+runtime-deno/
+runtime-node*/
+.env
+
+# Profiling artifacts dropped in cwd by --cpu-prof / --heap-prof and V8 logging
+*.cpuprofile
+*.heapprofile
+isolate-*.log
+jit-*.dump
