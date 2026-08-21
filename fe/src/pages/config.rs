@@ -107,6 +107,16 @@ fn ParamBoards(resp: ParamsResponse, reload: Signal<u32>) -> Element {
         Panel {
             title: "Runtime".to_string(),
             subtitle: Some("which runtime runs the app".to_string()),
+            // Explains the concept. The buttons inside explain the choices —
+            // useless to someone who does not yet know what is being chosen.
+            info: Some(rsx! {
+                InfoButton {
+                    title: "What a runtime is".to_string(),
+                    what: "The program that executes the backend's JavaScript. Your code is text until something runs it: the runtime parses it, compiles it, manages its memory, and provides everything the language itself does not — timers, the filesystem, sockets, processes. rn's backend is JavaScript, so a runtime is not optional; it is the process the app lives inside. Node, Bun and Deno are three separate implementations of that job, each with its own engine, its own standard library, and its own idea of what a program is allowed to do.".to_string(),
+                    why: "It is worth understanding because it sets the boundaries of everything above it. The runtime decides how fast a script starts, which packages install at all, whether a dependency can reach the network behind your back, and how much memory the process may use before it is killed. Those are not library choices you can revisit per-file — they are properties of the process, fixed the moment it launches. The settings below tune the runtime; this panel picks which one you are tuning.".to_string(),
+                    if_wrong: "The common misconception is that this picks a language or a framework. It does not: the code is identical across all three. What changes is what runs it, and therefore what that code is capable of and constrained by. If you are unsure, Node is the right answer — it is what the app is bundled with and tested against, and the two alternatives exist for specific problems described in their own panels.".to_string(),
+                }
+            }),
 
             p { class: "text-gray-400 mb-3",
                 "What the launcher started, and what it should start next time. Changing either dropdown takes effect on restart."

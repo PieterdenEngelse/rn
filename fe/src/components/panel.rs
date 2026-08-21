@@ -5,6 +5,9 @@ use dioxus::prelude::*;
 pub fn Panel(
     #[props(default = None)] title: Option<String>,
     #[props(default = None)] subtitle: Option<String>,
+    /// Optional control rendered beside the title — an InfoButton explaining
+    /// what the whole panel is about, as opposed to any one row inside it.
+    #[props(default = None)] info: Option<Element>,
     children: Element,
 ) -> Element {
     rsx! {
@@ -15,6 +18,9 @@ pub fn Panel(
                         h3 { class: "text-sm font-semibold text-gray-200", "{title}" }
                         if let Some(subtitle) = subtitle {
                             span { class: "text-[10px] text-gray-400", "{subtitle}" }
+                        }
+                        if let Some(info) = info {
+                            {info}
                         }
                     }
                 }
