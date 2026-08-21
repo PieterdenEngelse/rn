@@ -3,8 +3,9 @@
 //! The *choices* (which runtime, which Node line) are registry parameters like
 //! any other, so they render through the normal params flow and cannot reach
 //! the page without their explanation. This board reports the other half: the
-//! measured reality of the running process, which the Runtime Rules require the
-//! UI to surface alongside the settings that claim to control it.
+//! state of the process that is actually running, read from it directly, which
+//! the Runtime Rules require the UI to surface alongside the settings that claim
+//! to control it.
 //!
 //! Keeping the two apart is the point. A settings value says what was asked
 //! for; this says what happened. Dev/prod drift lives in the gap.
@@ -56,7 +57,7 @@ pub fn RuntimeBoard(effective: serde_json::Value) -> Element {
         div { class: PARAM_BOARD_CLASS,
             div { class: "flex items-center gap-2 mb-3",
                 span { class: PARAM_BOARD_TITLE_CLASS, "Active runtime" }
-                span { class: PARAM_BOARD_NOTE_CLASS, "(measured, not configured)" }
+                span { class: PARAM_BOARD_NOTE_CLASS, "(read from the running process)" }
             }
 
             if !note.is_empty() {
