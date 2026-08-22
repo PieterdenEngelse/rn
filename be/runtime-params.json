@@ -237,6 +237,65 @@
       }
     },
     {
+      "id": "denoNoRemote",
+      "flag": "--no-remote",
+      "kind": "runtime-flag",
+      "type": "bool",
+      "default": false,
+      "appliesAt": "restart",
+      "appliesTo": [
+        "deno"
+      ],
+      "category": "network",
+      "label": "Deno no remote modules",
+      "info": {
+        "what": "Refuses to resolve a module from a URL. Deno imports can name a remote address directly, and by default it will fetch and cache one at first run; this makes that an error instead.",
+        "why": "It is the Deno half of what Bun's no auto-install does, and sharper: an import specifier is a URL, so code can reach the network simply by existing. A shipped app should execute what is on disk and nothing it downloaded on the way. --cached-only is the softer version, allowing a remote module only if it is already cached.",
+        "ifWrong": "An import naming a URL now fails at resolution, before anything runs. The error names the specifier, which makes vendoring it a deliberate step rather than something that already happened."
+      }
+    },
+    {
+      "id": "unhandledRejections",
+      "flag": "--unhandled-rejections",
+      "kind": "node-option",
+      "type": "enum",
+      "default": null,
+      "options": [
+        {
+          "value": "throw",
+          "label": "throw — crash the process (default)"
+        },
+        {
+          "value": "strict",
+          "label": "strict — raise as an uncaught exception"
+        },
+        {
+          "value": "warn",
+          "label": "warn — log and keep running"
+        },
+        {
+          "value": "warn-with-error-code",
+          "label": "warn, exit non-zero at the end"
+        },
+        {
+          "value": "none",
+          "label": "none — silent"
+        }
+      ],
+      "appliesAt": "restart",
+      "appliesTo": [
+        "node",
+        "bun"
+      ],
+      "category": "diagnostics",
+      "label": "Unhandled rejection policy",
+      "info": {
+        "what": "What happens when a promise rejects and nothing is there to catch it. The default is to crash: an unhandled rejection is treated as an uncaught exception and the process exits.",
+        "why": "Crashing is right for a request handler and arguable for an automation driver. One failed job taking the whole scheduler down means the other twenty do not run either. warn-with-error-code is the middle position — the run continues, every rejection is logged, and the exit status still says something went wrong, so a supervisor or a CI step notices.",
+        "ifWrong": "warn and none turn a crash into a silence, and silence is how a job that half-finished starts looking like a job that succeeded. Only reach for them if something else is checking the work actually happened."
+      }
+    },
+    {
       "id": "timezone",
       "flag": "TZ",
       "kind": "env",

@@ -15,6 +15,29 @@ import { monitorEventLoopDelay, performance } from "node:perf_hooks";
 import { getHeapStatistics, getHeapSpaceStatistics } from "node:v8";
 import { availableParallelism, loadavg, totalmem, freemem } from "node:os";
 import { createRequire } from "node:module";
+import { PerformanceObserver } from "node:perf_hooks";
+
+/**
+ * Garbage collection, accumulated since start. Node only: Bun and Deno accept
+ * the observer and never deliver a gc entry — measured by allocating hard
+ * enough to force 13 collections on Node and seeing zero on both.
+ *
+ * Cumulative rather than per-poll because collections are bursty; a rate over
+ * two seconds would mostly read zero and occasionally spike, which says less
+ * than a total does.
+ */
+let gcCount = 0;
+let gcTotalMs = 0;
+try {
+    new PerformanceObserver((list) => {
+        for (const e of list.getEntries()) {
+            gcCount += 1;
+            gcTotalMs += e.duration;
+        }
+    }).observe({ entryTypes: ["gc"] });
+} catch {
+    // Nothing to do: the figures stay at zero and are reported unsupported.
+}
 
 const MB = 1024 * 1024;
 const NS_TO_MS = 1e6;
@@ -66,6 +89,18 @@ export interface NodeMetrics {
         p99Ms: number;
         maxMs: number;
         utilizationPct: number;
+    };
+    /** Kernel-level counters, available under all three runtimes. */
+    resources: {
+        maxRssMB: number;
+        fsRead: number;
+        fsWrite: number;
+        ctxVoluntary: number;
+        ctxInvoluntary: number;
+    };
+    gc: {
+        count: number;
+        totalMs: number;
     };
     cpu: {
         userPct: number;
@@ -219,6 +254,8 @@ function unsupportedHere(): string[] {
                 // figure is the default this code passes through — not a size
                 // anything honours.
                 "concurrency.threadpoolSize",
+                // The observer accepts entryTypes: ["gc"] and never fires.
+                "gc",
             ];
         case "deno":
             // Deno runs V8, so heap spaces and active resources are real here,
@@ -232,6 +269,8 @@ function unsupportedHere(): string[] {
                 "eventLoop.delay",
                 // Deno has no libuv threadpool at all.
                 "concurrency.threadpoolSize",
+                // Same as Bun: the gc observer never delivers an entry.
+                "gc",
             ];
         default:
             return [];
@@ -248,6 +287,7 @@ function runtimeName(): "node" | "bun" | "deno" {
 
 export function collect(): NodeMetrics {
     const mem = process.memoryUsage();
+    const ru = process.resourceUsage();
     const heap = getHeapStatistics();
 
     // Which V8 space holds the most — tells you *what kind* of memory is
@@ -306,6 +346,15 @@ export function collect(): NodeMetrics {
             threadpoolSize: Number(process.env["UV_THREADPOOL_SIZE"] ?? 4),
             activeResources,
         },
+        resources: {
+            // maxRSS is in kilobytes, unlike everything else here.
+            maxRssMB: round(ru.maxRSS / 1024),
+            fsRead: ru.fsRead,
+            fsWrite: ru.fsWrite,
+            ctxVoluntary: ru.voluntaryContextSwitches,
+            ctxInvoluntary: ru.involuntaryContextSwitches,
+        },
+        gc: { count: gcCount, totalMs: Number(gcTotalMs.toFixed(1)) },
         host: {
             totalMemMB: round(totalmem() / MB),
             freeMemMB: round(freemem() / MB),

@@ -630,6 +630,35 @@ fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -
             subtitle: Some("the machine rn is running on".to_string()),
 
             div { class: "flex flex-wrap gap-4 items-stretch",
+                // ── Collection (Node only) ────────────────────────────
+                if !not_counted("gc") {
+                    Board {
+                        title: "Collection".to_string(),
+                        info: Some(rsx! {
+                            InfoButton {
+                                title: "Garbage collection".to_string(),
+                                what: "How many collections have run since this process started, and how long they have taken in total. Cumulative rather than per-poll, because collections are bursty: a two-second rate would read zero most of the time and spike occasionally, which says less than a total does.".to_string(),
+                                why: "Collection is the other way the loop stalls. Event-loop delay tells you something held a turn; this tells you whether the runtime itself was the something. A process spending seconds in collection is one allocating far more than it needs to, and the fix is in the code rather than in a setting.".to_string(),
+                                if_wrong: "Divide the total by the count for an average pause. Averages in single-digit milliseconds are ordinary. Tens of milliseconds means a large live heap being walked repeatedly, which is the case a lower heap memory limit makes worse rather than better.".to_string(),
+                            }
+                        }),
+                        Metric {
+                            label: "collections",
+                            value: format!("{}", m.gc.count),
+                            what: "Total collections since the process started.".to_string(),
+                            why: "On its own it says little; read against uptime it says how hard the allocator is working.".to_string(),
+                            if_wrong: "A count climbing quickly on an idle process means something is allocating in a loop with nothing to show for it.".to_string(),
+                        }
+                        Metric {
+                            label: "time collecting",
+                            value: format!("{} ms total", m.gc.total_ms),
+                            what: "Time spent in collection since start, added up.".to_string(),
+                            why: "This is time the loop was not running your code. Against uptime it is the share of the process's life spent tidying rather than working.".to_string(),
+                            if_wrong: "Growing as a fraction of uptime is the signal. A big total on a long-running process can be perfectly healthy.".to_string(),
+                        }
+                    }
+                }
+
                 // ── JavaScriptCore (Bun only) ─────────────────────────
                 if let Some(b) = m.bun.clone() {
                     Board {
@@ -701,6 +730,40 @@ fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -
                                 if_wrong: format!("A job failing with a permission error naming {name} is this row saying no. Widen the grant deliberately, or do not do the thing."),
                             }
                         }
+                    }
+                }
+
+                // ── Kernel counters ───────────────────────────────────
+                Board {
+                    title: "Process".to_string(),
+                    info: Some(rsx! {
+                        InfoButton {
+                            title: "What the kernel has counted".to_string(),
+                            what: "These come from the operating system rather than from the runtime, which is why they read the same under all three. They count what the process has actually done: the most memory it ever held, how many filesystem operations it has issued, and how often it was taken off the CPU.".to_string(),
+                            why: "They answer questions the runtime's own figures cannot. Heap used tells you what is live now; peak memory tells you the high-water mark someone else on this machine had to make room for. And a slow job with a large filesystem count is I/O-bound, which is the case the libuv thread pool setting exists for — nothing else on this page distinguishes that from being busy.".to_string(),
+                            if_wrong: "Filesystem counts are cumulative and never reset, so a large number on a long-running process means nothing by itself. Watch how fast it moves during a job, not where it sits.".to_string(),
+                        }
+                    }),
+                    Metric {
+                        label: "peak memory",
+                        value: format!("{} MB", m.resources.max_rss_mb),
+                        what: "The most resident memory this process has ever held, from the kernel's own accounting.".to_string(),
+                        why: "Current RSS moves; this does not go down. It is the figure that matters when deciding whether this app and something else fit on the same machine.".to_string(),
+                        if_wrong: "A peak far above the current value means a burst that has since been released. It still had to fit at the time.".to_string(),
+                    }
+                    Metric {
+                        label: "filesystem ops",
+                        value: format!("{} read · {} write", m.resources.fs_read, m.resources.fs_write),
+                        what: "Filesystem operations the kernel has performed for this process, counted since it started.".to_string(),
+                        why: "The counterpart to the thread pool board: file work is what those threads exist to run. A job that is slow while CPU and the event loop are both quiet, with these climbing, is waiting on the disk and on thread-pool slots.".to_string(),
+                        if_wrong: "Zero on a process that has plainly read files means the reads were served from cache without reaching the filesystem layer — normal, and a reason to compare movement rather than totals.".to_string(),
+                    }
+                    Metric {
+                        label: "context switches",
+                        value: format!("{} voluntary · {} forced", m.resources.ctx_voluntary, m.resources.ctx_involuntary),
+                        what: "How often the process gave up the CPU to wait for something, versus how often the scheduler took it away.".to_string(),
+                        why: "Voluntary switches are the normal shape of an I/O-bound program waiting. Forced ones mean the machine had more work than cores, so the process was interrupted mid-run.".to_string(),
+                        if_wrong: "Forced switches rising sharply means contention with other processes rather than anything inside rn — check the load average beside this before changing a setting here.".to_string(),
                     }
                 }
 

@@ -6,7 +6,17 @@
  * it is the one module form all three load without configuration.
  */
 const v8 = require("node:v8");
-const { monitorEventLoopDelay, performance } = require("node:perf_hooks");
+const { monitorEventLoopDelay, performance, PerformanceObserver } = require("node:perf_hooks");
+
+// Collections only arrive if the runtime emits them; allocate hard enough that
+// a runtime which does would certainly have run one by the time we look.
+let gcSeen = 0;
+try {
+    new PerformanceObserver((l) => { gcSeen += l.getEntries().length; }).observe({ entryTypes: ["gc"] });
+} catch { /* counted as unsupported below */ }
+const churn = [];
+for (let i = 0; i < 400000; i++) churn.push({ i, s: "x".repeat(20) });
+churn.length = 0;
 
 const runtime = process.versions.bun ? "bun" : process.versions.deno ? "deno" : "node";
 const version = process.versions[runtime] ?? process.version;
@@ -42,6 +52,8 @@ setTimeout(() => {
         // rather than V8's real ones reported.
         const spaces = v8.getHeapSpaceStatistics().filter((s) => s.space_used_size > 0);
         if (spaces.length <= 1) unsupported.push("memory.largestSpace");
+
+        if (gcSeen === 0) unsupported.push("gc");
 
         // libuv exists only under node.
         if (runtime !== "node") unsupported.push("concurrency.threadpoolSize");

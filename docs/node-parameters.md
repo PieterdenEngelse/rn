@@ -21,6 +21,8 @@ scales with installed RAM, so expect a different number elsewhere.
 | **Bun no auto-install** | `--no-install` (NODE_OPTIONS) | off | — | on restart |
 | **Deno V8 flags** | `--v8-flags` (NODE_OPTIONS) | unset (system default) | — | on restart |
 | **Block native addons** | `--no-addons` (NODE_OPTIONS) | off | — | on restart |
+| **Deno no remote modules** | `--no-remote` (NODE_OPTIONS) | off | — | on restart |
+| **Unhandled rejection policy** | `--unhandled-rejections` (NODE_OPTIONS) | unset (system default) | — | on restart |
 | **Time zone** | `TZ` | unset (system default) | — | on restart |
 | **Extra CA certificates** | `NODE_EXTRA_CA_CERTS` | unset (system default) | — | on restart |
 | **Trace warnings** | `--trace-warnings` (NODE_OPTIONS) | off | — | on restart |
@@ -139,6 +141,16 @@ Default: off · Takes effect: on restart · Settings key: `bunNoOrphans`
 
 Default: off · Takes effect: on restart · Settings key: `bunNoInstall`
 
+### Deno no remote modules — `--no-remote`
+
+**What it does.** Refuses to resolve a module from a URL. Deno imports can name a remote address directly, and by default it will fetch and cache one at first run; this makes that an error instead.
+
+**Why you would change it.** It is the Deno half of what Bun's no auto-install does, and sharper: an import specifier is a URL, so code can reach the network simply by existing. A shipped app should execute what is on disk and nothing it downloaded on the way. --cached-only is the softer version, allowing a remote module only if it is already cached.
+
+**If it's wrong.** An import naming a URL now fails at resolution, before anything runs. The error names the specifier, which makes vendoring it a deliberate step rather than something that already happened.
+
+Default: off · Takes effect: on restart · Settings key: `denoNoRemote`
+
 ### Extra CA certificates — `NODE_EXTRA_CA_CERTS`
 
 **What it does.** Path to a PEM file of additional trusted certificate authorities, added to Node's built-in list.
@@ -161,19 +173,17 @@ Default: unset (system default) · Takes effect: on restart · Settings key: `ex
 
 Default: off · Takes effect: on restart · Settings key: `noAddons`
 
-## Time
-
-### Time zone — `TZ`
-
-**What it does.** The time zone every Date and every schedule is interpreted in. Left unset, Node follows the operating system, and the placeholder shows which zone that currently resolves to. The dropdown lists the common zones; any other IANA name can be typed in.
-
-**Why you would change it.** Pin it when jobs must run at a fixed local time regardless of what the machine thinks, or when logs are compared across machines. Use an IANA name such as Europe/Amsterdam or UTC.
-
-**If it's wrong.** Nothing errors. Timestamps are quietly wrong and scheduled jobs fire at the wrong hour — usually noticed only after a daylight-saving change.
-
-Default: unset (system default) · Takes effect: on restart · Settings key: `timezone`
-
 ## Diagnostics
+
+### Unhandled rejection policy — `--unhandled-rejections`
+
+**What it does.** What happens when a promise rejects and nothing is there to catch it. The default is to crash: an unhandled rejection is treated as an uncaught exception and the process exits.
+
+**Why you would change it.** Crashing is right for a request handler and arguable for an automation driver. One failed job taking the whole scheduler down means the other twenty do not run either. warn-with-error-code is the middle position — the run continues, every rejection is logged, and the exit status still says something went wrong, so a supervisor or a CI step notices.
+
+**If it's wrong.** warn and none turn a crash into a silence, and silence is how a job that half-finished starts looking like a job that succeeded. Only reach for them if something else is checking the work actually happened.
+
+Default: unset (system default) · Takes effect: on restart · Settings key: `unhandledRejections`
 
 ### Trace warnings — `--trace-warnings`
 
@@ -214,6 +224,18 @@ Default: 10 · Takes effect: immediately · Settings key: `stackTraceLimit`
 **If it's wrong.** Snapshots are large and pause the process while written. Choosing a signal the process uses for something else can kill it.
 
 Default: unset (system default) · Takes effect: on restart · Settings key: `heapSnapshotSignal`
+
+## Time
+
+### Time zone — `TZ`
+
+**What it does.** The time zone every Date and every schedule is interpreted in. Left unset, Node follows the operating system, and the placeholder shows which zone that currently resolves to. The dropdown lists the common zones; any other IANA name can be typed in.
+
+**Why you would change it.** Pin it when jobs must run at a fixed local time regardless of what the machine thinks, or when logs are compared across machines. Use an IANA name such as Europe/Amsterdam or UTC.
+
+**If it's wrong.** Nothing errors. Timestamps are quietly wrong and scheduled jobs fire at the wrong hour — usually noticed only after a daylight-saving change.
+
+Default: unset (system default) · Takes effect: on restart · Settings key: `timezone`
 
 ## Output
 

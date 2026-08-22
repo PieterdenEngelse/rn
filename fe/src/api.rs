@@ -341,11 +341,29 @@ pub struct DenoMetrics {
     #[serde(rename = "bindAddressAllowed")] pub bind_address_allowed: bool,
 }
 
+/// Kernel counters, reported by all three runtimes.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct NodeResources {
+    #[serde(rename = "maxRssMB")] pub max_rss_mb: f64,
+    #[serde(rename = "fsRead")] pub fs_read: u64,
+    #[serde(rename = "fsWrite")] pub fs_write: u64,
+    #[serde(rename = "ctxVoluntary")] pub ctx_voluntary: u64,
+    #[serde(rename = "ctxInvoluntary")] pub ctx_involuntary: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct NodeGc {
+    pub count: u64,
+    #[serde(rename = "totalMs")] pub total_ms: f64,
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct NodeMetrics {
     pub memory: NodeMemory,
     #[serde(rename = "eventLoop")] pub event_loop: NodeEventLoop,
     pub cpu: NodeCpu,
+    pub resources: NodeResources,
+    pub gc: NodeGc,
     pub concurrency: NodeConcurrency,
     pub host: NodeHost,
     pub versions: std::collections::BTreeMap<String, String>,
