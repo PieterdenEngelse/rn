@@ -50,12 +50,15 @@ pub fn InfoButton(
 
         if open() {
             div {
-                class: "fixed inset-0 flex items-center justify-center bg-black/70 p-4",
+                class: "fixed inset-0 flex bg-black/70",
                 style: "z-index: 1110;",
                 onclick: move |_| open.set(false),
                 div {
-                    // No max-w: the panel tracks the window like the pages do.
-                    class: "bg-gray-900 border border-gray-700 rounded-lg p-6 w-[90vw] max-h-[95vh] overflow-y-auto shadow-xl text-sm space-y-4",
+                    // Edge to edge: no vw/vh fractions, no backdrop inset, no
+                    // rounding or border to imply a box floating on something.
+                    // The x is the only way out, since there is no outside left
+                    // to click.
+                    class: "bg-gray-900 p-6 w-full h-full overflow-y-auto text-sm space-y-4",
                     onclick: move |evt| evt.stop_propagation(),
 
                     div { class: "flex items-center justify-between",
