@@ -72,11 +72,21 @@ Default: unset (system default) · Takes effect: on restart · Settings key: `ma
 
 ### libuv thread pool — `UV_THREADPOOL_SIZE`
 
-**What it does.** Size of libuv's thread pool, which runs file system operations, DNS lookups, zlib and some crypto. Default 4, regardless of CPU count.
+**What it does.** Size of libuv's thread pool: a fixed set of operating-system threads that exist to do blocking work off the main thread. Default 4, regardless of how many cores the machine has.
 
-**Why you would change it.** The highest-leverage setting for file automation. A job touching thousands of files spends its time queued behind these 4 threads.
+These threads never run JavaScript. A thread takes a blocking call, waits in the kernel for it to finish, and posts the result back to the event loop, which then runs your callback on the one JavaScript thread as usual. The pool is how a single-threaded runtime does slow I/O without stopping.
+
+It covers filesystem calls, dns.lookup, zlib, and the crypto functions with no non-blocking form — pbkdf2, scrypt, randomBytes. It does not cover network sockets: those are event-driven through epoll or kqueue and need no thread at all, which is why a server handling thousands of connections is unaffected by this number. Note dns.lookup uses the pool but dns.resolve does not, because the first calls the blocking system resolver and the second speaks DNS over a socket.
+
+This is not node:worker_threads, despite the similar names. Those are real JavaScript threads you create in code, each with its own V8 isolate and its own event loop, and this setting has no effect on them. The threads here are invisible: you never see one, never schedule onto one, and only notice them as the reason a filesystem job is or is not waiting.
+
+**Why you would change it.** The highest-leverage setting for file automation. A job touching thousands of files spends its time queued behind these 4 threads — the work is not slow, it is waiting for a slot.
+
+It follows from what the pool covers that raising it helps exactly one shape of workload: many concurrent filesystem, zlib or password-hashing operations. If the automation is mostly network calls, or mostly computation in JavaScript, this number changes nothing.
 
 **If it's wrong.** Too high wastes memory and adds contention. Above 1024 libuv silently clamps — a value of 2000 starts with no warning and behaves as 1024.
+
+The symptom of it being too low is a job that is slow while the machine looks idle: low CPU, low event-loop utilisation, and the Monitor's thread pool figure sitting at its ceiling. That combination is this setting and almost nothing else.
 
 Default: 4 · Takes effect: on restart · Settings key: `threadpoolSize`
 
