@@ -24,7 +24,7 @@ pub fn MonitorNode() -> Element {
     });
 
     rsx! {
-        div { class: "p-6 max-w-6xl mx-auto space-y-4",
+        div { class: "p-6 w-full space-y-4",
             match metrics() {
                 Some(Ok(m)) => rsx! { NodeBoards { m, paused } },
                 Some(Err(e)) => rsx! {

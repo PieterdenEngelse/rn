@@ -9,7 +9,7 @@ pub fn Monitor() -> Element {
     let status = use_resource(fetch_status);
 
     rsx! {
-        div { class: "p-6 max-w-5xl mx-auto space-y-4",
+        div { class: "p-6 w-full space-y-4",
             match &*status.read_unchecked() {
                 Some(Ok(s)) => rsx! { StatusBoards { status: s.clone() } },
                 Some(Err(e)) => rsx! {

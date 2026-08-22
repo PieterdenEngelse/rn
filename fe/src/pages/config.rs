@@ -21,7 +21,7 @@ pub fn Config() -> Element {
     });
 
     rsx! {
-        div { class: "p-6 max-w-7xl mx-auto space-y-4",
+        div { class: "p-6 w-full space-y-4",
             match &*data.read_unchecked() {
                 Some(Ok(resp)) => rsx! {
                     RestartBanner {
@@ -35,12 +35,12 @@ pub fn Config() -> Element {
                     Panel { title: "Runtime settings".to_string(),
                         p { class: "text-red-400 font-medium text-sm", "Backend unreachable" }
                         p { class: "text-gray-300 mt-1", "{err}" }
-                        p { class: "text-gray-400 mt-2",
+                        p { class: "text-gray-400 mt-2 max-w-3xl",
                             "Start it with "
                             code { class: "text-gray-200", "./launcher/target/debug/rn" }
                             " — that supervises the backend, so the restart button works."
                         }
-                        p { class: "text-gray-400 mt-1",
+                        p { class: "text-gray-400 mt-1 max-w-3xl",
                             "Or "
                             code { class: "text-gray-200", "cd be && npm run serve" }
                             " to run it unsupervised (restarts must then be done by hand)."
@@ -117,7 +117,7 @@ fn ParamBoards(resp: ParamsResponse, reload: Signal<u32>) -> Element {
                 }
             }),
 
-            p { class: "text-gray-400 mb-3",
+            p { class: "text-gray-400 mb-3 max-w-3xl",
                 "What the launcher started, and what it should start next time. Changing either dropdown takes effect on restart."
             }
 
@@ -138,7 +138,7 @@ fn ParamBoards(resp: ParamsResponse, reload: Signal<u32>) -> Element {
             }
 
             if !runtime_rows_empty {
-                p { class: "text-gray-400 mt-3",
+                p { class: "text-gray-400 mt-3 max-w-3xl",
                     "Both sections share one draft — use Save below to apply changes made here."
                 }
             }
@@ -148,7 +148,7 @@ fn ParamBoards(resp: ParamsResponse, reload: Signal<u32>) -> Element {
             title: "Runtime settings".to_string(),
             subtitle: Some(format!("{} of 1,035 Node flags", resp.params.len())),
 
-            p { class: "text-gray-400 mb-3",
+            p { class: "text-gray-400 mb-3 max-w-3xl",
                 "Settings for the Node runtime rn ships with. Everything except stack trace depth is read once when the process starts."
             }
 
@@ -220,7 +220,7 @@ fn ParamBoards(resp: ParamsResponse, reload: Signal<u32>) -> Element {
         }
 
         Panel { title: "Deliberately not exposed".to_string(),
-            p { class: "text-gray-400 mb-2",
+            p { class: "text-gray-400 mb-2 max-w-3xl",
                 "These are decisions, not omissions — each has a reason a user would want it and a better reason not to offer it."
             }
             div { class: "space-y-2",

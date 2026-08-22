@@ -8,7 +8,7 @@ pub fn MonitorJobs() -> Element {
     let jobs = use_resource(fetch_jobs);
 
     rsx! {
-        div { class: "p-6 max-w-5xl mx-auto space-y-4",
+        div { class: "p-6 w-full space-y-4",
             Panel {
                 title: "Jobs".to_string(),
                 subtitle: Some("automations in flight".to_string()),

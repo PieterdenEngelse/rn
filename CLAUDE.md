@@ -146,6 +146,16 @@ port comes only from the `--port` flag, which `fe/serve.sh` supplies. Running
 hand-edit `output.css`. Re-run `npm run css:build` after adding class names that
 Tailwind hasn't seen yet (or keep `npm run css:watch` running).
 
+## Page width
+
+Pages fill the browser window. The page container is `p-6 w-full space-y-4` —
+no `max-w-*`, no `mx-auto`. Boards, tables and metric tiles should use the room
+a wide display gives them rather than sitting letterboxed in the middle of it.
+
+The exception is running prose. A line longer than about 90 characters is hard
+to read, so a block of explanatory text carries its own `max-w-3xl`; panels of
+controls do not. Info panels already cap themselves and stay as they are.
+
 ## UI Color Rules
 
 - **Minimum readable text on dark tiles**: `text-gray-400` — never use `text-gray-500` or darker for any label or secondary text the user needs to read
