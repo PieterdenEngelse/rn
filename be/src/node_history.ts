@@ -75,7 +75,32 @@ export interface HistoryResponse {
     samples: Sample[];
     /** Lifetime distribution of loop delay — the shape, not the timeline. */
     loopPercentiles: { label: string; ms: number }[];
+    /**
+     * Series this runtime does not actually measure. Same reasoning as the live
+     * tiles: a runtime that never reports loop delay records a zero every two
+     * seconds, and a chart of those zeros is a confident flat line claiming the
+     * loop never blocked. Absent beats wrong.
+     */
+    unsupported: string[];
+    /**
+     * When this process started, epoch ms. History cannot predate it — the
+     * samples live in memory and a restart empties them — so the chart marks
+     * the boundary rather than letting an empty left half read as quiet.
+     */
+    startedAt: number;
 }
+
+/** Matches runtimeName() in node_metrics; kept local to avoid a cycle. */
+function unsupportedSeries(): string[] {
+    const v = process.versions as Record<string, string | undefined>;
+    // Measured, not assumed — see tools/probe-runtime.cjs. Deno accepts the
+    // event-loop histogram and never moves it, so every delay series under it
+    // would be zero.
+    if (v.deno) return ["loopP50Ms", "loopP99Ms", "loopMaxMs"];
+    return [];
+}
+
+const STARTED_AT = Date.now() - Math.round(process.uptime() * 1000);
 
 export function history(): HistoryResponse {
     return {
@@ -84,6 +109,8 @@ export function history(): HistoryResponse {
         heapLimitMB: Number((getHeapStatistics().heap_size_limit / MB).toFixed(0)),
         samples: [...samples],
         loopPercentiles: [],
+        unsupported: unsupportedSeries(),
+        startedAt: STARTED_AT,
     };
 }
 
@@ -93,6 +120,10 @@ export function withDistribution(
     max: number,
 ): HistoryResponse {
     const base = history();
+    if (base.unsupported.includes("loopP50Ms")) {
+        // The distribution comes from the same inert histogram as the series.
+        return base;
+    }
     base.loopPercentiles = [
         { label: "p50", ms: delayMs(percentile(50)) },
         { label: "p75", ms: delayMs(percentile(75)) },

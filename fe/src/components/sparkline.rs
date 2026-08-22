@@ -18,6 +18,11 @@ pub fn Sparkline(
     /// Appended to the max label, e.g. "MB".
     #[props(default = String::new())]
     unit: String,
+    /// Fraction of the window, from the left, that predates this process.
+    /// Shaded and ruled, because an empty stretch otherwise reads as a quiet
+    /// stretch — the opposite of "we were not running".
+    #[props(default = 0.0)]
+    before_start: f64,
 ) -> Element {
     let width = 240.0_f64;
     let h = height as f64;
@@ -61,6 +66,26 @@ pub fn Sparkline(
                 view_box: "0 0 {width} {h}",
                 preserve_aspect_ratio: "none",
                 role: "img",
+
+                // The stretch before this process existed, shaded and closed
+                // with a rule at the moment it started. Drawn first so the data
+                // sits on top of it.
+                if before_start > 0.0 {
+                    {
+                        let w = (before_start.clamp(0.0, 1.0)) * width;
+                        rsx! {
+                            rect {
+                                x: "0", y: "0", width: "{w:.1}", height: "{h}",
+                                fill: "#374151", fill_opacity: "0.45",
+                            }
+                            line {
+                                x1: "{w:.1}", y1: "0", x2: "{w:.1}", y2: "{h}",
+                                stroke: "#9ca3af", stroke_width: "1",
+                                stroke_dasharray: "2 2",
+                            }
+                        }
+                    }
+                }
 
                 // Baseline
                 line {

@@ -193,6 +193,7 @@ fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -
                     if let Some(h) = hist.as_ref() {
                         div { class: "mb-2",
                             Sparkline {
+                                    before_start: h.before_start_fraction(),
                                 series: vec![
                                     Series {
                                         label: "heap".to_string(),
@@ -421,9 +422,10 @@ fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -
                             ],
                         }
                     }),
-                    if let Some(h) = hist.as_ref() {
+                    if let Some(h) = hist.as_ref().filter(|h| h.measures("loopP50Ms")) {
                         div { class: "mb-2",
                             Sparkline {
+                                    before_start: h.before_start_fraction(),
                                 series: vec![
                                     Series {
                                         label: "p50".to_string(),

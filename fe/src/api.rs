@@ -465,6 +465,29 @@ pub struct NodeHistory {
     #[serde(rename = "heapLimitMB")] pub heap_limit_mb: f64,
     pub samples: Vec<HistorySample>,
     #[serde(rename = "loopPercentiles")] pub loop_percentiles: Vec<LoopPercentile>,
+    /// Series this runtime does not measure; charting them would draw zeros.
+    #[serde(default)]
+    pub unsupported: Vec<String>,
+    /// Epoch ms this process started — history cannot predate it.
+    #[serde(default, rename = "startedAt")] pub started_at: f64,
+}
+
+impl NodeHistory {
+    pub fn measures(&self, series: &str) -> bool {
+        !self.unsupported.iter().any(|u| u == series)
+    }
+
+    /// How much of the window predates this process, as a fraction. The chart
+    /// shades that part: an empty left half means "not running yet", which is a
+    /// different statement from "quiet".
+    pub fn before_start_fraction(&self) -> f64 {
+        let cap = self.capacity as f64;
+        if cap <= 0.0 {
+            return 0.0;
+        }
+        let missing = (cap - self.samples.len() as f64).max(0.0);
+        (missing / cap).clamp(0.0, 1.0)
+    }
 }
 
 pub async fn fetch_node_history() -> Result<NodeHistory, String> {
