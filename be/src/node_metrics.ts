@@ -158,3 +158,11 @@ export function collect(): NodeMetrics {
 export function resetEventLoopHistory(): void {
     loopDelay.reset();
 }
+
+/** The lifetime histogram, for the distribution shown beside the timeline. */
+export function lifetimeDelay(): { percentile: (p: number) => number; max: number } {
+    return {
+        percentile: (p: number) => loopDelay.percentile(p),
+        max: loopDelay.max,
+    };
+}

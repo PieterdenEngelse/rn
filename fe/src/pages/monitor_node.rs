@@ -1,6 +1,6 @@
-use crate::api::{fetch_node_metrics, NodeMetrics};
+use crate::api::{fetch_node_history, fetch_node_metrics, NodeHistory, NodeMetrics};
 use crate::components::param::*;
-use crate::components::{GlossaryEntry, InfoButton, Panel};
+use crate::components::{GlossaryEntry, InfoButton, Panel, Series, Sparkline};
 use dioxus::prelude::*;
 
 /// Monitor → Node. What the runtime is actually doing.
@@ -11,12 +11,17 @@ use dioxus::prelude::*;
 #[component]
 pub fn MonitorNode() -> Element {
     let mut metrics = use_signal(|| Option::<Result<NodeMetrics, String>>::None);
+    let mut hist = use_signal(|| Option::<NodeHistory>::None);
     let paused = use_signal(|| false);
 
     use_future(move || async move {
         loop {
             if !paused() {
                 metrics.set(Some(fetch_node_metrics().await));
+                // Same tick, so the plotted window and the live figures agree.
+                if let Ok(h) = fetch_node_history().await {
+                    hist.set(Some(h));
+                }
             }
             // Fast enough to see a job land, slow enough not to be the load.
             gloo_timers::future::TimeoutFuture::new(2_000).await;
@@ -26,7 +31,7 @@ pub fn MonitorNode() -> Element {
     rsx! {
         div { class: "p-6 w-full space-y-4",
             match metrics() {
-                Some(Ok(m)) => rsx! { NodeBoards { m, paused } },
+                Some(Ok(m)) => rsx! { NodeBoards { m, hist: hist(), paused } },
                 Some(Err(e)) => rsx! {
                     Panel { title: "Node".to_string(),
                         p { class: "text-red-400", "Backend unreachable" }
@@ -44,7 +49,7 @@ pub fn MonitorNode() -> Element {
 }
 
 #[component]
-fn NodeBoards(m: NodeMetrics, paused: Signal<bool>) -> Element {
+fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -> Element {
     let mut paused = paused;
     let heap_pct = m.memory.heap_used_pct;
 
@@ -83,10 +88,14 @@ fn NodeBoards(m: NodeMetrics, paused: Signal<bool>) -> Element {
                                 "how much of the time it is busy rather than waiting, and how ",
                                 "many handles and requests are still open.\n\n",
 
-                                "What they are not is history. Nothing is stored — no series, no ",
-                                "database, no file on disk. Each is read live and discarded once ",
-                                "the response is sent, which is why closing this page loses the ",
-                                "shape of what you were watching.",
+                                "History is deliberately shallow. The backend samples heap, ",
+                                "RSS and loop delay every two seconds and keeps the last five ",
+                                "minutes in memory — enough to show the shape of what just ",
+                                "happened, and enough to survive reloading this page, since the ",
+                                "window lives in the process rather than in the browser. ",
+                                "Nothing beyond that: no database, no file on disk. Samples ",
+                                "older than the window are dropped, and restarting rn starts the ",
+                                "window empty.",
                             ).to_string(),
                         },
                         GlossaryEntry {
@@ -152,6 +161,29 @@ fn NodeBoards(m: NodeMetrics, paused: Signal<bool>) -> Element {
 
                 // ── Memory ────────────────────────────────────────────
                 Board { title: "Memory".to_string(),
+                    if let Some(h) = hist.as_ref() {
+                        div { class: "mb-2",
+                            Sparkline {
+                                series: vec![
+                                    Series {
+                                        label: "heap".to_string(),
+                                        color: "#22c55e".to_string(),
+                                        points: h.samples.iter().map(|s| s.heap_used_mb).collect(),
+                                    },
+                                    Series {
+                                        label: "rss".to_string(),
+                                        color: "#60a5fa".to_string(),
+                                        points: h.samples.iter().map(|s| s.rss_mb).collect(),
+                                    },
+                                ],
+                                unit: " MB".to_string(),
+                                height: 44,
+                            }
+                            p { class: "text-[10px] text-gray-500",
+                                "last {window_minutes(h)} · heap limit {h.heap_limit_mb} MB"
+                            }
+                        }
+                    }
                     Metric {
                         label: "heap used",
                         value: format!("{} MB ({}%)", m.memory.heap_used_mb, heap_pct),
@@ -290,7 +322,125 @@ fn NodeBoards(m: NodeMetrics, paused: Signal<bool>) -> Element {
                 }
 
                 // ── Event loop ────────────────────────────────────────
-                Board { title: "Event loop".to_string(),
+                Board {
+                    title: "Event loop".to_string(),
+                    info: Some(rsx! {
+                        InfoButton {
+                            title: "The event loop".to_string(),
+                            what: concat!(
+                                "Node runs your JavaScript on one thread. The event loop is what ",
+                                "keeps that from being a limitation: instead of waiting for a ",
+                                "file read or a socket, it hands the work to the operating ",
+                                "system, moves on, and comes back when the answer is ready.\n\n",
+
+                                "It is a loop in the literal sense. Each turn — a tick — it walks ",
+                                "a fixed sequence of phases: expired timers, then pending ",
+                                "callbacks, then polling for new I/O, then check callbacks from ",
+                                "setImmediate, then close handlers. Every callback you have ever ",
+                                "written runs in one of those phases, and runs to completion ",
+                                "before the next one starts.\n\n",
+
+                                "That last part is the whole bargain. Nothing interrupts a ",
+                                "running callback — no pre-emption, no second thread arriving ",
+                                "mid-function — which is why you never need a mutex around a ",
+                                "shared object in Node. The cost is that a callback which takes ",
+                                "200ms holds the loop for 200ms, and everything else waits: ",
+                                "timers fire late, requests queue, and the process looks frozen ",
+                                "while using almost no CPU.\n\n",
+
+                                "The two numbers here measure exactly that bargain. Delay is how ",
+                                "late a timer fired, which is how long something else was ",
+                                "holding the turn. Utilisation is the share of time the loop ",
+                                "spent working rather than waiting for the operating system.",
+                            ).to_string(),
+                            why: concat!(
+                                "Because this is where slowness hides that CPU graphs do not ",
+                                "show. A process pinned at 100% CPU is easy to diagnose; a ",
+                                "process that is idle and still unresponsive is not, and the ",
+                                "answer is almost always here — one long synchronous call ",
+                                "between the loop and its next turn.\n\n",
+
+                                "The usual causes are ordinary code, not exotic bugs: a ",
+                                "readFileSync on a large file, JSON.parse of a huge payload, a ",
+                                "synchronous crypto or compression call, or a loop over an array ",
+                                "big enough to matter. Each is fine at small sizes and each ",
+                                "becomes a stall at large ones, which is why the problem tends ",
+                                "to appear in production and not in testing.",
+                            ).to_string(),
+                            if_wrong: concat!(
+                                "Delay in the low milliseconds and utilisation well under 1 is a ",
+                                "loop with room to spare. Delay climbing into the tens or ",
+                                "hundreds of milliseconds means something is holding turns, and ",
+                                "the fix is to break the work up or move it off-thread — a ",
+                                "worker thread, or a Rust component invoked from Node.\n\n",
+
+                                "Utilisation approaching 1 means the opposite problem: the loop ",
+                                "is never idle, so there is no spare capacity left rather than ",
+                                "one rude callback. That is a scaling limit, and adding more ",
+                                "asynchronous work will not help.",
+                            ).to_string(),
+                        }
+                    }),
+                    if let Some(h) = hist.as_ref() {
+                        div { class: "mb-2",
+                            Sparkline {
+                                series: vec![
+                                    Series {
+                                        label: "p50".to_string(),
+                                        color: "#22c55e".to_string(),
+                                        points: h.samples.iter().map(|s| s.loop_p50_ms).collect(),
+                                    },
+                                    Series {
+                                        label: "p99".to_string(),
+                                        color: "#eab308".to_string(),
+                                        points: h.samples.iter().map(|s| s.loop_p99_ms).collect(),
+                                    },
+                                    Series {
+                                        label: "max".to_string(),
+                                        color: "#ec4899".to_string(),
+                                        points: h.samples.iter().map(|s| s.loop_max_ms).collect(),
+                                    },
+                                ],
+                                unit: " ms".to_string(),
+                                height: 44,
+                            }
+                            p { class: "text-[10px] text-gray-500",
+                                "last {window_minutes(h)} · per-interval, not cumulative"
+                            }
+
+                            if !h.loop_percentiles.is_empty() {
+                                div { class: "mt-2",
+                                    p { class: "text-[10px] text-gray-400 mb-1",
+                                        "distribution since start"
+                                    }
+                                    {
+                                        let worst = h
+                                            .loop_percentiles
+                                            .iter()
+                                            .map(|p| p.ms)
+                                            .fold(0.0_f64, f64::max)
+                                            .max(0.01);
+                                        rsx! {
+                                            div { class: "space-y-0.5",
+                                                for p in h.loop_percentiles.iter() {
+                                                    div { class: "flex items-center gap-2",
+                                                        span { class: "text-[10px] text-gray-400 w-6", "{p.label}" }
+                                                        div { class: "flex-1 bg-gray-900 rounded-sm h-2 overflow-hidden",
+                                                            div {
+                                                                class: "h-full",
+                                                                style: "width: {(p.ms / worst * 100.0).clamp(2.0, 100.0):.0}%; background-color: #0D98BA;",
+                                                            }
+                                                        }
+                                                        span { class: "text-[10px] text-gray-300 w-12 text-right", "{p.ms} ms" }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     Metric {
                         label: "delay p50",
                         value: format!("{} ms", m.event_loop.p50_ms),
@@ -396,11 +546,20 @@ fn NodeBoards(m: NodeMetrics, paused: Signal<bool>) -> Element {
 }
 
 #[component]
-fn Board(title: String, children: Element) -> Element {
+fn Board(
+    title: String,
+    /// Explains the board as a whole, where the metrics inside it each explain
+    /// only themselves.
+    #[props(default = None)] info: Option<Element>,
+    children: Element,
+) -> Element {
     rsx! {
         div { class: PARAM_BOARD_CLASS,
             div { class: "flex items-center gap-2 mb-3",
                 span { class: PARAM_BOARD_TITLE_CLASS, "{title}" }
+                if let Some(info) = info {
+                    {info}
+                }
             }
             div { class: PARAM_COLUMN_CLASS, {children} }
         }
@@ -426,6 +585,16 @@ fn Metric(
                 InfoButton { title: label, what, why, if_wrong, glossary }
             }
         }
+    }
+}
+
+/// How much wall-clock time the plotted window actually covers.
+fn window_minutes(h: &NodeHistory) -> String {
+    let secs = (h.samples.len() as f64 * h.sample_ms / 1000.0).round() as u64;
+    if secs < 90 {
+        format!("{secs}s")
+    } else {
+        format!("{}m", (secs as f64 / 60.0).round() as u64)
     }
 }
 

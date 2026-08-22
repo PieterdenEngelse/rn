@@ -28,7 +28,8 @@ import { config } from "./config.ts";
 const EXIT_RESTART = 75;
 import { step } from "./log.ts";
 import * as jobs from "./jobs.ts";
-import { collect as collectNodeMetrics } from "./node_metrics.ts";
+import { collect as collectNodeMetrics, lifetimeDelay } from "./node_metrics.ts";
+import { withDistribution } from "./node_history.ts";
 
 function send(res: ServerResponse, code: number, body: unknown): void {
     const json = JSON.stringify(body);
@@ -99,6 +100,12 @@ export function createApp() {
                 supervised: isSupervised(),
                 pending: pendingRestart(settings),
             });
+            return done(200);
+        }
+
+        if (url.pathname === "/api/node/history" && req.method === "GET") {
+            const { percentile, max } = lifetimeDelay();
+            send(res, 200, withDistribution(percentile, max));
             return done(200);
         }
 

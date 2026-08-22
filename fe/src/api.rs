@@ -333,3 +333,36 @@ pub async fn fetch_node_metrics() -> Result<NodeMetrics, String> {
         .map_err(|e| format!("{e}"))?;
     resp.json::<NodeMetrics>().await.map_err(|e| format!("{e}"))
 }
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct HistorySample {
+    pub t: f64,
+    #[serde(rename = "heapUsedMB")] pub heap_used_mb: f64,
+    #[serde(rename = "rssMB")] pub rss_mb: f64,
+    #[serde(rename = "loopP50Ms")] pub loop_p50_ms: f64,
+    #[serde(rename = "loopP99Ms")] pub loop_p99_ms: f64,
+    #[serde(rename = "loopMaxMs")] pub loop_max_ms: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct LoopPercentile {
+    pub label: String,
+    pub ms: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct NodeHistory {
+    #[serde(rename = "sampleMs")] pub sample_ms: f64,
+    pub capacity: u32,
+    #[serde(rename = "heapLimitMB")] pub heap_limit_mb: f64,
+    pub samples: Vec<HistorySample>,
+    #[serde(rename = "loopPercentiles")] pub loop_percentiles: Vec<LoopPercentile>,
+}
+
+pub async fn fetch_node_history() -> Result<NodeHistory, String> {
+    let resp = gloo_net::http::Request::get(&format!("{API_BASE}/api/node/history"))
+        .send()
+        .await
+        .map_err(|e| format!("{e}"))?;
+    resp.json::<NodeHistory>().await.map_err(|e| format!("{e}"))
+}
