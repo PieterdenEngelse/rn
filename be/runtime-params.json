@@ -218,6 +218,25 @@
       }
     },
     {
+      "id": "noAddons",
+      "flag": "--no-addons",
+      "kind": "node-option",
+      "type": "bool",
+      "default": false,
+      "appliesAt": "restart",
+      "appliesTo": [
+        "node",
+        "bun"
+      ],
+      "category": "security",
+      "label": "Block native addons",
+      "info": {
+        "what": "Makes process.dlopen throw instead of loading a native addon, and turns off the \"node-addons\" export condition so a package resolving a native build for itself gets the JavaScript one instead. A blocked call fails with ERR_DLOPEN_DISABLED, which names the cause rather than looking like a missing file.",
+        "why": "A native addon is compiled C++ running inside this process with none of the language's guarantees: it can corrupt memory, crash the runtime outright, and it has to be rebuilt per platform and per runtime version. The project's own rule is to prefer moving that work to a Rust component invoked over a documented interface. This is that rule enforced rather than trusted — a dependency cannot quietly pull one in.",
+        "ifWrong": "A dependency that genuinely needs an addon stops working, loudly and at the point of loading. That is the intended outcome: the error names the package, and the decision of whether it belongs here becomes explicit."
+      }
+    },
+    {
       "id": "timezone",
       "flag": "TZ",
       "kind": "env",

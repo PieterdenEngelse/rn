@@ -30,7 +30,8 @@ export type Category =
     | "network"
     | "diagnostics"
     | "output"
-    | "runtime";
+    | "runtime"
+    | "security";
 
 export interface RuntimeParam {
     /** Stable key used in settings.json. Never rename — it's persisted. */
@@ -517,6 +518,39 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
         },
     },
     {
+        id: "noAddons",
+        flag: "--no-addons",
+        kind: "node-option",
+        type: "bool",
+        default: false,
+        appliesAt: "restart",
+        // Node takes it in NODE_OPTIONS, Bun as argv; both verified by watching
+        // process.dlopen fail with ERR_DLOPEN_DISABLED rather than the ordinary
+        // ERR_DLOPEN_FAILED. Deno rejects the flag outright.
+        appliesTo: ["node", "bun"],
+        category: "security",
+        label: "Block native addons",
+        info: {
+            what:
+                "Makes process.dlopen throw instead of loading a native addon, and turns " +
+                "off the \"node-addons\" export condition so a package resolving a native " +
+                "build for itself gets the JavaScript one instead. A blocked call fails " +
+                "with ERR_DLOPEN_DISABLED, which names the cause rather than looking like " +
+                "a missing file.",
+            why:
+                "A native addon is compiled C++ running inside this process with none of " +
+                "the language's guarantees: it can corrupt memory, crash the runtime " +
+                "outright, and it has to be rebuilt per platform and per runtime version. " +
+                "The project's own rule is to prefer moving that work to a Rust component " +
+                "invoked over a documented interface. This is that rule enforced rather " +
+                "than trusted — a dependency cannot quietly pull one in.",
+            ifWrong:
+                "A dependency that genuinely needs an addon stops working, loudly and at " +
+                "the point of loading. That is the intended outcome: the error names the " +
+                "package, and the decision of whether it belongs here becomes explicit.",
+        },
+    },
+    {
         id: "timezone",
         flag: "TZ",
         kind: "env",
@@ -705,6 +739,23 @@ export const WITHHELD: readonly { flag: string; reason: string }[] = [
             "recursion — it removes the check that would have raised 'Maximum call stack " +
             "size exceeded' and lets the process run off the end of its stack instead. " +
             "A catchable RangeError becomes a segfault with no JavaScript error at all.",
+    },
+    {
+        flag: "--insecure-http-parser",
+        reason:
+            "Accepts malformed HTTP headers instead of rejecting them. The danger is not " +
+            "leniency in itself, it is disagreement: a proxy in front reads a malformed " +
+            "request one way and this process reads it another, so an attacker can hide a " +
+            "second request inside the first and have it treated as trusted. Nothing rn " +
+            "does needs to parse broken HTTP.",
+    },
+    {
+        flag: "--tls-min-v1.0 / --tls-min-v1.1",
+        reason:
+            "Lowers the TLS floor to versions with known breaks. Since the peer influences " +
+            "which version gets negotiated, offering an old one means an attacker who can " +
+            "sit in the middle chooses it. A server too old for TLS 1.2 is a reason to fix " +
+            "the server, not to meet it there.",
     },
     {
         flag: "--preload (bun)",

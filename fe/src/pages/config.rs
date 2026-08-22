@@ -66,6 +66,7 @@ fn category_title(cat: &str) -> &str {
         "diagnostics" => "Diagnostics",
         "output" => "Output",
         "runtime" => "Runtime",
+        "security" => "Security",
         other => other,
     }
 }

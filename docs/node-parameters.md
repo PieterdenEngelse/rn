@@ -20,6 +20,7 @@ scales with installed RAM, so expect a different number elsewhere.
 | **Bun kill orphans** | `--no-orphans` (NODE_OPTIONS) | off | — | on restart |
 | **Bun no auto-install** | `--no-install` (NODE_OPTIONS) | off | — | on restart |
 | **Deno V8 flags** | `--v8-flags` (NODE_OPTIONS) | unset (system default) | — | on restart |
+| **Block native addons** | `--no-addons` (NODE_OPTIONS) | off | — | on restart |
 | **Time zone** | `TZ` | unset (system default) | — | on restart |
 | **Extra CA certificates** | `NODE_EXTRA_CA_CERTS` | unset (system default) | — | on restart |
 | **Trace warnings** | `--trace-warnings` (NODE_OPTIONS) | off | — | on restart |
@@ -148,6 +149,18 @@ Default: off · Takes effect: on restart · Settings key: `bunNoInstall`
 
 Default: unset (system default) · Takes effect: on restart · Settings key: `extraCaCerts`
 
+## security
+
+### Block native addons — `--no-addons`
+
+**What it does.** Makes process.dlopen throw instead of loading a native addon, and turns off the "node-addons" export condition so a package resolving a native build for itself gets the JavaScript one instead. A blocked call fails with ERR_DLOPEN_DISABLED, which names the cause rather than looking like a missing file.
+
+**Why you would change it.** A native addon is compiled C++ running inside this process with none of the language's guarantees: it can corrupt memory, crash the runtime outright, and it has to be rebuilt per platform and per runtime version. The project's own rule is to prefer moving that work to a Rust component invoked over a documented interface. This is that rule enforced rather than trusted — a dependency cannot quietly pull one in.
+
+**If it's wrong.** A dependency that genuinely needs an addon stops working, loudly and at the point of loading. That is the intended outcome: the error names the package, and the decision of whether it belongs here becomes explicit.
+
+Default: off · Takes effect: on restart · Settings key: `noAddons`
+
 ## Time
 
 ### Time zone — `TZ`
@@ -220,6 +233,8 @@ These are decisions, not omissions. Each has a reason a user would want it and a
 better reason not to give it to them.
 
 - **`--stack-size`** — Sounds like the companion to the memory limit and is not. It raises V8's call-stack ceiling, but the operating system fixed the real thread stack at about 1MB when the thread started, so setting it higher does not buy deeper recursion — it removes the check that would have raised 'Maximum call stack size exceeded' and lets the process run off the end of its stack instead. A catchable RangeError becomes a segfault with no JavaScript error at all.
+- **`--insecure-http-parser`** — Accepts malformed HTTP headers instead of rejecting them. The danger is not leniency in itself, it is disagreement: a proxy in front reads a malformed request one way and this process reads it another, so an attacker can hide a second request inside the first and have it treated as trusted. Nothing rn does needs to parse broken HTTP.
+- **`--tls-min-v1.0 / --tls-min-v1.1`** — Lowers the TLS floor to versions with known breaks. Since the peer influences which version gets negotiated, offering an old one means an attacker who can sit in the middle chooses it. A server too old for TLS 1.2 is a reason to fix the server, not to meet it there.
 - **`--preload (bun)`** — Bun's alias set for --require and --import, and the same injection vector: it runs arbitrary code before the app does. Withheld for the reason its Node counterpart is.
 - **`--inspect / --inspect-brk`** — Opens a debugger port on the user's machine. Anything that can reach it can run code in the process. A gated diagnostic at most, never a checkbox.
 - **`--require / --import`** — Preloads arbitrary code. This is the injection vector the launcher's sealed environment exists to block; offering it in the UI reopens the door by hand.
