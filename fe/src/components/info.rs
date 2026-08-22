@@ -54,11 +54,8 @@ pub fn InfoButton(
                 style: "z-index: 1110;",
                 onclick: move |_| open.set(false),
                 div {
-                    // Wide box, narrow columns. Capping the whole panel at one
-                    // readable line length wasted most of a wide display and
-                    // made a long panel a tall thin scroll; three columns use
-                    // the room without letting any line run past ~90 characters.
-                    class: "bg-gray-900 border border-gray-700 rounded-lg p-6 w-[90vw] max-w-6xl max-h-[95vh] overflow-y-auto shadow-xl text-sm space-y-4",
+                    // No max-w: the panel tracks the window like the pages do.
+                    class: "bg-gray-900 border border-gray-700 rounded-lg p-6 w-[90vw] max-h-[95vh] overflow-y-auto shadow-xl text-sm space-y-4",
                     onclick: move |evt| evt.stop_propagation(),
 
                     div { class: "flex items-center justify-between",
@@ -70,21 +67,17 @@ pub fn InfoButton(
                         }
                     }
 
-                    // Stacked on a narrow window, three columns once there is
-                    // room. The order is the reading order either way.
-                    div { class: "grid grid-cols-1 lg:grid-cols-3 gap-6 items-start",
-                        div {
-                            h4 { class: "text-sm font-semibold text-gray-300", "What it does" }
-                            p { class: "mt-1 text-gray-200 leading-relaxed whitespace-pre-line", "{what}" }
-                        }
-                        div {
-                            h4 { class: "text-sm font-semibold text-gray-300", "Why you would change it" }
-                            p { class: "mt-1 text-gray-200 leading-relaxed whitespace-pre-line", "{why}" }
-                        }
-                        div {
-                            h4 { class: "text-sm font-semibold text-gray-300", "If it's wrong" }
-                            p { class: "mt-1 text-gray-200 leading-relaxed whitespace-pre-line", "{if_wrong}" }
-                        }
+                    div {
+                        h4 { class: "text-sm font-semibold text-gray-300", "What it does" }
+                        p { class: "mt-1 text-gray-200 leading-relaxed whitespace-pre-line", "{what}" }
+                    }
+                    div {
+                        h4 { class: "text-sm font-semibold text-gray-300", "Why you would change it" }
+                        p { class: "mt-1 text-gray-200 leading-relaxed whitespace-pre-line", "{why}" }
+                    }
+                    div {
+                        h4 { class: "text-sm font-semibold text-gray-300", "If it's wrong" }
+                        p { class: "mt-1 text-gray-200 leading-relaxed whitespace-pre-line", "{if_wrong}" }
                     }
                 }
             }

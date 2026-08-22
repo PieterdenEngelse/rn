@@ -154,8 +154,8 @@ a wide display gives them rather than sitting letterboxed in the middle of it.
 
 The exception is running prose. A line longer than about 90 characters is hard
 to read, so a block of explanatory text carries its own `max-w-3xl`; panels of
-controls do not. Info panels follow the same idea one level down: the box is
-wide, and its three sections become columns so no single line gets long.
+controls do not. Info panels take the window as well — `w-[90vw]`, no cap,
+sections stacked in reading order. No columns.
 
 ## UI Color Rules
 
