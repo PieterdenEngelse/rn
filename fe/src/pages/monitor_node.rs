@@ -51,9 +51,8 @@ pub fn MonitorNode() -> Element {
 #[component]
 fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -> Element {
     let mut paused = paused;
-    // Which tier the charts draw. Five minutes answers "what is it doing";
-    // an hour answers "what did it do", and only one fits on a sparkline.
-    let mut hour_view = use_signal(|| false);
+    // Which window the History panel draws. Index into hist.tiers.
+    let mut window = use_signal(|| 0usize);
     let heap_pct = m.memory.heap_used_pct;
 
     // A shim that answers 0 is indistinguishable from a genuinely quiet
@@ -96,12 +95,6 @@ fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -
                     style: "color: #22d3ee;",
                     onclick: move |_| paused.set(!paused()),
                     if paused() { "Resume sampling" } else { "Pause sampling" }
-                }
-                button {
-                    class: "text-xs cursor-pointer hover:underline bg-transparent border-0 p-0",
-                    style: "color: #22d3ee;",
-                    onclick: move |_| hour_view.set(!hour_view()),
-                    if hour_view() { "Show last 5 minutes" } else { "Show last hour" }
                 }
                 InfoButton {
                     title: "Sampling".to_string(),
@@ -202,25 +195,17 @@ fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -
                     if let Some(h) = hist.as_ref() {
                         div { class: "mb-2",
                             Sparkline {
-                                    before_start: if hour_view() { h.coarse_before_start_fraction() } else { h.before_start_fraction() },
+                                    before_start: h.before_start_fraction(),
                                 series: vec![
                                     Series {
-                                        label: if hour_view() { "heap floor".to_string() } else { "heap".to_string() },
+                                        label: "heap".to_string(),
                                         color: "#22c55e".to_string(),
-                                        points: if hour_view() {
-                                            h.coarse.iter().map(|s| s.heap_floor_mb).collect()
-                                        } else {
-                                            h.samples.iter().map(|s| s.heap_used_mb).collect()
-                                        },
+                                        points: h.samples.iter().map(|s| s.heap_used_mb).collect(),
                                     },
                                     Series {
-                                        label: if hour_view() { "rss peak".to_string() } else { "rss".to_string() },
+                                        label: "rss".to_string(),
                                         color: "#60a5fa".to_string(),
-                                        points: if hour_view() {
-                                            h.coarse.iter().map(|s| s.rss_peak_mb).collect()
-                                        } else {
-                                            h.samples.iter().map(|s| s.rss_mb).collect()
-                                        },
+                                        points: h.samples.iter().map(|s| s.rss_mb).collect(),
                                     },
                                 ],
                                 unit: " MB".to_string(),
@@ -442,34 +427,22 @@ fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -
                     if let Some(h) = hist.as_ref().filter(|h| h.measures("loopP50Ms")) {
                         div { class: "mb-2",
                             Sparkline {
-                                    before_start: if hour_view() { h.coarse_before_start_fraction() } else { h.before_start_fraction() },
+                                    before_start: h.before_start_fraction(),
                                 series: vec![
                                     Series {
-                                        label: if hour_view() { "worst p99".to_string() } else { "p50".to_string() },
+                                        label: "p50".to_string(),
                                         color: "#22c55e".to_string(),
-                                        points: if hour_view() {
-                                            h.coarse.iter().map(|s| s.loop_p99_ms).collect()
-                                        } else {
-                                            h.samples.iter().map(|s| s.loop_p50_ms).collect()
-                                        },
+                                        points: h.samples.iter().map(|s| s.loop_p50_ms).collect(),
                                     },
                                     Series {
-                                        label: if hour_view() { "worst max".to_string() } else { "p99".to_string() },
+                                        label: "p99".to_string(),
                                         color: "#eab308".to_string(),
-                                        points: if hour_view() {
-                                            h.coarse.iter().map(|s| s.loop_max_ms).collect()
-                                        } else {
-                                            h.samples.iter().map(|s| s.loop_p99_ms).collect()
-                                        },
+                                        points: h.samples.iter().map(|s| s.loop_p99_ms).collect(),
                                     },
                                     Series {
                                         label: "max".to_string(),
                                         color: "#ec4899".to_string(),
-                                        points: if hour_view() {
-                                            Vec::new()
-                                        } else {
-                                            h.samples.iter().map(|s| s.loop_max_ms).collect()
-                                        },
+                                        points: h.samples.iter().map(|s| s.loop_max_ms).collect(),
                                     },
                                 ],
                                 unit: " ms".to_string(),
@@ -651,6 +624,125 @@ fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -
                 }
                 }
 
+            }
+        }
+
+        if let Some(h) = hist.as_ref().filter(|h| !h.tiers.is_empty()) {
+            {
+                let idx = window().min(h.tiers.len() - 1);
+                let tier = &h.tiers[idx];
+                let coverage = tier.coverage_pct();
+                let marker = h.tier_before_start_fraction(tier);
+                let measures_loop = h.measures("loopP99Ms");
+                rsx! {
+                    Panel {
+                        title: "History".to_string(),
+                        subtitle: Some(format!("{} — {}% recorded", tier.label, coverage)),
+                        info: Some(rsx! {
+                            InfoButton {
+                                title: "The longer windows".to_string(),
+                                what: concat!(
+                                    "Five tiers of fixed-width buckets, each a summary of the ",
+                                    "two-second samples that fell inside it: a minute wide for ",
+                                    "the hour, fifteen for the day, an hour for the week, six ",
+                                    "for the month, a day for the year. 809 buckets in total, ",
+                                    "whether rn has been running an afternoon or a year.\n\n",
+
+                                    "Buckets are aligned to the clock rather than counted off in ",
+                                    "groups of samples. That matters here: restarts are frequent ",
+                                    "and deliberate, and counting would start the group again ",
+                                    "each time, so a process restarted every twenty minutes ",
+                                    "would never finish an hourly bucket. Aligning means two ",
+                                    "runs either side of a boundary fill the same bucket.\n\n",
+
+                                    "Each bucket keeps the floor of the heap and the worst of ",
+                                    "everything else, never an average. All four combine the ",
+                                    "same way at any width — the minimum of minimums, the ",
+                                    "maximum of maximums — so a day built from hours says the ",
+                                    "same thing as a day built from samples.",
+                                ).to_string(),
+                                why: concat!(
+                                    "The live boards answer what is happening now. This answers ",
+                                    "what happened, which is the question you have after the ",
+                                    "fact — a job that ran slowly overnight, memory that is ",
+                                    "higher on Monday than it was on Friday.\n\n",
+
+                                    "The heap floor is the series to read for a leak. A process ",
+                                    "that reclaims everything it allocates returns to the same ",
+                                    "level after every collection, so a floor drifting upward ",
+                                    "across a week is a leak in a way no single reading can ",
+                                    "show.",
+                                ).to_string(),
+                                if_wrong: concat!(
+                                    "Read the percentage in the heading before the shape. ",
+                                    "Buckets exist only for time rn was running, and a chart ",
+                                    "drawn from eight buckets looks exactly like one drawn from ",
+                                    "365 — the line is simply shorter. Ten per cent of a year ",
+                                    "is five weeks of scattered running, not a quiet year.\n\n",
+
+                                    "Gaps are not drawn. A missing bucket is skipped rather than ",
+                                    "shown as a break, so two points beside each other may be ",
+                                    "minutes or months apart on the longer tiers.",
+                                ).to_string(),
+                            }
+                        }),
+
+                        div { class: "flex flex-wrap items-center gap-3 mb-3",
+                            for (i, t) in h.tiers.iter().enumerate() {
+                                button {
+                                    class: "text-xs cursor-pointer bg-transparent border-0 p-0 hover:underline",
+                                    style: if i == idx { "color: #22d3ee; font-weight: 600;" } else { "color: #9ca3af;" },
+                                    onclick: move |_| window.set(i),
+                                    "{t.label}"
+                                }
+                            }
+                            span { class: "text-gray-400 text-xs",
+                                "{tier.buckets.len()} of {tier.capacity} buckets"
+                            }
+                        }
+
+                        div { class: "flex flex-wrap gap-4 items-stretch",
+                            Board { title: "Memory".to_string(),
+                                Sparkline {
+                                    before_start: marker,
+                                    unit: "MB".to_string(),
+                                    series: vec![
+                                        Series {
+                                            label: "heap floor".to_string(),
+                                            color: "#22c55e".to_string(),
+                                            points: tier.buckets.iter().map(|b| b.heap_floor_mb).collect(),
+                                        },
+                                        Series {
+                                            label: "rss peak".to_string(),
+                                            color: "#60a5fa".to_string(),
+                                            points: tier.buckets.iter().map(|b| b.rss_peak_mb).collect(),
+                                        },
+                                    ],
+                                }
+                            }
+                            if measures_loop {
+                                Board { title: "Event loop".to_string(),
+                                    Sparkline {
+                                        before_start: marker,
+                                        unit: "ms".to_string(),
+                                        series: vec![
+                                            Series {
+                                                label: "worst p99".to_string(),
+                                                color: "#eab308".to_string(),
+                                                points: tier.buckets.iter().map(|b| b.loop_p99_ms).collect(),
+                                            },
+                                            Series {
+                                                label: "worst max".to_string(),
+                                                color: "#ef4444".to_string(),
+                                                points: tier.buckets.iter().map(|b| b.loop_max_ms).collect(),
+                                            },
+                                        ],
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 

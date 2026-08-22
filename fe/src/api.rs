@@ -458,6 +458,40 @@ pub struct LoopPercentile {
     pub ms: f64,
 }
 
+/// One bucket of a long-window tier.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Bucket {
+    pub t: f64,
+    #[serde(rename = "heapFloorMB")] pub heap_floor_mb: f64,
+    #[serde(rename = "rssPeakMB")] pub rss_peak_mb: f64,
+    #[serde(rename = "loopP99Ms")] pub loop_p99_ms: f64,
+    #[serde(rename = "loopMaxMs")] pub loop_max_ms: f64,
+    /// Fine samples that landed in it.
+    pub n: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct HistoryTier {
+    pub id: String,
+    pub label: String,
+    #[serde(rename = "bucketMs")] pub bucket_ms: f64,
+    pub capacity: u32,
+    pub buckets: Vec<Bucket>,
+}
+
+impl HistoryTier {
+    /// How much of the window actually has data. Buckets are only written while
+    /// rn is running, so a sparse tier is the normal case rather than a fault —
+    /// but a chart drawn from 8 buckets looks exactly like one drawn from 365,
+    /// so the number has to be stated.
+    pub fn coverage_pct(&self) -> u32 {
+        if self.capacity == 0 {
+            return 0;
+        }
+        ((self.buckets.len() as f64 / self.capacity as f64) * 100.0).round() as u32
+    }
+}
+
 /// One minute of the fine series, summarised — floor for heap, worst for the
 /// rest. See node_history.ts for why neither is a mean.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -481,10 +515,8 @@ pub struct NodeHistory {
     pub unsupported: Vec<String>,
     /// Epoch ms this process started.
     #[serde(default, rename = "startedAt")] pub started_at: f64,
-    /// One-minute summaries covering an hour.
-    #[serde(default)] pub coarse: Vec<CoarseSample>,
-    #[serde(default, rename = "coarseMs")] pub coarse_ms: f64,
-    #[serde(default, rename = "coarseCapacity")] pub coarse_capacity: u32,
+    /// The longer windows: hour, day, week, month, year.
+    #[serde(default)] pub tiers: Vec<HistoryTier>,
 }
 
 impl NodeHistory {
@@ -514,16 +546,20 @@ impl NodeHistory {
         }
     }
 
-    /// The same boundary for the hour view.
-    pub fn coarse_before_start_fraction(&self) -> f64 {
-        let n = self.coarse.len();
-        if n < 2 || self.started_at <= 0.0 {
+    /// The same boundary within a tier's buckets.
+    ///
+    /// Only meaningful on the shorter tiers: over a week or a year almost every
+    /// bucket predates the current process, so the marker would shade the whole
+    /// chart and say nothing. Coverage is the honest measure at that length.
+    pub fn tier_before_start_fraction(&self, tier: &HistoryTier) -> f64 {
+        let n = tier.buckets.len();
+        if n < 2 || self.started_at <= 0.0 || tier.bucket_ms > 900_000.0 {
             return 0.0;
         }
-        match self.coarse.iter().position(|s| s.t >= self.started_at) {
+        match tier.buckets.iter().position(|b| b.t >= self.started_at) {
             Some(0) => 0.0,
             Some(i) => (i as f64 / (n - 1) as f64).clamp(0.0, 1.0),
-            None => 1.0,
+            None => 0.0,
         }
     }
 }

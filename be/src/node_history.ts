@@ -19,27 +19,92 @@ const MB = 1024 * 1024;
 const NS_TO_MS = 1e6;
 const LOOP_RESOLUTION_MS = 10;
 
-/** 60 minutes of one-minute summaries. */
-const COARSE_PER = 30; // fine samples per coarse one: 30 x 2s = a minute
-const COARSE_CAPACITY = 60;
+/**
+ * Longer windows, as a chain of buckets rather than one long ring.
+ *
+ * Each tier keeps a fixed number of fixed-width buckets, so memory and file
+ * size are constant regardless of how long rn has been running: 809 entries in
+ * total, whether that covers an afternoon or a year.
+ *
+ * Buckets are aligned to wall-clock boundaries — floor(t / width) — rather than
+ * counted off in groups of N samples. That matters here specifically: restarts
+ * are frequent and deliberate, and counting would restart the group each time,
+ * so a process restarted every twenty minutes would never complete an hourly
+ * bucket. Aligning means two runs either side of a boundary contribute to the
+ * same bucket, and a restart costs nothing.
+ */
+export interface Tier {
+    id: string;
+    label: string;
+    /** Bucket width in ms. */
+    bucketMs: number;
+    capacity: number;
+}
+
+export const TIERS: readonly Tier[] = [
+    { id: "1h", label: "Last hour", bucketMs: 60_000, capacity: 60 },
+    { id: "24h", label: "Last 24 hours", bucketMs: 900_000, capacity: 96 },
+    { id: "7d", label: "Last week", bucketMs: 3_600_000, capacity: 168 },
+    { id: "30d", label: "Last month", bucketMs: 21_600_000, capacity: 120 },
+    { id: "1y", label: "Last year", bucketMs: 86_400_000, capacity: 365 },
+];
 
 /**
- * One minute, summarised. Not averaged: an average hides both things worth
- * finding. Heap is kept as its floor, because the sawtooth peak is just
- * whenever collection happened to run, and the level it keeps returning to is
- * what a leak actually moves. Everything else is kept as its worst, because a
- * two-second stall inside an otherwise quiet minute averages away to nothing
- * and is precisely what someone came looking for.
+ * One bucket. Summaries rather than averages: heap as its floor, because the
+ * sawtooth peak is whenever collection ran while the floor is what a leak
+ * moves; everything else as its worst, because a stall inside an otherwise
+ * quiet hour averages to nothing and is the thing worth finding.
+ *
+ * All four combine associatively — min of mins, max of maxes — so a wider
+ * bucket built from the same samples gives the same answer.
  */
-export interface CoarseSample {
-    /** Epoch ms of the minute's last sample. */
+export interface Bucket {
+    /** Start of the bucket, epoch ms, aligned to its width. */
     t: number;
-    /** Lowest heap seen — the level collection could not get below. */
     heapFloorMB: number;
     rssPeakMB: number;
-    /** Worst p99 and worst max within the minute. */
     loopP99Ms: number;
     loopMaxMs: number;
+    /** How many fine samples landed in it — 0 buckets are never stored. */
+    n: number;
+}
+
+const tierData = new Map<string, Bucket[]>(TIERS.map((t) => [t.id, []]));
+
+/** Fold one fine sample into every tier. */
+function record(x: Sample): void {
+    for (const tier of TIERS) {
+        const buckets = tierData.get(tier.id)!;
+        const start = Math.floor(x.t / tier.bucketMs) * tier.bucketMs;
+        const last = buckets[buckets.length - 1];
+
+        if (last && last.t === start) {
+            last.heapFloorMB = Math.min(last.heapFloorMB, x.heapUsedMB);
+            last.rssPeakMB = Math.max(last.rssPeakMB, x.rssMB);
+            last.loopP99Ms = Math.max(last.loopP99Ms, x.loopP99Ms);
+            last.loopMaxMs = Math.max(last.loopMaxMs, x.loopMaxMs);
+            last.n += 1;
+            continue;
+        }
+
+        // A sample older than the newest bucket means the clock moved
+        // backwards. Drop it rather than corrupt the ordering the charts rely
+        // on; one lost sample beats a series that no longer runs left to right.
+        if (last && start < last.t) continue;
+
+        buckets.push({
+            t: start,
+            heapFloorMB: x.heapUsedMB,
+            rssPeakMB: x.rssMB,
+            loopP99Ms: x.loopP99Ms,
+            loopMaxMs: x.loopMaxMs,
+            n: 1,
+        });
+        if (buckets.length > tier.capacity) {
+            buckets.splice(0, buckets.length - tier.capacity);
+        }
+    }
+    dirty = true;
 }
 
 export interface Sample {
@@ -88,10 +153,7 @@ function take(): void {
     }
     dirty = true;
 
-    bucket.push(samples[samples.length - 1]!);
-    if (bucket.length >= COARSE_PER) {
-        fold();
-    }
+    record(samples[samples.length - 1]!);
 }
 
 /**
@@ -106,10 +168,11 @@ function take(): void {
 function load(): void {
     try {
         const raw: unknown = JSON.parse(readFileSync(config.historyPath, "utf8"));
-        // The first version of this file was a bare array of fine samples.
+        // Two older shapes existed: a bare array of fine samples, then a
+        // { fine, coarse } pair. Both are read; neither is written again.
         const parsed = Array.isArray(raw)
-            ? { fine: raw as Sample[], coarse: [] as CoarseSample[] }
-            : (raw as { fine?: Sample[]; coarse?: CoarseSample[] });
+            ? { fine: raw as Sample[] }
+            : (raw as { fine?: Sample[]; tiers?: Record<string, Bucket[]> });
 
         const now = Date.now();
         const fine = (parsed.fine ?? []).filter(
@@ -117,36 +180,18 @@ function load(): void {
         );
         samples.push(...fine.slice(-CAPACITY));
 
-        const coarseOldest = now - COARSE_CAPACITY * COARSE_PER * SAMPLE_MS;
-        const restored = (parsed.coarse ?? []).filter(
-            (x) => typeof x?.t === "number" && x.t >= coarseOldest,
-        );
-        coarse.push(...restored.slice(-COARSE_CAPACITY));
+        for (const tier of TIERS) {
+            const kept = (parsed.tiers?.[tier.id] ?? []).filter(
+                (b) =>
+                    typeof b?.t === "number" &&
+                    b.t >= now - tier.capacity * tier.bucketMs,
+            );
+            tierData.set(tier.id, kept.slice(-tier.capacity));
+        }
     } catch {
         // Missing is the normal first run; corrupt must not stop the app from
         // starting. Either way we begin with what we have, which is nothing.
     }
-}
-
-const coarse: CoarseSample[] = [];
-let bucket: Sample[] = [];
-
-/** Collapse the pending minute into one summary. */
-function fold(): void {
-    if (bucket.length === 0) return;
-    const of = (f: (s: Sample) => number) => bucket.map(f);
-    coarse.push({
-        t: bucket[bucket.length - 1]!.t,
-        heapFloorMB: Math.min(...of((x) => x.heapUsedMB)),
-        rssPeakMB: Math.max(...of((x) => x.rssMB)),
-        loopP99Ms: Math.max(...of((x) => x.loopP99Ms)),
-        loopMaxMs: Math.max(...of((x) => x.loopMaxMs)),
-    });
-    if (coarse.length > COARSE_CAPACITY) {
-        coarse.splice(0, coarse.length - COARSE_CAPACITY);
-    }
-    bucket = [];
-    dirty = true;
 }
 
 let dirty = false;
@@ -155,10 +200,9 @@ function save(): void {
     if (!dirty) return;
     try {
         mkdirSync(dirname(config.historyPath), { recursive: true });
-        // Fold whatever is pending first: a restart mid-minute would otherwise
-        // drop up to 59 seconds of detail from the hour view.
-        fold();
-        writeFileSync(config.historyPath, JSON.stringify({ fine: samples, coarse }), "utf8");
+        const tiers: Record<string, Bucket[]> = {};
+        for (const tier of TIERS) tiers[tier.id] = tierData.get(tier.id)!;
+        writeFileSync(config.historyPath, JSON.stringify({ fine: samples, tiers }), "utf8");
         dirty = false;
     } catch {
         // A history we cannot persist is still a history we can show.
@@ -196,10 +240,11 @@ export interface HistoryResponse {
      * loop never blocked. Absent beats wrong.
      */
     unsupported: string[];
-    /** One-minute summaries covering an hour. */
-    coarse: CoarseSample[];
-    coarseMs: number;
-    coarseCapacity: number;
+    /**
+     * The longer windows, newest bucket last. Each carries its own width and
+     * capacity so the page does not have to know the schedule.
+     */
+    tiers: { id: string; label: string; bucketMs: number; capacity: number; buckets: Bucket[] }[];
     /**
      * When this process started, epoch ms. History cannot predate it — the
      * samples live in memory and a restart empties them — so the chart marks
@@ -228,9 +273,13 @@ export function history(): HistoryResponse {
         samples: [...samples],
         loopPercentiles: [],
         unsupported: unsupportedSeries(),
-        coarse: [...coarse],
-        coarseMs: COARSE_PER * SAMPLE_MS,
-        coarseCapacity: COARSE_CAPACITY,
+        tiers: TIERS.map((t) => ({
+            id: t.id,
+            label: t.label,
+            bucketMs: t.bucketMs,
+            capacity: t.capacity,
+            buckets: [...tierData.get(t.id)!],
+        })),
         startedAt: STARTED_AT,
     };
 }
