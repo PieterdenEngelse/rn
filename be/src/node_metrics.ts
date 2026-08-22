@@ -14,6 +14,7 @@
 import { monitorEventLoopDelay, performance } from "node:perf_hooks";
 import { getHeapStatistics, getHeapSpaceStatistics } from "node:v8";
 import { availableParallelism, loadavg, totalmem, freemem } from "node:os";
+import { createRequire } from "node:module";
 
 const MB = 1024 * 1024;
 const NS_TO_MS = 1e6;
@@ -92,6 +93,80 @@ export interface NodeMetrics {
     unsupported: string[];
     /** Warning when the runtime version differs from the one probed. */
     probeNote: string | null;
+    /**
+     * What only this runtime can report. Hiding what a runtime does not measure
+     * leaves the page poorer than Node's; these put back something in its place,
+     * and they are not translations of Node's figures — JavaScriptCore counts
+     * objects rather than spaces, and Deno is the only one with permissions to
+     * report at all.
+     */
+    bun?: BunMetrics;
+    deno?: DenoMetrics;
+}
+
+export interface BunMetrics {
+    heapSizeMB: number;
+    heapCapacityMB: number;
+    objectCount: number;
+    protectedObjectCount: number;
+    /** mimalloc, the allocator underneath JSC — what the OS has actually given. */
+    allocCurrentMB: number;
+    allocPeakMB: number;
+}
+
+export interface DenoMetrics {
+    /** granted | denied | prompt, per permission. "prompt" means not granted. */
+    permissions: Record<string, string>;
+    /** Whether the app's own bind address is reachable under the net grant. */
+    bindAddressAllowed: boolean;
+}
+
+/** JavaScriptCore's own accounting. Bun only — bun:jsc does not exist elsewhere. */
+function bunMetrics(): BunMetrics | undefined {
+    if (runtimeName() !== "bun") return undefined;
+    try {
+        const jsc = createRequire(import.meta.url)("bun:jsc") as {
+            heapStats: () => Record<string, number>;
+            memoryUsage: () => Record<string, number>;
+        };
+        const h = jsc.heapStats();
+        const m = jsc.memoryUsage();
+        return {
+            heapSizeMB: Number((h["heapSize"]! / MB).toFixed(2)),
+            heapCapacityMB: Number((h["heapCapacity"]! / MB).toFixed(2)),
+            objectCount: h["objectCount"]!,
+            protectedObjectCount: h["protectedObjectCount"]!,
+            allocCurrentMB: Number((m["current"]! / MB).toFixed(1)),
+            allocPeakMB: Number((m["peakCommit"]! / MB).toFixed(1)),
+        };
+    } catch {
+        // The shape is Bun's to change; a missing field must not take the whole
+        // metrics endpoint down with it.
+        return undefined;
+    }
+}
+
+/** What Deno is actually permitted to do, which no other runtime can answer. */
+function denoMetrics(): DenoMetrics | undefined {
+    if (runtimeName() !== "deno") return undefined;
+    try {
+        const d = (globalThis as unknown as {
+            Deno: { permissions: { querySync: (p: Record<string, string>) => { state: string } } };
+        }).Deno;
+        const permissions: Record<string, string> = {};
+        for (const name of ["read", "write", "env", "sys", "net", "run", "ffi"]) {
+            permissions[name] = d.permissions.querySync({ name }).state;
+        }
+        // A scoped --allow-net reads as "prompt" for the blanket query, so ask
+        // about the one host that matters instead of reporting a false denial.
+        const host = process.env["BACKEND_HOST"] ?? "127.0.0.1";
+        const port = process.env["BACKEND_PORT"] ?? "3010";
+        const bindAddressAllowed =
+            d.permissions.querySync({ name: "net", host: `${host}:${port}` }).state === "granted";
+        return { permissions, bindAddressAllowed };
+    } catch {
+        return undefined;
+    }
 }
 
 /**
@@ -245,6 +320,8 @@ export function collect(): NodeMetrics {
         uptimeMs: Math.round(process.uptime() * 1000),
         unsupported: unsupportedHere(),
         probeNote: probeNote(),
+        bun: bunMetrics(),
+        deno: denoMetrics(),
     };
 }
 

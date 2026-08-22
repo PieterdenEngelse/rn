@@ -630,6 +630,80 @@ fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -
             subtitle: Some("the machine rn is running on".to_string()),
 
             div { class: "flex flex-wrap gap-4 items-stretch",
+                // ── JavaScriptCore (Bun only) ─────────────────────────
+                if let Some(b) = m.bun.clone() {
+                    Board {
+                        title: "JavaScriptCore".to_string(),
+                        info: Some(rsx! {
+                            InfoButton {
+                                title: "JavaScriptCore's own accounting".to_string(),
+                                what: "Bun does not run V8, so the heap figures above come from a compatibility shim and the V8 space breakdown has nothing behind it. These come from bun:jsc instead, and are what JavaScriptCore actually counts: live objects rather than regions of memory.".to_string(),
+                                why: "It is a different way of seeing the same question. V8 tells you which kind of memory is growing; JSC tells you how many objects are alive and how many are pinned. A leak shows up here as a count that climbs and never falls back.".to_string(),
+                                if_wrong: "These have no Node equivalent, so there is nothing to compare them against across runtimes. Read them against themselves over time rather than against the Node numbers you are used to.".to_string(),
+                            }
+                        }),
+                        Metric {
+                            label: "live objects",
+                            value: format!("{}", b.object_count),
+                            what: "How many objects JavaScriptCore currently has alive.".to_string(),
+                            why: "The most direct leak signal Bun offers. Memory can look flat while an object count climbs, if the objects are small.".to_string(),
+                            if_wrong: "Rising steadily across runs that should be idempotent means something is retained. Falling back after each job is healthy, whatever the absolute number.".to_string(),
+                        }
+                        Metric {
+                            label: "protected objects",
+                            value: format!("{}", b.protected_object_count),
+                            what: "Objects the runtime has pinned so the collector cannot reclaim them, usually because native code holds a reference.".to_string(),
+                            why: "It should be small and roughly constant. Protection is what native bindings use to keep a value alive across a call.".to_string(),
+                            if_wrong: "A protected count that grows is a leak the collector cannot fix by itself — the reference is held outside the heap, so no amount of collection releases it.".to_string(),
+                        }
+                        Metric {
+                            label: "heap size",
+                            value: format!("{} MB of {} MB", b.heap_size_mb, b.heap_capacity_mb),
+                            what: "JSC's live heap against the capacity it has reserved for it.".to_string(),
+                            why: "The gap is headroom already paid for: the runtime can allocate into it without asking the operating system for more.".to_string(),
+                            if_wrong: "Size approaching capacity means the next allocation grows the heap, which is when Bun's low-memory mode changes behaviour.".to_string(),
+                        }
+                        Metric {
+                            label: "allocator",
+                            value: format!("{} MB now, {} MB peak", b.alloc_current_mb, b.alloc_peak_mb),
+                            what: "mimalloc, the allocator underneath JSC — what the operating system has actually handed this process, and the most it ever held.".to_string(),
+                            why: "The peak is the number that matters on a shared machine: it is the high-water mark someone else had to make room for, even if the current figure is small now.".to_string(),
+                            if_wrong: "A peak far above the current value means a burst allocated heavily and gave it back. Repeated bursts are worth finding even though the steady state looks fine.".to_string(),
+                        }
+                    }
+                }
+
+                // ── Permissions (Deno only) ───────────────────────────
+                if let Some(d) = m.deno.clone() {
+                    Board {
+                        title: "Permissions".to_string(),
+                        info: Some(rsx! {
+                            InfoButton {
+                                title: "What this process is allowed to do".to_string(),
+                                what: "Deno denies everything by default and the launcher grants exactly what the app needs. This board reports what was actually granted, read from the running process rather than from the command line that started it.\n\nprompt means not granted: nothing has been allowed, and an attempt would be refused rather than queued for approval, since nothing here is interactive.".to_string(),
+                                why: "It is the only runtime that can answer this at all, and it is the reason to run under Deno. A dependency that quietly tries to reach the network is stopped by the runtime rather than trusted not to try, and this is where you confirm the boundary is where you think it is.".to_string(),
+                                if_wrong: "net reading prompt while the app plainly serves requests is expected: the grant is scoped to one address, so the blanket question has no single answer. The bind address row below is the one that matters.".to_string(),
+                            }
+                        }),
+                        Metric {
+                            label: "bind address",
+                            value: if d.bind_address_allowed { "granted".to_string() } else { "NOT granted".to_string() },
+                            what: "Whether this process may listen on its own API address, asked about that exact host and port rather than about the network in general.".to_string(),
+                            why: "A scoped --allow-net answers prompt to the blanket question, so this is the row that tells you the server can actually serve. It is also the check that fails if the launcher and the backend disagree about the bind address.".to_string(),
+                            if_wrong: "Not granted while the app is running means you are reading a stale page — the process could not have started.".to_string(),
+                        }
+                        for (name, state) in d.permissions.iter() {
+                            Metric {
+                                label: "{name}",
+                                value: "{state}",
+                                what: format!("The {name} permission, as the running process reports it."),
+                                why: "Granted means the runtime will allow it without asking. Anything else means an attempt is refused — which for automation is the point, not a limitation.".to_string(),
+                                if_wrong: format!("A job failing with a permission error naming {name} is this row saying no. Widen the grant deliberately, or do not do the thing."),
+                            }
+                        }
+                    }
+                }
+
                 // ── Host & versions ───────────────────────────────────
                 Board { title: "Host".to_string(),
                     Metric {

@@ -323,6 +323,24 @@ pub struct NodeHost {
     #[serde(rename = "freeMemMB")] pub free_mem_mb: f64,
 }
 
+/// JavaScriptCore's own accounting, which has no Node equivalent.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct BunMetrics {
+    #[serde(rename = "heapSizeMB")] pub heap_size_mb: f64,
+    #[serde(rename = "heapCapacityMB")] pub heap_capacity_mb: f64,
+    #[serde(rename = "objectCount")] pub object_count: u64,
+    #[serde(rename = "protectedObjectCount")] pub protected_object_count: u64,
+    #[serde(rename = "allocCurrentMB")] pub alloc_current_mb: f64,
+    #[serde(rename = "allocPeakMB")] pub alloc_peak_mb: f64,
+}
+
+/// What Deno is permitted to do — the only runtime that can answer this.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct DenoMetrics {
+    pub permissions: std::collections::BTreeMap<String, String>,
+    #[serde(rename = "bindAddressAllowed")] pub bind_address_allowed: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct NodeMetrics {
     pub memory: NodeMemory,
@@ -337,6 +355,11 @@ pub struct NodeMetrics {
     /// Set when the runtime version differs from the one the list was probed on.
     #[serde(default, rename = "probeNote")]
     pub probe_note: Option<String>,
+    /// Present only under the runtime that can report it.
+    #[serde(default)]
+    pub bun: Option<BunMetrics>,
+    #[serde(default)]
+    pub deno: Option<DenoMetrics>,
     #[serde(rename = "uptimeMs")] pub uptime_ms: f64,
 }
 
