@@ -19,6 +19,29 @@ const MB = 1024 * 1024;
 const NS_TO_MS = 1e6;
 const LOOP_RESOLUTION_MS = 10;
 
+/** 60 minutes of one-minute summaries. */
+const COARSE_PER = 30; // fine samples per coarse one: 30 x 2s = a minute
+const COARSE_CAPACITY = 60;
+
+/**
+ * One minute, summarised. Not averaged: an average hides both things worth
+ * finding. Heap is kept as its floor, because the sawtooth peak is just
+ * whenever collection happened to run, and the level it keeps returning to is
+ * what a leak actually moves. Everything else is kept as its worst, because a
+ * two-second stall inside an otherwise quiet minute averages away to nothing
+ * and is precisely what someone came looking for.
+ */
+export interface CoarseSample {
+    /** Epoch ms of the minute's last sample. */
+    t: number;
+    /** Lowest heap seen — the level collection could not get below. */
+    heapFloorMB: number;
+    rssPeakMB: number;
+    /** Worst p99 and worst max within the minute. */
+    loopP99Ms: number;
+    loopMaxMs: number;
+}
+
 export interface Sample {
     /** Epoch ms. */
     t: number;
@@ -64,6 +87,11 @@ function take(): void {
         samples.splice(0, samples.length - CAPACITY);
     }
     dirty = true;
+
+    bucket.push(samples[samples.length - 1]!);
+    if (bucket.length >= COARSE_PER) {
+        fold();
+    }
 }
 
 /**
@@ -78,16 +106,47 @@ function take(): void {
 function load(): void {
     try {
         const raw: unknown = JSON.parse(readFileSync(config.historyPath, "utf8"));
-        if (!Array.isArray(raw)) return;
-        const oldest = Date.now() - CAPACITY * SAMPLE_MS;
-        const kept = (raw as Sample[]).filter(
-            (x) => typeof x?.t === "number" && x.t >= oldest,
+        // The first version of this file was a bare array of fine samples.
+        const parsed = Array.isArray(raw)
+            ? { fine: raw as Sample[], coarse: [] as CoarseSample[] }
+            : (raw as { fine?: Sample[]; coarse?: CoarseSample[] });
+
+        const now = Date.now();
+        const fine = (parsed.fine ?? []).filter(
+            (x) => typeof x?.t === "number" && x.t >= now - CAPACITY * SAMPLE_MS,
         );
-        samples.push(...kept.slice(-CAPACITY));
+        samples.push(...fine.slice(-CAPACITY));
+
+        const coarseOldest = now - COARSE_CAPACITY * COARSE_PER * SAMPLE_MS;
+        const restored = (parsed.coarse ?? []).filter(
+            (x) => typeof x?.t === "number" && x.t >= coarseOldest,
+        );
+        coarse.push(...restored.slice(-COARSE_CAPACITY));
     } catch {
         // Missing is the normal first run; corrupt must not stop the app from
         // starting. Either way we begin with what we have, which is nothing.
     }
+}
+
+const coarse: CoarseSample[] = [];
+let bucket: Sample[] = [];
+
+/** Collapse the pending minute into one summary. */
+function fold(): void {
+    if (bucket.length === 0) return;
+    const of = (f: (s: Sample) => number) => bucket.map(f);
+    coarse.push({
+        t: bucket[bucket.length - 1]!.t,
+        heapFloorMB: Math.min(...of((x) => x.heapUsedMB)),
+        rssPeakMB: Math.max(...of((x) => x.rssMB)),
+        loopP99Ms: Math.max(...of((x) => x.loopP99Ms)),
+        loopMaxMs: Math.max(...of((x) => x.loopMaxMs)),
+    });
+    if (coarse.length > COARSE_CAPACITY) {
+        coarse.splice(0, coarse.length - COARSE_CAPACITY);
+    }
+    bucket = [];
+    dirty = true;
 }
 
 let dirty = false;
@@ -96,7 +155,10 @@ function save(): void {
     if (!dirty) return;
     try {
         mkdirSync(dirname(config.historyPath), { recursive: true });
-        writeFileSync(config.historyPath, JSON.stringify(samples), "utf8");
+        // Fold whatever is pending first: a restart mid-minute would otherwise
+        // drop up to 59 seconds of detail from the hour view.
+        fold();
+        writeFileSync(config.historyPath, JSON.stringify({ fine: samples, coarse }), "utf8");
         dirty = false;
     } catch {
         // A history we cannot persist is still a history we can show.
@@ -134,6 +196,10 @@ export interface HistoryResponse {
      * loop never blocked. Absent beats wrong.
      */
     unsupported: string[];
+    /** One-minute summaries covering an hour. */
+    coarse: CoarseSample[];
+    coarseMs: number;
+    coarseCapacity: number;
     /**
      * When this process started, epoch ms. History cannot predate it — the
      * samples live in memory and a restart empties them — so the chart marks
@@ -162,6 +228,9 @@ export function history(): HistoryResponse {
         samples: [...samples],
         loopPercentiles: [],
         unsupported: unsupportedSeries(),
+        coarse: [...coarse],
+        coarseMs: COARSE_PER * SAMPLE_MS,
+        coarseCapacity: COARSE_CAPACITY,
         startedAt: STARTED_AT,
     };
 }

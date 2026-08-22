@@ -458,6 +458,17 @@ pub struct LoopPercentile {
     pub ms: f64,
 }
 
+/// One minute of the fine series, summarised — floor for heap, worst for the
+/// rest. See node_history.ts for why neither is a mean.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct CoarseSample {
+    pub t: f64,
+    #[serde(rename = "heapFloorMB")] pub heap_floor_mb: f64,
+    #[serde(rename = "rssPeakMB")] pub rss_peak_mb: f64,
+    #[serde(rename = "loopP99Ms")] pub loop_p99_ms: f64,
+    #[serde(rename = "loopMaxMs")] pub loop_max_ms: f64,
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct NodeHistory {
     #[serde(rename = "sampleMs")] pub sample_ms: f64,
@@ -468,8 +479,12 @@ pub struct NodeHistory {
     /// Series this runtime does not measure; charting them would draw zeros.
     #[serde(default)]
     pub unsupported: Vec<String>,
-    /// Epoch ms this process started — history cannot predate it.
+    /// Epoch ms this process started.
     #[serde(default, rename = "startedAt")] pub started_at: f64,
+    /// One-minute summaries covering an hour.
+    #[serde(default)] pub coarse: Vec<CoarseSample>,
+    #[serde(default, rename = "coarseMs")] pub coarse_ms: f64,
+    #[serde(default, rename = "coarseCapacity")] pub coarse_capacity: u32,
 }
 
 impl NodeHistory {
@@ -495,6 +510,19 @@ impl NodeHistory {
             Some(i) => (i as f64 / (n - 1) as f64).clamp(0.0, 1.0),
             // Every sample predates it, which should not happen — treat the
             // whole window as inherited rather than claiming it is current.
+            None => 1.0,
+        }
+    }
+
+    /// The same boundary for the hour view.
+    pub fn coarse_before_start_fraction(&self) -> f64 {
+        let n = self.coarse.len();
+        if n < 2 || self.started_at <= 0.0 {
+            return 0.0;
+        }
+        match self.coarse.iter().position(|s| s.t >= self.started_at) {
+            Some(0) => 0.0,
+            Some(i) => (i as f64 / (n - 1) as f64).clamp(0.0, 1.0),
             None => 1.0,
         }
     }

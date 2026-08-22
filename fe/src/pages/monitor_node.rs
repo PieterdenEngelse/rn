@@ -51,6 +51,9 @@ pub fn MonitorNode() -> Element {
 #[component]
 fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -> Element {
     let mut paused = paused;
+    // Which tier the charts draw. Five minutes answers "what is it doing";
+    // an hour answers "what did it do", and only one fits on a sparkline.
+    let mut hour_view = use_signal(|| false);
     let heap_pct = m.memory.heap_used_pct;
 
     // A shim that answers 0 is indistinguishable from a genuinely quiet
@@ -93,6 +96,12 @@ fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -
                     style: "color: #22d3ee;",
                     onclick: move |_| paused.set(!paused()),
                     if paused() { "Resume sampling" } else { "Pause sampling" }
+                }
+                button {
+                    class: "text-xs cursor-pointer hover:underline bg-transparent border-0 p-0",
+                    style: "color: #22d3ee;",
+                    onclick: move |_| hour_view.set(!hour_view()),
+                    if hour_view() { "Show last 5 minutes" } else { "Show last hour" }
                 }
                 InfoButton {
                     title: "Sampling".to_string(),
@@ -193,17 +202,25 @@ fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -
                     if let Some(h) = hist.as_ref() {
                         div { class: "mb-2",
                             Sparkline {
-                                    before_start: h.before_start_fraction(),
+                                    before_start: if hour_view() { h.coarse_before_start_fraction() } else { h.before_start_fraction() },
                                 series: vec![
                                     Series {
-                                        label: "heap".to_string(),
+                                        label: if hour_view() { "heap floor".to_string() } else { "heap".to_string() },
                                         color: "#22c55e".to_string(),
-                                        points: h.samples.iter().map(|s| s.heap_used_mb).collect(),
+                                        points: if hour_view() {
+                                            h.coarse.iter().map(|s| s.heap_floor_mb).collect()
+                                        } else {
+                                            h.samples.iter().map(|s| s.heap_used_mb).collect()
+                                        },
                                     },
                                     Series {
-                                        label: "rss".to_string(),
+                                        label: if hour_view() { "rss peak".to_string() } else { "rss".to_string() },
                                         color: "#60a5fa".to_string(),
-                                        points: h.samples.iter().map(|s| s.rss_mb).collect(),
+                                        points: if hour_view() {
+                                            h.coarse.iter().map(|s| s.rss_peak_mb).collect()
+                                        } else {
+                                            h.samples.iter().map(|s| s.rss_mb).collect()
+                                        },
                                     },
                                 ],
                                 unit: " MB".to_string(),
@@ -425,22 +442,34 @@ fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -
                     if let Some(h) = hist.as_ref().filter(|h| h.measures("loopP50Ms")) {
                         div { class: "mb-2",
                             Sparkline {
-                                    before_start: h.before_start_fraction(),
+                                    before_start: if hour_view() { h.coarse_before_start_fraction() } else { h.before_start_fraction() },
                                 series: vec![
                                     Series {
-                                        label: "p50".to_string(),
+                                        label: if hour_view() { "worst p99".to_string() } else { "p50".to_string() },
                                         color: "#22c55e".to_string(),
-                                        points: h.samples.iter().map(|s| s.loop_p50_ms).collect(),
+                                        points: if hour_view() {
+                                            h.coarse.iter().map(|s| s.loop_p99_ms).collect()
+                                        } else {
+                                            h.samples.iter().map(|s| s.loop_p50_ms).collect()
+                                        },
                                     },
                                     Series {
-                                        label: "p99".to_string(),
+                                        label: if hour_view() { "worst max".to_string() } else { "p99".to_string() },
                                         color: "#eab308".to_string(),
-                                        points: h.samples.iter().map(|s| s.loop_p99_ms).collect(),
+                                        points: if hour_view() {
+                                            h.coarse.iter().map(|s| s.loop_max_ms).collect()
+                                        } else {
+                                            h.samples.iter().map(|s| s.loop_p99_ms).collect()
+                                        },
                                     },
                                     Series {
                                         label: "max".to_string(),
                                         color: "#ec4899".to_string(),
-                                        points: h.samples.iter().map(|s| s.loop_max_ms).collect(),
+                                        points: if hour_view() {
+                                            Vec::new()
+                                        } else {
+                                            h.samples.iter().map(|s| s.loop_max_ms).collect()
+                                        },
                                     },
                                 ],
                                 unit: " ms".to_string(),
