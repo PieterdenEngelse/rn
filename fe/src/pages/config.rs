@@ -102,6 +102,33 @@ fn ParamBoards(resp: ParamsResponse, reload: Signal<u32>) -> Element {
     let tuning: Vec<String> = categories.into_iter().filter(|c| c != "runtime").collect();
     let runtime_rows_empty = runtime_rows.is_empty();
 
+    let running = resp
+        .effective
+        .get("jsRuntime")
+        .and_then(|v| v.as_str())
+        .unwrap_or("node")
+        .to_string();
+
+    // Settings split by who owns them. A parameter naming runtimes belongs to
+    // those runtimes; one naming none belongs to all of them. The first group is
+    // filtered to what is actually running, so the page shows the settings for
+    // the runtime in front of you rather than a museum of the other two.
+    let owned_by_running = |p: &RuntimeParam| -> bool {
+        p.applies_to.as_ref().is_some_and(|l| l.iter().any(|r| r == &running))
+    };
+    let is_universal = |p: &RuntimeParam| -> bool { p.applies_to.is_none() };
+
+    let runtime_tuning: Vec<String> = tuning
+        .iter()
+        .filter(|c| params.iter().any(|p| &p.category == *c && owned_by_running(p)))
+        .cloned()
+        .collect();
+    let shared_tuning: Vec<String> = tuning
+        .iter()
+        .filter(|c| params.iter().any(|p| &p.category == *c && is_universal(p)))
+        .cloned()
+        .collect();
+
     rsx! {
         Panel {
             title: "Runtime".to_string(),
@@ -192,9 +219,40 @@ fn ParamBoards(resp: ParamsResponse, reload: Signal<u32>) -> Element {
             }
         }
 
+        if !runtime_tuning.is_empty() {
+            Panel {
+                title: format!("{running} settings"),
+                subtitle: Some("only while this runtime is the one running".to_string()),
+
+                p { class: "text-gray-400 mb-3 max-w-3xl",
+                    "These belong to {running} specifically. The other runtimes' settings are not shown here — they are still saved, and reappear when you switch back."
+                }
+
+                div { class: "flex flex-wrap gap-4 items-stretch",
+                    for category in runtime_tuning {
+                        {
+                            let rows: Vec<RuntimeParam> = params
+                                .iter()
+                                .filter(|p| p.category == category && owned_by_running(p))
+                                .cloned()
+                                .collect();
+                            rsx! {
+                                CategoryBoard {
+                                    title: category_title(&category).to_string(),
+                                    rows,
+                                    draft,
+                                    effective: resp.effective.clone(),
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         Panel {
-            title: "Runtime settings".to_string(),
-            subtitle: Some(format!("{} of 1,035 Node flags", resp.params.len())),
+            title: "All runtimes".to_string(),
+            subtitle: Some(format!("{} settings", resp.params.len())),
             // Explains the selection itself — why these and not the other
             // thousand. The buttons on each row explain the individual knobs;
             // this one answers the question those cannot.
@@ -258,11 +316,11 @@ fn ParamBoards(resp: ParamsResponse, reload: Signal<u32>) -> Element {
             }
 
             div { class: "flex flex-wrap gap-4 items-stretch",
-                for category in tuning {
+                for category in shared_tuning {
                     {
                         let rows: Vec<RuntimeParam> = params
                             .iter()
-                            .filter(|p| p.category == category)
+                            .filter(|p| p.category == category && is_universal(p))
                             .cloned()
                             .collect();
                         rsx! {
