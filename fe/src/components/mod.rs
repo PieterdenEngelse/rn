@@ -15,5 +15,5 @@ pub mod param;
 pub mod runtime_board;
 pub use runtime_board::RuntimeBoard;
 pub use panel::Panel;
-pub use info::InfoButton;
+pub use info::{GlossaryEntry, InfoButton};
 pub use header::Header;

@@ -1,6 +1,6 @@
 use crate::api::{fetch_node_metrics, NodeMetrics};
 use crate::components::param::*;
-use crate::components::{InfoButton, Panel};
+use crate::components::{GlossaryEntry, InfoButton, Panel};
 use dioxus::prelude::*;
 
 /// Monitor → Node. What the runtime is actually doing.
@@ -62,8 +62,56 @@ fn NodeBoards(m: NodeMetrics, paused: Signal<bool>) -> Element {
                 }
                 InfoButton {
                     title: "Sampling".to_string(),
-                    what: "Two different intervals share the word, and they are worth telling apart.\n\nThe first is this page polling the backend every 2 seconds. Each poll asks for the metrics and the backend computes them at that moment; pausing stops the asking, so the numbers on screen freeze at the last answer.\n\nThe second is Node measuring its own event loop, always, whether or not this page exists. It schedules a timer every 10ms and records how late that timer actually fires — the lateness is the delay figure. That histogram starts when the process starts and is never reset, so it covers the whole life of the process rather than the last 2 seconds. Every raw reading includes the 10ms interval itself, so an idle loop would report ~10ms rather than ~0; the backend subtracts it, which is why the number means how late the loop was and not how often it was checked.".to_string(),
+                    what: "Two different intervals share the word, and they are worth telling apart.\n\nThe first is this page polling the backend every 2 seconds. Each poll asks for the [[metrics]] and the backend [[computes]] them at that moment; pausing stops the asking, so the numbers on screen freeze at the last answer.\n\nThe second is Node measuring its own event loop, always, whether or not this page exists. It schedules a timer every 10ms and records how late that timer actually fires — the lateness is the delay figure. That histogram starts when the process starts and is never reset, so it covers the whole life of the process rather than the last 2 seconds. Every raw reading includes the 10ms interval itself, so an idle loop would report ~10ms rather than ~0; the backend subtracts it, which is why the number means how late the loop was and not how often it was checked.".to_string(),
                     why: "It matters because the rate figures — CPU share and event-loop utilisation — are deltas since this page last asked, not averages since the process booted. That is a deliberate choice: a lifetime average smooths away the spike you opened this page to find, so a burst that would vanish into an hour of idle shows up here at full size.\n\nThe cost of that choice is that the window is defined by your polling, not by the clock. Pause for a minute and the first reading after you resume covers that entire minute — one number averaging sixty seconds, sitting in a column that otherwise means two. Pause is for reading a value without it changing under you, not for stepping away.".to_string(),
+                    glossary: vec![
+                        GlossaryEntry {
+                            term: "metrics".to_string(),
+                            body: concat!(
+                                "A metric is one named number describing the process — either ",
+                                "at an instant, like heap used right now, or across an interval, ",
+                                "like CPU share since the last poll. The boards on this page are ",
+                                "each a handful of them.\n\n",
+
+                                "They come from four places, none of which is a log or a file. ",
+                                "V8 reports the heap: used, total, the limit it will not grow ",
+                                "past, and which space holds the most. The operating system ",
+                                "reports RSS, the memory it has actually handed this process, ",
+                                "which is always larger than the heap because the runtime itself ",
+                                "is in there. The kernel reports CPU time, split into user and ",
+                                "system. libuv reports the event loop: how late its timers fire, ",
+                                "how much of the time it is busy rather than waiting, and how ",
+                                "many handles and requests are still open.\n\n",
+
+                                "What they are not is history. Nothing is stored — no series, no ",
+                                "database, no file on disk. Each is read live and discarded once ",
+                                "the response is sent, which is why closing this page loses the ",
+                                "shape of what you were watching.",
+                            ).to_string(),
+                        },
+                        GlossaryEntry {
+                            term: "computes".to_string(),
+                            body: concat!(
+                                "Deliberate word: the numbers do not exist until you ask. There ",
+                                "is no metrics object being kept up to date in the background ",
+                                "that a request merely reads.\n\n",
+
+                                "On each request the backend asks V8 and the operating system ",
+                                "for their current counters, most of which are totals since the ",
+                                "process started and are useless on their own — CPU time since ",
+                                "boot tells you nothing about whether it is busy now. So it ",
+                                "subtracts the values it saw last time, divides by the elapsed ",
+                                "milliseconds, and turns a pair of totals into a rate. Then it ",
+                                "converts bytes to megabytes and rounds, because a heap figure ",
+                                "to the byte is noise.\n\n",
+
+                                "The subtraction is what makes the previous reading matter, and ",
+                                "why the interval between polls is part of the answer rather ",
+                                "than incidental to it. It is also why two tabs interfere: each ",
+                                "one moves the baseline the other subtracts from.",
+                            ).to_string(),
+                        },
+                    ],
                     if_wrong: "The trap is two viewers at once. Each poll consumes the baseline and resets it, so two browser tabs on this page take turns: each sees only the sliver since the other one asked, and both report suspiciously low CPU. A second tab, a phone left on this page, or a forgotten window is enough to make the whole board read quiet while the process is busy. If the numbers look impossibly calm, close the other tabs before believing them.\n\nMemory and the loop-delay histogram are unaffected — they are absolute readings, not deltas, so they stay correct however many people are watching.".to_string(),
                 }
                 span { class: "text-gray-400 text-xs",
@@ -90,7 +138,7 @@ fn NodeBoards(m: NodeMetrics, paused: Signal<bool>) -> Element {
 
                             "Reaching starts from a fixed set of roots: the global object ",
                             "(globalThis), the variables of every function currently on the ",
-                            "call stack, the top-level bindings of every loaded module, and the ",
+                            "call stack, the top-level bindings of every loaded [[module]], and the ",
                             "callbacks held by pending timers, promises, event listeners and ",
                             "open sockets. From each root V8 follows every reference it finds — ",
                             "object properties, array elements, Map and Set entries, values ",
@@ -112,7 +160,7 @@ fn NodeBoards(m: NodeMetrics, paused: Signal<bool>) -> Element {
                             "returned.\n\n",
 
                             "Leaks follow directly from the definition. One forgotten entry ",
-                            "pushed into a module-level array or Map is reachable from a root ",
+                            "pushed into a [[module]]-level array or Map is reachable from a root ",
                             "for the life of the process, so it and everything it refers to can ",
                             "never be collected — however finished with it you are.\n\n",
 
@@ -145,6 +193,49 @@ fn NodeBoards(m: NodeMetrics, paused: Signal<bool>) -> Element {
                         ).to_string(),
                         why: "The measured counterpart of the Heap memory limit setting. Watch the percentage: a job that fails with 'heap out of memory' was pushing this to 100.".to_string(),
                         if_wrong: "Climbing steadily across runs and never falling back after a job ends means something is retained — a leak, not a limit that is too low.".to_string(),
+                        glossary: vec![GlossaryEntry {
+                            term: "module".to_string(),
+                            body: concat!(
+                                "In Node.js a module is one file. That is the unit, and ",
+                                "everything else follows from it.\n\n",
+
+                                "Each file gets its own scope. A top-level const, let or ",
+                                "function is not global — it is private to that file unless ",
+                                "exported. Code in another file referring to it by name gets a ",
+                                "ReferenceError, which is what makes \"module scope\" a real ",
+                                "boundary rather than a convention.\n\n",
+
+                                "A module is evaluated once per process and then cached, keyed ",
+                                "by its resolved path. However many files import it, the body ",
+                                "runs a single time and every importer receives the same ",
+                                "instance. This is why module-level state is effectively a ",
+                                "process-wide singleton: be/src/jobs.ts holds `const running = ",
+                                "new Map()` at the top level, and that one Map is what the API ",
+                                "handlers and the restart path both see. No registry object or ",
+                                "injection needed — the module is the singleton.\n\n",
+
+                                "It is also why such state is the classic leak. A module-level ",
+                                "Map or array is reachable from a root for the entire life of ",
+                                "the process, so anything put in and not removed can never be ",
+                                "collected. jobs.track() ends its job in a finally block for ",
+                                "exactly this reason.\n\n",
+
+                                "Imports are live bindings rather than copies. If an exporting ",
+                                "module reassigns an exported variable later, importers see the ",
+                                "new value — they hold a view onto the binding, not a snapshot ",
+                                "taken at import time. (CommonJS `require` copies the value at ",
+                                "that moment; this is one of the real differences between the ",
+                                "two systems.)\n\n",
+
+                                "rn uses ES modules throughout — import/export, top-level await, ",
+                                "import.meta.url — enabled by \"type\": \"module\" in ",
+                                "be/package.json. One consequence: relative imports need the ",
+                                "file extension, `./config.ts` and not `./config`, or Node ",
+                                "answers ERR_MODULE_NOT_FOUND. That is ESM resolution, not a ",
+                                "TypeScript quirk.",
+                            )
+                            .to_string(),
+                        }],
                     }
                     Metric {
                         label: "heap limit",
@@ -288,13 +379,22 @@ fn Board(title: String, children: Element) -> Element {
 }
 
 #[component]
-fn Metric(label: String, value: String, what: String, why: String, if_wrong: String) -> Element {
+fn Metric(
+    label: String,
+    value: String,
+    what: String,
+    why: String,
+    if_wrong: String,
+    /// Terms the panel text links to with `[[term]]`.
+    #[props(default = vec![])]
+    glossary: Vec<GlossaryEntry>,
+) -> Element {
     rsx! {
         div { class: PARAM_BLOCK_CLASS,
             label { class: PARAM_LABEL_CLASS, "{label}" }
             div { class: PARAM_INPUT_ROW_CLASS,
                 span { class: "text-gray-200 font-mono break-all max-w-xs", "{value}" }
-                InfoButton { title: label, what, why, if_wrong }
+                InfoButton { title: label, what, why, if_wrong, glossary }
             }
         }
     }

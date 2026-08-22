@@ -25,6 +25,85 @@ pub fn InfoIcon() -> Element {
     }
 }
 
+/// A term that a panel can link to, so an explanation can name a concept
+/// without either assuming it or swallowing a whole tutorial.
+///
+/// Write `[[module]]` in any panel text and it renders as a link to the entry
+/// whose `term` is "module".
+#[derive(Clone, PartialEq, Debug)]
+pub struct GlossaryEntry {
+    pub term: String,
+    pub body: String,
+}
+
+/// Split panel text into plain and linked runs on `[[term]]` markers.
+fn segments(text: &str) -> Vec<(bool, String)> {
+    let mut out = Vec::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("[[") {
+        if start > 0 {
+            out.push((false, rest[..start].to_string()));
+        }
+        let after = &rest[start + 2..];
+        match after.find("]]") {
+            Some(end) => {
+                out.push((true, after[..end].to_string()));
+                rest = &after[end + 2..];
+            }
+            // Unclosed marker: show it literally rather than eating the text.
+            None => {
+                out.push((false, rest[start..].to_string()));
+                rest = "";
+            }
+        }
+    }
+    if !rest.is_empty() {
+        out.push((false, rest.to_string()));
+    }
+    out
+}
+
+/// One panel section, with `[[term]]` markers turned into links.
+#[component]
+fn RichText(
+    text: String,
+    glossary: Vec<GlossaryEntry>,
+    open_term: Signal<Option<GlossaryEntry>>,
+) -> Element {
+    rsx! {
+        p { class: "mt-1 text-gray-200 leading-relaxed whitespace-pre-line",
+            for (is_link, content) in segments(&text) {
+                if is_link {
+                    {
+                        let entry = glossary
+                            .iter()
+                            .find(|g| g.term.eq_ignore_ascii_case(&content))
+                            .cloned();
+                        let label = content.clone();
+                        let mut open_term = open_term;
+                        rsx! {
+                            span {
+                                class: "cursor-pointer hover:underline",
+                                // Links are blue, per the colour rules.
+                                style: "color: #60a5fa;",
+                                onclick: move |evt| {
+                                    evt.stop_propagation();
+                                    if let Some(e) = entry.clone() {
+                                        open_term.set(Some(e));
+                                    }
+                                },
+                                "{label}"
+                            }
+                        }
+                    }
+                } else {
+                    "{content}"
+                }
+            }
+        }
+    }
+}
+
 /// A button that opens an explanation panel.
 ///
 /// `what` / `why` / `if_wrong` mirror the three fields every parameter carries
@@ -36,8 +115,12 @@ pub fn InfoButton(
     what: String,
     why: String,
     if_wrong: String,
+    /// Terms this panel links to with `[[term]]`.
+    #[props(default = vec![])]
+    glossary: Vec<GlossaryEntry>,
 ) -> Element {
     let mut open = use_signal(|| false);
+    let open_term = use_signal(|| Option::<GlossaryEntry>::None);
 
     rsx! {
         button {
@@ -72,15 +155,46 @@ pub fn InfoButton(
 
                     div {
                         h4 { class: "text-sm font-semibold text-gray-300", "What it does" }
-                        p { class: "mt-1 text-gray-200 leading-relaxed whitespace-pre-line", "{what}" }
+                        RichText { text: what, glossary: glossary.clone(), open_term }
                     }
                     div {
                         h4 { class: "text-sm font-semibold text-gray-300", "Why you would change it" }
-                        p { class: "mt-1 text-gray-200 leading-relaxed whitespace-pre-line", "{why}" }
+                        RichText { text: why, glossary: glossary.clone(), open_term }
                     }
                     div {
                         h4 { class: "text-sm font-semibold text-gray-300", "If it's wrong" }
-                        p { class: "mt-1 text-gray-200 leading-relaxed whitespace-pre-line", "{if_wrong}" }
+                        RichText { text: if_wrong, glossary: glossary.clone(), open_term }
+                    }
+                }
+            }
+        }
+
+        // Nested explainer, above the panel that linked to it.
+        if let Some(entry) = open_term() {
+            {
+                let mut open_term = open_term;
+                rsx! {
+                    div {
+                        class: "fixed inset-0 flex bg-black/70",
+                        style: "z-index: 1120;",
+                        div {
+                            class: "bg-gray-900 p-6 w-full h-full overflow-y-auto text-sm space-y-4",
+                            div { class: "flex items-center justify-between",
+                                h2 { class: "text-xl font-bold text-gray-100", "{entry.term}" }
+                                button {
+                                    class: "text-gray-400 hover:text-gray-200 text-xl font-bold cursor-pointer",
+                                    onclick: move |_| open_term.set(None),
+                                    "×"
+                                }
+                            }
+                            p { class: "text-gray-200 leading-relaxed whitespace-pre-line", "{entry.body}" }
+                            button {
+                                class: "text-xs cursor-pointer hover:underline bg-transparent border-0 p-0",
+                                style: "color: #60a5fa;",
+                                onclick: move |_| open_term.set(None),
+                                "← back"
+                            }
+                        }
                     }
                 }
             }
