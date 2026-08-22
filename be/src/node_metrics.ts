@@ -90,6 +90,34 @@ export interface NodeMetrics {
      * counting. Named here so the UI can say "not reported" instead.
      */
     unsupported: string[];
+    /** Warning when the runtime version differs from the one probed. */
+    probeNote: string | null;
+}
+
+/**
+ * The exact versions the lists below were measured against. A shim that returns
+ * a plausible zero today may count properly tomorrow, so the check is pinned to
+ * a version rather than left to a comment nobody re-reads: when the running
+ * runtime is not one of these, the API says the list is unverified and
+ * `npm run probe:runtimes` regenerates it.
+ */
+const PROBED: Record<string, string> = {
+    bun: "1.4.0",
+    deno: "2.9.5",
+};
+
+/** Set when the running runtime is not the one the list was measured against. */
+function probeNote(): string | null {
+    const runtime = runtimeName();
+    if (runtime === "node") return null;
+    const probed = PROBED[runtime];
+    const running = (process.versions as Record<string, string | undefined>)[runtime];
+    if (!running || running === probed) return null;
+    return (
+        `Unsupported-metric list was measured against ${runtime} ${probed}; ` +
+        `this is ${runtime} ${running}. Some figures marked "not reported" may ` +
+        `work now, and others may have stopped. Re-run: npm run probe:runtimes`
+    );
 }
 
 /**
@@ -216,6 +244,7 @@ export function collect(): NodeMetrics {
         ),
         uptimeMs: Math.round(process.uptime() * 1000),
         unsupported: unsupportedHere(),
+        probeNote: probeNote(),
     };
 }
 

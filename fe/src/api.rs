@@ -334,6 +334,9 @@ pub struct NodeMetrics {
     /// Dotted paths this runtime does not actually count — see node_metrics.ts.
     #[serde(default)]
     pub unsupported: Vec<String>,
+    /// Set when the runtime version differs from the one the list was probed on.
+    #[serde(default, rename = "probeNote")]
+    pub probe_note: Option<String>,
     #[serde(rename = "uptimeMs")] pub uptime_ms: f64,
 }
 

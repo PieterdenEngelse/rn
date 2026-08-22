@@ -70,6 +70,16 @@ fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -
             title: "Node runtime".to_string(),
             subtitle: Some("live, sampled every 2s".to_string()),
 
+            // The "not reported" marks are only as good as the version they
+            // were measured on, so a runtime upgrade has to say so rather than
+            // leave stale marks looking authoritative.
+            if let Some(note) = m.probe_note.clone() {
+                div { class: "mb-3 rounded border border-amber-600 bg-gray-900 p-2 max-w-3xl",
+                    p { class: "text-amber-400 font-medium", "Runtime moved on" }
+                    p { class: "text-gray-300 mt-1", "{note}" }
+                }
+            }
+
             div { class: "flex items-center gap-3 mb-3",
                 button {
                     class: "text-xs cursor-pointer hover:underline bg-transparent border-0 p-0",
