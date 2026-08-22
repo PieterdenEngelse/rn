@@ -75,7 +75,7 @@ fn NodeBoards(m: NodeMetrics, paused: Signal<bool>) -> Element {
 
                                 "They come from four places, none of which is a log or a file. ",
                                 "V8 reports the heap: used, total, the limit it will not grow ",
-                                "past, and which space holds the most. The operating system ",
+                                "past, and which [[space]] holds the most. The operating system ",
                                 "reports RSS, the memory it has actually handed this process, ",
                                 "which is always larger than the heap because the runtime itself ",
                                 "is in there. The kernel reports CPU time, split into user and ",
@@ -87,6 +87,35 @@ fn NodeBoards(m: NodeMetrics, paused: Signal<bool>) -> Element {
                                 "database, no file on disk. Each is read live and discarded once ",
                                 "the response is sent, which is why closing this page loses the ",
                                 "shape of what you were watching.",
+                            ).to_string(),
+                        },
+                        GlossaryEntry {
+                            term: "space".to_string(),
+                            body: concat!(
+                                "V8 does not keep one pool of memory. It divides the heap into ",
+                                "regions called spaces, each with its own allocation rules and ",
+                                "its own collector — thirteen of them on this runtime, though ",
+                                "only a few ever hold anything.\n\n",
+
+                                "Two carry the story. Every object is born in new_space, which ",
+                                "is small and swept constantly by a cheap copying pass; most ",
+                                "objects die there and cost almost nothing to reclaim. Anything ",
+                                "surviving a couple of those passes is promoted to old_space, ",
+                                "which is collected by mark-and-sweep and is far more expensive ",
+                                "to work through. Long-lived data lives in old_space, so a leak ",
+                                "looks like old_space growing and never shrinking.\n\n",
+
+                                "The rest are specialised: code_space for compiled machine code, ",
+                                "large_object_space for objects too big to fit an ordinary page, ",
+                                "read_only_space for immutable roots. The tile reports whichever ",
+                                "is using the most right now. On a healthy process that is ",
+                                "old_space; large_object_space winning instead points at one ",
+                                "enormous buffer or array rather than an ordinary leak.\n\n",
+
+                                "It is also why the Heap memory limit setting is named ",
+                                "--max-old-space-size. It caps that one space and not the sum of ",
+                                "all of them, which is why asking for 256 MB produces a total ",
+                                "limit well above 256.",
                             ).to_string(),
                         },
                         GlossaryEntry {
