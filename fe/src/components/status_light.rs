@@ -1,4 +1,5 @@
 use crate::api::{fetch_status, StatusResponse};
+use crate::components::InfoButton;
 use dioxus::prelude::*;
 
 /// How often the light re-checks. Frequent enough that a stopped backend shows
@@ -107,6 +108,61 @@ pub fn StatusLight() -> Element {
                 style: "background-color: {hex};",
                 title: "Status: {current.label()} — click for details",
                 onclick: move |_| show_details.set(true),
+            }
+            // The light's own modal reports the current state; this one explains
+            // how that state is decided, which the modal cannot say without
+            // repeating itself in six places.
+            InfoButton {
+                title: "What the status light checks".to_string(),
+                what: concat!(
+                    "Every 5 seconds it asks the backend one question — GET /api/status — ",
+                    "and reads four things out of the answer. It is a poll, not a ",
+                    "subscription: a change can be up to five seconds old before the ",
+                    "colour moves.\n\n",
+
+                    "Did anything answer at all. This is the only check that does not need ",
+                    "the backend's cooperation, and a silent answer means red. It cannot ",
+                    "tell a stopped backend from one that is running but unreachable — a ",
+                    "wrong port, a refused connection, a browser blocking the request all ",
+                    "look identical from here.\n\n",
+
+                    "How many settings are saved but not in effect. The backend compares ",
+                    "what is in the settings file against what the running process ",
+                    "actually has, so this counts real differences rather than unsaved ",
+                    "edits in the page.\n\n",
+
+                    "How many jobs are running right now, which is what makes it pink.\n\n",
+
+                    "Whether a launcher is supervising the process. That decides whether ",
+                    "the restart button can work at all: an unsupervised backend asked to ",
+                    "restart would exit into nothing, so it refuses.",
+                ).to_string(),
+                why: concat!(
+                    "The order matters more than the individual checks, because several ",
+                    "can be true at once and only one colour is available. The worst true ",
+                    "state wins, and pending settings deliberately outrank running jobs: ",
+                    "a busy process whose settings are stale still needs a restart, and ",
+                    "busy is the state that will end on its own.\n\n",
+
+                    "So the light answers one question — is there something for me to do — ",
+                    "rather than reporting everything at once. Green means no. Every other ",
+                    "colour names the thing.",
+                ).to_string(),
+                if_wrong: concat!(
+                    "Worth knowing what it does not check, because green is easy to read ",
+                    "as everything is fine.\n\n",
+
+                    "It says nothing about whether jobs are succeeding — twenty failing ",
+                    "jobs and twenty succeeding ones both read as working, then green. It ",
+                    "does not check that the runtime running is the one selected, which ",
+                    "the Active runtime board on Config reports instead. It does not look ",
+                    "at memory, CPU or the event loop, so a process thrashing itself to a ",
+                    "standstill stays green as long as it answers. And it cannot tell ",
+                    "whether this page and the backend are the same version.\n\n",
+
+                    "Green means the process is up, idle, supervised, and running the ",
+                    "settings you saved. That is all it means.",
+                ).to_string(),
             }
         }
 
