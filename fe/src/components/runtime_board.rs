@@ -57,7 +57,6 @@ pub fn RuntimeBoard(effective: serde_json::Value) -> Element {
         div { class: PARAM_BOARD_CLASS,
             div { class: "flex items-center gap-2 mb-3",
                 span { class: PARAM_BOARD_TITLE_CLASS, "Active runtime" }
-                span { class: PARAM_BOARD_NOTE_CLASS, "(read from the running process)" }
             }
 
             if !note.is_empty() {
@@ -98,10 +97,9 @@ pub fn RuntimeBoard(effective: serde_json::Value) -> Element {
                 div { class: PARAM_BLOCK_CLASS,
                     label { class: PARAM_LABEL_CLASS, "path" }
                     div { class: PARAM_INPUT_ROW_CLASS,
-                        span { class: "text-gray-300 font-mono break-all max-w-md", "{exec_path}" }
                         InfoButton {
                             title: "Runtime path".to_string(),
-                            what: "The absolute path of the binary that is running, from `process.execPath`.".to_string(),
+                            what: format!("The binary that is running, from `process.execPath`:\n\n{exec_path}\n\nIt is shown here rather than on the board because the full path is long enough to crowd out everything beside it, and it only matters when you are checking it."),
                             why: "It answers 'which Node is this?' without guesswork. A path inside the install directory means the bundled runtime is being used as intended; anything under a home directory or a version manager means the app found something on PATH, which it is never supposed to do.".to_string(),
                             if_wrong: "A path pointing at nvm, homebrew or /usr/bin in a packaged install is a sealing failure, not a preference. The app is then at the mercy of a runtime it does not control and did not test against.".to_string(),
                         }

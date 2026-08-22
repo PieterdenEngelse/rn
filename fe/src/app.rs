@@ -1,7 +1,7 @@
 use crate::components::header::Header;
 use crate::components::SubNav;
 use crate::pages::{
-    Config, ConfigProcess, Home, Monitor, MonitorJobs, MonitorNode, PageNotFound,
+    Config, Home, Monitor, MonitorJobs, MonitorNode, PageNotFound,
 };
 use dioxus::prelude::*;
 use dioxus_router::{Outlet, Routable, Router};
@@ -20,8 +20,6 @@ pub enum Route {
         MonitorJobs {},
         #[route("/config")]
         Config {},
-        #[route("/config/process")]
-        ConfigProcess {},
         #[route("/:..segments")]
         PageNotFound { segments: Vec<String> },
 }

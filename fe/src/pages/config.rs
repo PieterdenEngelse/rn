@@ -21,7 +21,7 @@ pub fn Config() -> Element {
     });
 
     rsx! {
-        div { class: "p-6 max-w-6xl mx-auto space-y-4",
+        div { class: "p-6 max-w-7xl mx-auto space-y-4",
             match &*data.read_unchecked() {
                 Some(Ok(resp)) => rsx! {
                     RestartBanner {
@@ -121,7 +121,11 @@ fn ParamBoards(resp: ParamsResponse, reload: Signal<u32>) -> Element {
                 "What the launcher started, and what it should start next time. Changing either dropdown takes effect on restart."
             }
 
-            div { class: "flex flex-wrap gap-4 items-stretch",
+            // No flex-wrap here, unlike the tuning boards below: these three are
+            // one left-to-right sequence — what is running, what to run next,
+            // how to apply it — and wrapping the last one under the others
+            // breaks that reading. Narrow screens scroll the row instead.
+            div { class: "flex gap-4 items-stretch overflow-x-auto",
                 RuntimeBoard { effective: resp.effective.clone() }
                 if !runtime_rows.is_empty() {
                     CategoryBoard {

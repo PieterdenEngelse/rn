@@ -75,7 +75,7 @@ pub fn ProcessPanel(reload: Signal<u32>) -> Element {
     };
 
     rsx! {
-        div { class: PARAM_BOARD_CLASS,
+        div { class: "{PARAM_BOARD_CLASS} shrink-0",
             div { class: "flex items-center gap-2 mb-3",
                 span { class: PARAM_BOARD_TITLE_CLASS, "Restart" }
             }

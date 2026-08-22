@@ -67,10 +67,9 @@ fn sections() -> Vec<Section> {
         },
         Section {
             label: "Config",
-            items: vec![
-                SubNavItem { label: "Settings", route: Route::Config {} },
-                SubNavItem { label: "Process", route: Route::ConfigProcess {} },
-            ],
+            // Process folded into Settings: the Restart board sits beside the
+            // runtime it restarts, which is where it is actually useful.
+            items: vec![SubNavItem { label: "Settings", route: Route::Config {} }],
         },
     ]
 }
