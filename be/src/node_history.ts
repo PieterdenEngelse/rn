@@ -8,6 +8,9 @@
 
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { getHeapStatistics } from "node:v8";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+import { config } from "./config.ts";
 
 const SAMPLE_MS = 2_000;
 /** 150 samples × 2s = five minutes. Small enough to keep and send whole. */
@@ -60,12 +63,61 @@ function take(): void {
     if (samples.length > CAPACITY) {
         samples.splice(0, samples.length - CAPACITY);
     }
+    dirty = true;
 }
+
+/**
+ * Restarting is a first-class action here — it ends every settings change — so
+ * history that dies with the process is history that vanishes exactly when you
+ * restart to fix the thing you were watching. It is kept on disk instead.
+ *
+ * Anything older than the window is dropped on load rather than trimmed later,
+ * so a machine left off for a week comes back empty rather than showing a
+ * week-old spike as though it were recent.
+ */
+function load(): void {
+    try {
+        const raw: unknown = JSON.parse(readFileSync(config.historyPath, "utf8"));
+        if (!Array.isArray(raw)) return;
+        const oldest = Date.now() - CAPACITY * SAMPLE_MS;
+        const kept = (raw as Sample[]).filter(
+            (x) => typeof x?.t === "number" && x.t >= oldest,
+        );
+        samples.push(...kept.slice(-CAPACITY));
+    } catch {
+        // Missing is the normal first run; corrupt must not stop the app from
+        // starting. Either way we begin with what we have, which is nothing.
+    }
+}
+
+let dirty = false;
+
+function save(): void {
+    if (!dirty) return;
+    try {
+        mkdirSync(dirname(config.historyPath), { recursive: true });
+        writeFileSync(config.historyPath, JSON.stringify(samples), "utf8");
+        dirty = false;
+    } catch {
+        // A history we cannot persist is still a history we can show.
+    }
+}
+
+load();
 
 // unref so this timer never keeps the process alive on its own — a sampler
 // should not be the reason rn refuses to exit.
 const timer = setInterval(take, SAMPLE_MS);
 timer.unref();
+
+// Writing every sample would mean a disk write every two seconds for data
+// nobody has asked for. Every fifteenth is once every thirty seconds, and the
+// exit hook catches whatever the last flush missed — including a restart, which
+// is the case this exists for.
+const flush = setInterval(save, SAMPLE_MS * 15);
+flush.unref();
+process.on("exit", save);
+
 take(); // one immediately, so a page opened at once is not empty
 
 export interface HistoryResponse {

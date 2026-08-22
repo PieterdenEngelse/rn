@@ -477,16 +477,26 @@ impl NodeHistory {
         !self.unsupported.iter().any(|u| u == series)
     }
 
-    /// How much of the window predates this process, as a fraction. The chart
-    /// shades that part: an empty left half means "not running yet", which is a
-    /// different statement from "quiet".
+    /// Where in the drawn series this process began, as a fraction of its
+    /// width. Everything left of it was recorded by an earlier run, restored
+    /// from disk — same numbers, different process, and worth a line saying so
+    /// rather than a continuous curve implying one uninterrupted history.
+    ///
+    /// Computed from timestamps rather than from how full the buffer is: with
+    /// samples restored, a short buffer no longer means a young process.
     pub fn before_start_fraction(&self) -> f64 {
-        let cap = self.capacity as f64;
-        if cap <= 0.0 {
+        let n = self.samples.len();
+        if n < 2 || self.started_at <= 0.0 {
             return 0.0;
         }
-        let missing = (cap - self.samples.len() as f64).max(0.0);
-        (missing / cap).clamp(0.0, 1.0)
+        match self.samples.iter().position(|s| s.t >= self.started_at) {
+            // Every sample is from this run: nothing to mark.
+            Some(0) => 0.0,
+            Some(i) => (i as f64 / (n - 1) as f64).clamp(0.0, 1.0),
+            // Every sample predates it, which should not happen — treat the
+            // whole window as inherited rather than claiming it is current.
+            None => 1.0,
+        }
     }
 }
 

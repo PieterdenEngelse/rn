@@ -28,6 +28,16 @@ export const config = {
         process.env.RN_SETTINGS_PATH ??
         `${process.env.HOME ?? "."}/.config/rn/settings.json`,
 
+    /**
+     * Where the rolling metric history is kept between runs. Beside the
+     * settings and for the same reason: the install tree is replaced on
+     * upgrade, and losing the history to an upgrade is the same bug as losing
+     * it to a restart.
+     */
+    historyPath:
+        process.env.RN_HISTORY_PATH ??
+        `${process.env.HOME ?? "."}/.config/rn/history.json`,
+
     /** Dev only: the dx serve origin. Unused in a packaged install. */
     corsOrigin: process.env.RN_CORS_ORIGIN ?? "http://localhost:1790",
 } as const;

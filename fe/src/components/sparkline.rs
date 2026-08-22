@@ -18,9 +18,10 @@ pub fn Sparkline(
     /// Appended to the max label, e.g. "MB".
     #[props(default = String::new())]
     unit: String,
-    /// Fraction of the window, from the left, that predates this process.
-    /// Shaded and ruled, because an empty stretch otherwise reads as a quiet
-    /// stretch — the opposite of "we were not running".
+    /// Fraction of the drawn series, from the left, recorded before this
+    /// process started. Shaded and ruled: the numbers are real and restored
+    /// from disk, but they came from a different process, and a continuous
+    /// curve across a restart implies a continuity that did not happen.
     #[props(default = 0.0)]
     before_start: f64,
 ) -> Element {
