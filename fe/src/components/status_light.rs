@@ -1,4 +1,4 @@
-use crate::api::{fetch_status, StatusResponse};
+use crate::api::{diagnose_offline, fetch_status, OfflineReason, StatusResponse};
 use crate::components::InfoButton;
 use dioxus::prelude::*;
 
@@ -65,7 +65,7 @@ impl Health {
     fn summary(self) -> &'static str {
         match self {
             Health::Checking => "Asking the backend how it is.",
-            Health::Offline => "Nothing answered. The backend is not running — start it from a terminal.",
+            Health::Offline => "Nothing answered. What that means depends on why — see below.",
             Health::Pending => "Running, but settings you saved are not in effect yet. Restart to apply them.",
             Health::Busy => "Running an automation right now.",
             Health::Unsupervised => "Running, but not under the launcher, so it cannot restart itself.",
@@ -81,15 +81,22 @@ pub fn StatusLight() -> Element {
     let mut status = use_signal(|| Option::<StatusResponse>::None);
     let mut health = use_signal(|| Health::Checking);
     let mut show_details = use_signal(|| false);
+    // Only meaningful while Offline; kept so the modal can say which kind.
+    let mut offline_reason = use_signal(|| Option::<OfflineReason>::None);
 
     use_future(move || async move {
         loop {
             match fetch_status().await {
                 Ok(s) => {
+                    offline_reason.set(None);
                     health.set(Health::from_status(&s));
                     status.set(Some(s));
                 }
                 Err(_) => {
+                    // Ask a second, narrower question before settling on red:
+                    // a refused connection and a discarded response are the
+                    // same failure here and lead to different places.
+                    offline_reason.set(Some(diagnose_offline().await));
                     health.set(Health::Offline);
                     status.set(None);
                 }
@@ -121,10 +128,12 @@ pub fn StatusLight() -> Element {
                     "colour moves.\n\n",
 
                     "Did anything answer at all. This is the only check that does not need ",
-                    "the backend's cooperation, and a silent answer means red. It cannot ",
-                    "tell a stopped backend from one that is running but unreachable — a ",
-                    "wrong port, a refused connection, a browser blocking the request all ",
-                    "look identical from here.\n\n",
+                    "the backend's cooperation, and a silent answer means red. When that ",
+                    "happens it asks once more with CORS enforcement switched off, which ",
+                    "separates two failures that otherwise look identical: a refused ",
+                    "connection means nothing holds the port, while a response the browser ",
+                    "discarded means the backend is up and its allowed origin is wrong. ",
+                    "The details panel names which one.\n\n",
 
                     "How many settings are saved but not in effect. The backend compares ",
                     "what is in the settings file against what the running process ",
@@ -191,6 +200,13 @@ pub fn StatusLight() -> Element {
                     }
 
                     p { class: "text-gray-200", "{current.summary()}" }
+
+                    if let Some(reason) = offline_reason() {
+                        div { class: "rounded border border-gray-700 bg-gray-800 p-3",
+                            p { class: "text-gray-100 font-medium", "{reason.headline()}" }
+                            p { class: "text-gray-300 mt-1", "{reason.detail()}" }
+                        }
+                    }
 
                     if let Some(s) = status() {
                         div { class: "grid gap-x-4 gap-y-1 pt-2 border-t border-gray-700",

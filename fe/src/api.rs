@@ -229,6 +229,59 @@ pub struct StatusResponse {
     pub pending_count: u32,
 }
 
+/// Why nothing answered, when nothing answered.
+///
+/// A failed fetch looks identical whether the port is closed, the process is
+/// hung, or the browser refused to hand over a response that did arrive. The
+/// distinction changes what you go and check, so it is worth establishing
+/// rather than reporting "offline" and leaving it there.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum OfflineReason {
+    /// Nothing accepted the connection: not running, or not on this port.
+    NotListening,
+    /// Something answered, but the browser would not release the response —
+    /// almost always CORS, which means the backend is up and misconfigured.
+    Blocked,
+    /// The probe itself failed in a way we could not classify.
+    Unknown,
+}
+
+impl OfflineReason {
+    pub fn headline(self) -> &'static str {
+        match self {
+            OfflineReason::NotListening => "Nothing is listening",
+            OfflineReason::Blocked => "Running, but the browser blocked the response",
+            OfflineReason::Unknown => "Unreachable",
+        }
+    }
+
+    pub fn detail(self) -> &'static str {
+        match self {
+            OfflineReason::NotListening =>
+                "The connection was refused outright, so no process holds this port. Either the backend is not running, or it is running on a different port than this page expects.",
+            OfflineReason::Blocked =>
+                "A second request without CORS enforcement did get a response, so the backend is up and reachable — the browser is discarding its answers. That is a CORS mismatch: the backend's allowed origin does not include the address this page was served from.",
+            OfflineReason::Unknown =>
+                "The request failed and the follow-up probe did not settle either way. Treat it as not running until something proves otherwise.",
+        }
+    }
+}
+
+/// Distinguish the cases above by asking again with CORS enforcement off. An
+/// opaque response is still a response: it proves something accepted the
+/// connection and replied, which a refused connection cannot do.
+pub async fn diagnose_offline() -> OfflineReason {
+    match gloo_net::http::Request::get(&format!("{API_BASE}/api/health"))
+        .mode(web_sys::RequestMode::NoCors)
+        .send()
+        .await
+    {
+        Ok(_) => OfflineReason::Blocked,
+        Err(gloo_net::Error::JsError(_)) => OfflineReason::NotListening,
+        Err(_) => OfflineReason::Unknown,
+    }
+}
+
 pub async fn fetch_status() -> Result<StatusResponse, String> {
     let resp = gloo_net::http::Request::get(&format!("{API_BASE}/api/status"))
         .send()
