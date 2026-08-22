@@ -302,10 +302,14 @@ fn ParamBlock(
     rsx! {
         div { class: PARAM_BLOCK_CLASS,
             div { class: "flex items-center gap-2",
-                label { class: PARAM_LABEL_CLASS, "{param.flag}" }
+                // The name first, the flag after it. The flag is what you search
+                // for and what the docs call it, so it stays visible — but it is
+                // not what tells you what the row does.
+                label { class: "text-gray-200 whitespace-nowrap", "{param.label}" }
                 if !unit.is_empty() {
                     span { class: "text-gray-400", "({unit})" }
                 }
+                code { class: "text-gray-400 text-[10px]", "{param.flag}" }
                 if show_applies {
                     span { class: PARAM_BOARD_NOTE_CLASS,
                         if param.applies_at == "runtime" { "(immediate)" } else { "(restart)" }
