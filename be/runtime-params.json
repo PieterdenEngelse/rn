@@ -10,7 +10,7 @@
       "options": [
         {
           "value": "node",
-          "label": "Node — the default",
+          "label": "Node v24.19.0 — the default",
           "info": {
             "what": "The runtime rn ships with: a Node binary inside the install directory, launched by absolute path. Never the Node on the user's PATH — a machine that \"has Node\" often has one installed through nvm, which a desktop launcher or systemd unit cannot see.",
             "why": "The baseline, for good reasons: the largest package ecosystem, the runtime every dependency is tested against, and the only one native addons are compiled for here. Stay on it unless one of the others names a problem you actually have.",
@@ -143,13 +143,84 @@
       "id": "timezone",
       "flag": "TZ",
       "kind": "env",
-      "type": "string",
+      "type": "enum-open",
       "default": null,
+      "defaultFrom": "timezone",
+      "options": [
+        {
+          "value": "UTC",
+          "label": "UTC"
+        },
+        {
+          "value": "Europe/Amsterdam",
+          "label": "Europe/Amsterdam"
+        },
+        {
+          "value": "Europe/London",
+          "label": "Europe/London"
+        },
+        {
+          "value": "Europe/Berlin",
+          "label": "Europe/Berlin"
+        },
+        {
+          "value": "Europe/Paris",
+          "label": "Europe/Paris"
+        },
+        {
+          "value": "Europe/Madrid",
+          "label": "Europe/Madrid"
+        },
+        {
+          "value": "America/New_York",
+          "label": "America/New_York"
+        },
+        {
+          "value": "America/Chicago",
+          "label": "America/Chicago"
+        },
+        {
+          "value": "America/Denver",
+          "label": "America/Denver"
+        },
+        {
+          "value": "America/Los_Angeles",
+          "label": "America/Los_Angeles"
+        },
+        {
+          "value": "America/Sao_Paulo",
+          "label": "America/Sao_Paulo"
+        },
+        {
+          "value": "Asia/Kolkata",
+          "label": "Asia/Kolkata"
+        },
+        {
+          "value": "Asia/Dubai",
+          "label": "Asia/Dubai"
+        },
+        {
+          "value": "Asia/Shanghai",
+          "label": "Asia/Shanghai"
+        },
+        {
+          "value": "Asia/Tokyo",
+          "label": "Asia/Tokyo"
+        },
+        {
+          "value": "Australia/Sydney",
+          "label": "Australia/Sydney"
+        },
+        {
+          "value": "Pacific/Auckland",
+          "label": "Pacific/Auckland"
+        }
+      ],
       "appliesAt": "restart",
       "category": "time",
       "label": "Time zone",
       "info": {
-        "what": "The time zone every Date and every schedule is interpreted in. Unset, Node follows the operating system.",
+        "what": "The time zone every Date and every schedule is interpreted in. Left unset, Node follows the operating system, and the placeholder shows which zone that currently resolves to. The dropdown lists the common zones; any other IANA name can be typed in.",
         "why": "Pin it when jobs must run at a fixed local time regardless of what the machine thinks, or when logs are compared across machines. Use an IANA name such as Europe/Amsterdam or UTC.",
         "ifWrong": "Nothing errors. Timestamps are quietly wrong and scheduled jobs fire at the wrong hour — usually noticed only after a daylight-saving change."
       }

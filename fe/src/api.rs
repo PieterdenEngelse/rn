@@ -32,6 +32,11 @@ pub struct RuntimeParam {
     #[serde(rename = "type")]
     pub value_type: String,
     pub default: serde_json::Value,
+    /// Key in the `effective` payload whose live value stands in for the
+    /// default. Set where "the default" is whatever the OS reports, so the
+    /// field can name it instead of just saying it is unset.
+    #[serde(default, rename = "defaultFrom")]
+    pub default_from: Option<String>,
     #[serde(default)]
     pub unit: Option<String>,
     #[serde(default)]
@@ -41,6 +46,9 @@ pub struct RuntimeParam {
     /// Present when `value_type` is "enum".
     #[serde(default)]
     pub options: Option<Vec<ParamOption>>,
+    /// Runtimes this parameter does anything on. None means all of them.
+    #[serde(default, rename = "appliesTo")]
+    pub applies_to: Option<Vec<String>>,
     #[serde(rename = "appliesAt")]
     pub applies_at: String,
     pub category: String,

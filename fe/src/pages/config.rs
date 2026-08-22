@@ -106,14 +106,22 @@ fn ParamBoards(resp: ParamsResponse, reload: Signal<u32>) -> Element {
         Panel {
             title: "Runtime".to_string(),
             subtitle: Some("which runtime runs the app".to_string()),
+            // Puts this button at the right edge of the Active runtime board's
+            // info column below it, instead of trailing the subtitle a few
+            // pixels to the right of it: 15rem is that board's 16rem less its
+            // p-4, and pr-px is its 1px border, which border-box counts inside
+            // the 16rem but this unbordered row has no equivalent of.
+            header_class: "w-60 pr-px".to_string(),
             // Explains the concept. The buttons inside explain the choices —
             // useless to someone who does not yet know what is being chosen.
             info: Some(rsx! {
-                InfoButton {
-                    title: "What a runtime is".to_string(),
-                    what: "The program that executes the backend's JavaScript. Your code is text until something runs it: the runtime parses it, compiles it, manages its memory, and provides everything the language itself does not — timers, the filesystem, sockets, processes. rn's backend is JavaScript, so a runtime is not optional; it is the process the app lives inside. Node, Bun and Deno are three separate implementations of that job, each with its own engine, its own standard library, and its own idea of what a program is allowed to do.".to_string(),
-                    why: "It is worth understanding because it sets the boundaries of everything above it. The runtime decides how fast a script starts, which packages install at all, whether a dependency can reach the network behind your back, and how much memory the process may use before it is killed. Those are not library choices you can revisit per-file — they are properties of the process, fixed the moment it launches. The settings below tune the runtime; this panel picks which one you are tuning.".to_string(),
-                    if_wrong: "The common misconception is that this picks a language or a framework. It does not: the code is identical across all three. What changes is what runs it, and therefore what that code is capable of and constrained by. If you are unsure, Node is the right answer — it is what the app is bundled with and tested against, and the two alternatives exist for specific problems described in their own panels.".to_string(),
+                div { class: "ml-auto",
+                    InfoButton {
+                        title: "What a runtime is".to_string(),
+                        what: "The program that executes the backend's JavaScript. Your code is text until something runs it: the runtime parses it, compiles it, manages its memory, and provides everything the language itself does not — timers, the filesystem, sockets, processes. rn's backend is JavaScript, so a runtime is not optional; it is the process the app lives inside. Node, Bun and Deno are three separate implementations of that job, each with its own engine, its own standard library, and its own idea of what a program is allowed to do.".to_string(),
+                        why: "It is worth understanding because it sets the boundaries of everything above it. The runtime decides how fast a script starts, which packages install at all, whether a dependency can reach the network behind your back, and how much memory the process may use before it is killed. Those are not library choices you can revisit per-file — they are properties of the process, fixed the moment it launches. The settings below tune the runtime; this panel picks which one you are tuning.".to_string(),
+                        if_wrong: "The common misconception is that this picks a language or a framework. It does not: the code is identical across all three. What changes is what runs it, and therefore what that code is capable of and constrained by. If you are unsure, Node is the right answer — it is what the app is bundled with and tested against, and the two alternatives exist for specific problems described in their own panels.".to_string(),
+                    }
                 }
             }),
 
@@ -128,10 +136,50 @@ fn ParamBoards(resp: ParamsResponse, reload: Signal<u32>) -> Element {
             div { class: "flex gap-4 items-stretch overflow-x-auto",
                 RuntimeBoard { effective: resp.effective.clone() }
                 if !runtime_rows.is_empty() {
+                    {
+                        // The panel text is generated from the same options the
+                        // controls are built from, so an option cannot appear in
+                        // one and be missing from the other.
+                        let runtime_rows_for_info = runtime_rows.clone();
+                        rsx! {
                     CategoryBoard {
                         title: "Selection".to_string(),
                         rows: runtime_rows,
                         draft,
+                        effective: resp.effective.clone(),
+                        info: Some(rsx! {
+                            InfoButton {
+                                title: "What you are choosing here".to_string(),
+                                what: describe_options(&runtime_rows_for_info),
+                                why: concat!(
+                                    "Almost never. The bundled runtime is the one rn is tested ",
+                                    "against, and the reason the app carries its own copy is so ",
+                                    "that what runs here does not depend on what happens to be ",
+                                    "installed on the machine.\n\n",
+
+                                    "The reasons to change it are specific: trying a newer ",
+                                    "release before it is bundled, reproducing a problem someone ",
+                                    "reports on a different runtime, or measuring whether an ",
+                                    "alternative is actually faster for your jobs rather than in ",
+                                    "a benchmark.",
+                                ).to_string(),
+                                if_wrong: concat!(
+                                    "A selection that cannot be honoured is not silently ",
+                                    "ignored: the launcher falls back to the bundled runtime and ",
+                                    "says so, and the Active runtime board above reports what is ",
+                                    "really executing. Read those two together — the setting is ",
+                                    "the request, that board is the outcome.\n\n",
+
+                                    "A runtime that starts but behaves differently is the harder ",
+                                    "case, and it shows up as unexpected errors rather than as a ",
+                                    "warning here. If anything looks strange after changing ",
+                                    "this, put it back to the bundled runtime before ",
+                                    "investigating anything else.",
+                                ).to_string(),
+                            }
+                        }),
+                    }
+                        }
                     }
                 }
                 ProcessPanel { reload }
@@ -147,6 +195,63 @@ fn ParamBoards(resp: ParamsResponse, reload: Signal<u32>) -> Element {
         Panel {
             title: "Runtime settings".to_string(),
             subtitle: Some(format!("{} of 1,035 Node flags", resp.params.len())),
+            // Explains the selection itself — why these and not the other
+            // thousand. The buttons on each row explain the individual knobs;
+            // this one answers the question those cannot.
+            info: Some(rsx! {
+                InfoButton {
+                    title: "What these settings are".to_string(),
+                    what: concat!(
+                        "Settings for the Node runtime that rn ships with — not for rn's own ",
+                        "behaviour, and not for any Node you may have installed separately. The ",
+                        "app carries its own runtime, and these are the knobs on it.\n\n",
+
+                        "Node exposes 1,035 of them: 177 of its own command-line flags and 858 ",
+                        "belonging to V8, the JavaScript engine inside it, plus 19 environment ",
+                        "variables. Almost none belong in front of a person running an ",
+                        "automation. What survives onto this page had to pass one test — either ",
+                        "you can act on it, or it is the measured counterpart of something you ",
+                        "can act on. Compiler-debugging switches, profiling hooks and flags ",
+                        "whose effect is invisible without a debugger are all excluded.\n\n",
+
+                        "They are grouped by what they govern rather than by which Node ",
+                        "mechanism carries them, because that distinction matters to the ",
+                        "runtime and not to you. Memory is the heap ceiling. Concurrency is how ",
+                        "many operations run at once. Time is the zone schedules are read in. ",
+                        "Network covers certificates. Diagnostics turn extra reporting on. ",
+                        "Output is cosmetic.\n\n",
+
+                        "Behind the scenes some are environment variables and some are flags ",
+                        "passed on the command line, which is why they cannot all be changed ",
+                        "the same way — see \"takes effect\" on each row.",
+                    ).to_string(),
+                    why: concat!(
+                        "Because the defaults are chosen for a general-purpose runtime, not for ",
+                        "your machine or your jobs. A job that dies with 'heap out of memory' ",
+                        "wants a higher Memory limit; a job crawling through thousands of files ",
+                        "wants more Worker threads; a schedule that must fire at nine in ",
+                        "Amsterdam regardless of where the machine thinks it is wants Time ",
+                        "zone set.\n\n",
+
+                        "The honest answer for most people is that nothing here needs touching. ",
+                        "These exist for when something is wrong and you need the lever, not as ",
+                        "a routine tuning exercise. Changing them speculatively is a good way ",
+                        "to make a working system slower.",
+                    ).to_string(),
+                    if_wrong: concat!(
+                        "Nothing here can corrupt data or lose work — the worst outcome is a ",
+                        "process that will not start or one that performs badly. Every value is ",
+                        "checked against its range before it is saved, and a rejected value ",
+                        "leaves the previous one in place.\n\n",
+
+                        "If rn will not start after a change, the settings file is plain JSON ",
+                        "at ~/.config/rn/settings.json: delete the offending key, or the whole ",
+                        "file, and every default returns. Clearing a field here does the same ",
+                        "thing one setting at a time — an empty box means \"use the default\", ",
+                        "which is why the placeholder shows you what that default is.",
+                    ).to_string(),
+                }
+            }),
 
             p { class: "text-gray-400 mb-3 max-w-3xl",
                 "Settings for the Node runtime rn ships with. Everything except stack trace depth is read once when the process starts."
@@ -165,6 +270,7 @@ fn ParamBoards(resp: ParamsResponse, reload: Signal<u32>) -> Element {
                                 title: category_title(&category).to_string(),
                                 rows,
                                 draft,
+                                effective: resp.effective.clone(),
                             }
                         }
                     }
@@ -237,24 +343,88 @@ fn ParamBoards(resp: ParamsResponse, reload: Signal<u32>) -> Element {
 
 /// One category's parameters as a board. Extracted so the runtime board can sit
 /// in its own section without duplicating the markup.
+
+/// Build the "what you are choosing" text from the options themselves.
+///
+/// Generated rather than written out, because a hand-written list of choices
+/// goes stale the moment an option is added — and the per-option explanation
+/// already exists in the registry, where it is otherwise only visible for
+/// whichever option happens to be selected.
+fn describe_options(rows: &[RuntimeParam]) -> String {
+    let mut out = String::new();
+    out.push_str(
+        "Two separate choices, each with its own list. Every item in both is \
+         described below: what it is, when it is the right pick, and what it \
+         costs. The panel on a row covers only whichever option is selected \
+         there, so this is the one place the choices can be compared.\n",
+    );
+
+    for param in rows {
+        let Some(options) = param.options.as_ref() else { continue };
+        out.push_str(&format!("\n{}\n", param.label.to_uppercase()));
+
+        if let Some(default) = param.default.as_str() {
+            if let Some(d) = options.iter().find(|o| o.value == default) {
+                out.push_str(&format!("Default: {}\n", d.label));
+            }
+        }
+
+        for option in options {
+            out.push_str(&format!("\n• {}\n", option.label));
+            match option.info.as_ref() {
+                Some(info) => {
+                    // All three fields, not just the first. The registry already
+                    // records when to choose an option and what it costs; the
+                    // row panel shows them only for whichever is selected, so
+                    // without this the comparison the reader wants is invisible.
+                    out.push_str(&format!("What it is — {}\n", info.what));
+                    if !info.why.trim().is_empty() {
+                        out.push_str(&format!("\nWhen to choose it — {}\n", info.why));
+                    }
+                    if !info.if_wrong.trim().is_empty() {
+                        out.push_str(&format!("\nTrade-offs — {}\n", info.if_wrong));
+                    }
+                }
+                None => out.push_str("No description recorded for this option.\n"),
+            }
+        }
+    }
+    out
+}
+
 #[component]
 fn CategoryBoard(
     title: String,
     rows: Vec<RuntimeParam>,
     draft: Signal<BTreeMap<String, serde_json::Value>>,
+    /// The live `effective` payload, so a row whose default is "whatever the
+    /// system says" can show what the system currently says.
+    effective: serde_json::Value,
+    /// Optional explainer for the board as a whole — what the group of
+    /// settings is for, as opposed to any single row in it.
+    #[props(default = None)]
+    info: Option<Element>,
 ) -> Element {
     let all_restart = rows.iter().all(|p| p.applies_at == "restart");
     rsx! {
         div { class: PARAM_BOARD_CLASS,
             div { class: "flex items-center gap-2 mb-3",
                 span { class: PARAM_BOARD_TITLE_CLASS, "{title}" }
+                if let Some(info) = info {
+                    {info}
+                }
                 if all_restart {
                     span { class: PARAM_BOARD_NOTE_CLASS, "(restart required)" }
                 }
             }
             div { class: PARAM_COLUMN_CLASS,
                 for p in rows.iter() {
-                    ParamBlock { param: p.clone(), draft, show_applies: !all_restart }
+                    ParamBlock {
+                        param: p.clone(),
+                        draft,
+                        show_applies: !all_restart,
+                        effective: effective.clone(),
+                    }
                 }
             }
         }
@@ -266,14 +436,40 @@ fn ParamBlock(
     param: RuntimeParam,
     draft: Signal<BTreeMap<String, serde_json::Value>>,
     show_applies: bool,
+    effective: serde_json::Value,
 ) -> Element {
     let id = param.id.clone();
     let current = draft().get(&id).cloned();
 
+    // Bun and Deno accept NODE_OPTIONS they do not implement instead of
+    // refusing to boot, so a Node-only flag under them is silently inert. The
+    // control stays editable — the value is saved and applies the moment Node
+    // runs again — but the row has to stop implying it is doing something.
+    let running = effective
+        .get("jsRuntime")
+        .and_then(|v| v.as_str())
+        .unwrap_or("node")
+        .to_string();
+    let ignored = param
+        .applies_to
+        .as_ref()
+        .is_some_and(|list| !list.iter().any(|r| r == &running));
+
     // Placeholder shows the default, so an empty field reads as "unset —
-    // inheriting the default" rather than as a missing value.
+    // inheriting the default" rather than as a missing value. A null default
+    // says "unset" outright; where the registry names a `defaultFrom` key, the
+    // live value follows it, because "unset" alone does not tell you which
+    // zone you are actually getting.
     let placeholder = if param.default.is_null() {
-        "default".to_string()
+        let live = param
+            .default_from
+            .as_ref()
+            .and_then(|key| effective.get(key))
+            .and_then(|v| v.as_str().map(str::to_string));
+        match live {
+            Some(v) if !v.is_empty() => format!("unset — {v}"),
+            _ => "unset".to_string(),
+        }
     } else {
         param.default.to_string().trim_matches('"').to_string()
     };
@@ -298,6 +494,7 @@ fn ParamBlock(
     let id_for_text = id.clone();
     let id_for_bool = id.clone();
     let id_for_enum = id.clone();
+    let id_for_open = id.clone();
 
     rsx! {
         div { class: PARAM_BLOCK_CLASS,
@@ -305,7 +502,13 @@ fn ParamBlock(
                 // The name first, the flag after it. The flag is what you search
                 // for and what the docs call it, so it stays visible — but it is
                 // not what tells you what the row does.
-                label { class: "text-gray-200 whitespace-nowrap", "{param.label}" }
+                label {
+                    class: if ignored { "text-gray-400 whitespace-nowrap line-through" } else { "text-gray-200 whitespace-nowrap" },
+                    "{param.label}"
+                }
+                if ignored {
+                    span { class: PARAM_BOARD_NOTE_CLASS, "(ignored by {running})" }
+                }
                 if !unit.is_empty() {
                     span { class: "text-gray-400", "({unit})" }
                 }
@@ -337,6 +540,40 @@ fn ParamBlock(
                             },
                         }
                     },
+                    // A dropdown that is still a text field: `list` offers the
+                    // common values, typing accepts anything else. A `select`
+                    // could not do the second half, and 600 IANA zones in one
+                    // is not a list anybody scrolls.
+                    "enum-open" => {
+                        let options = param.options.clone().unwrap_or_default();
+                        let list_id = format!("{}-options", param.id);
+                        rsx! {
+                            input {
+                                r#type: "text",
+                                class: PARAM_TEXT_INPUT_CLASS,
+                                list: "{list_id}",
+                                placeholder,
+                                value: text_value,
+                                onchange: move |evt| {
+                                    let raw = evt.value();
+                                    let mut d = draft.write();
+                                    if raw.trim().is_empty() {
+                                        d.remove(&id_for_open);
+                                    } else {
+                                        d.insert(
+                                            id_for_open.clone(),
+                                            serde_json::json!(raw.trim()),
+                                        );
+                                    }
+                                },
+                            }
+                            datalist { id: "{list_id}",
+                                for opt in options.iter() {
+                                    option { value: "{opt.value}", "{opt.label}" }
+                                }
+                            }
+                        }
+                    },
                     "enum" => {
                         // Options come from the backend registry, so a value
                         // cannot appear here without its explanation.
@@ -356,7 +593,11 @@ fn ParamBlock(
                                     }
                                 },
                                 if nullable {
-                                    option { value: "", "{placeholder} (bundled)" }
+                                    // "default (bundled)" said nothing: it named
+                                    // the internal state rather than the choice.
+                                    // This entry means "pin nothing, run what
+                                    // ships inside rn".
+                                    option { value: "", "Bundled runtime — no version pinned" }
                                 }
                                 for o in options.iter() {
                                     option { value: "{o.value}", "{o.label}" }

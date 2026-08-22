@@ -20,6 +20,7 @@ import {
     type Settings,
 } from "./settings.ts";
 import { config } from "./config.ts";
+import { display as displayPath } from "./paths.ts";
 
 /**
  * Exit code that asks the launcher for a restart. Must match EXIT_RESTART in
@@ -121,8 +122,8 @@ export function createApp() {
                 launcherPid: process.env["RN_LAUNCHER_PID"] ?? null,
                 uptimeMs: Math.round(process.uptime() * 1000),
                 node: process.version,
-                execPath: process.execPath,
-                settingsPath: config.settingsPath,
+                execPath: displayPath(process.execPath),
+                settingsPath: displayPath(config.settingsPath),
                 url: `http://${config.host}:${config.port}`,
                 jobs: jobs.count(),
                 restartPending: restartWhenIdle,
@@ -263,8 +264,8 @@ server.listen(config.port, config.host, () => {
     step("listening", {
         url: `http://${config.host}:${config.port}`,
         node: process.version,
-        execPath: process.execPath,
-        settingsPath: config.settingsPath,
+        execPath: displayPath(process.execPath),
+        settingsPath: displayPath(config.settingsPath),
         applied: bootApplied,
     });
 });

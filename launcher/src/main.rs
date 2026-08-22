@@ -4,7 +4,7 @@
 //! because of one rule from CLAUDE.md: the app never uses whatever Node is on
 //! the machine, and never inherits the user's environment.
 
-use rn::layout::{self, Layout};
+use rn::layout::{self, display_path, display_text, Layout};
 use rn::node_command::NodeCommand;
 use rn::pidfile;
 use rn::settings;
@@ -73,7 +73,7 @@ fn run() -> Result<(), String> {
     println!(
         "rn: {} runtime at {}",
         if layout.installed { "installed" } else { "development" },
-        layout.node.display(),
+        display_path(&layout.node),
     );
 
     shutdown::install()?;
@@ -161,17 +161,26 @@ fn print_env(layout: &Layout, params: &[settings::RuntimeParam]) -> Result<(), S
     let extra = saved.get("netAllowlist").and_then(|v| v.as_str()).unwrap_or_default();
     let allow_net = layout::net_allowlist(&host, port, extra);
     let argv = layout::runtime_argv(selection.kind, &env_file, &layout.entry, &allow_net);
-    println!("runtime     {} -> {}", selection.requested, selection.path.display());
+    println!(
+        "runtime     {} -> {}",
+        selection.requested,
+        display_path(&selection.path),
+    );
     println!(
         "argv        {}",
-        argv.iter().map(|a| a.to_string_lossy().into_owned()).collect::<Vec<_>>().join(" ")
+        // argv carries absolute paths to the child; shown tildified because
+        // this line is for reading, not for pasting into a shell.
+        argv.iter()
+            .map(|a| display_text(&a.to_string_lossy()))
+            .collect::<Vec<_>>()
+            .join(" ")
     );
     if let Some(note) = &selection.unavailable {
         println!("            ! {note}");
     }
-    println!("node        {}", layout.node.display());
-    println!("entry       {}", layout.entry.display());
-    println!("settings    {}", layout.settings.display());
+    println!("node        {}", display_path(&layout.node));
+    println!("entry       {}", display_path(&layout.entry));
+    println!("settings    {}", display_path(&layout.settings));
     println!("sealed      RN_ENV_SEALED=1 (environment cleared, then built explicitly)");
     if node_options.is_empty() {
         println!("NODE_OPTIONS  (none)");
@@ -194,7 +203,7 @@ fn supervise(layout: &Layout, params: &[settings::RuntimeParam]) -> Result<(), S
 
         let mut child = cmd
             .spawn()
-            .map_err(|e| format!("cannot start {}: {e}", layout.node.display()))?;
+            .map_err(|e| format!("cannot start {}: {e}", display_path(&layout.node)))?;
 
         shutdown::set_child(Some(child.id()));
 

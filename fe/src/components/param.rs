@@ -24,6 +24,15 @@ pub const PARAM_SELECT_CLASS: &str = "select select-xs bg-gray-700 text-gray-200
 
 /// A board grouping related parameters, per the hardware page.
 pub const PARAM_BOARD_CLASS: &str = "rounded border border-gray-600 p-4 w-fit";
+
+/// The same board at a fixed width. `w-fit` lets content decide where the
+/// info-button column lands, which is fine when a board stands alone — but the
+/// Active runtime board sits directly under the Runtime panel's own info
+/// button, and the two only line up if the board's width is knowable from
+/// outside it. 16rem here, 15rem on the panel header (the board's `p-4`), so
+/// both buttons end at the same right edge.
+pub const PARAM_BOARD_FIXED_CLASS: &str =
+    "rounded border border-gray-600 p-4 w-64 shrink-0";
 pub const PARAM_BOARD_TITLE_CLASS: &str = "text-sm text-gray-300 font-semibold";
 pub const PARAM_BOARD_NOTE_CLASS: &str = "text-xs text-gray-300 italic";
 pub const PARAM_COLUMN_HEADING_CLASS: &str = "text-gray-300 font-semibold text-xs";

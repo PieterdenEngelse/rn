@@ -94,7 +94,7 @@ Default: 4 · Takes effect: on restart · Settings key: `threadpoolSize`
 
 ### Time zone — `TZ`
 
-**What it does.** The time zone every Date and every schedule is interpreted in. Unset, Node follows the operating system.
+**What it does.** The time zone every Date and every schedule is interpreted in. Left unset, Node follows the operating system, and the placeholder shows which zone that currently resolves to. The dropdown lists the common zones; any other IANA name can be typed in.
 
 **Why you would change it.** Pin it when jobs must run at a fixed local time regardless of what the machine thinks, or when logs are compared across machines. Use an IANA name such as Europe/Amsterdam or UTC.
 

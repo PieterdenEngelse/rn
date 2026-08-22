@@ -16,8 +16,12 @@
  * limitation to hide — the UI must say so.
  */
 
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+export type JsRuntime = "node" | "bun" | "deno";
 export type ParamKind = "env" | "node-option" | "launcher";
-export type ParamType = "int" | "string" | "bool" | "enum";
+export type ParamType = "int" | "string" | "bool" | "enum" | "enum-open";
 export type AppliesAt = "restart" | "runtime";
 export type Category =
     | "memory"
@@ -37,11 +41,20 @@ export interface RuntimeParam {
     type: ParamType;
     /** null means "unset — inherit the system default". */
     default: string | number | boolean | null;
+    /**
+     * Key in the /api/params `effective` payload whose live value stands in
+     * for the default in the UI. For a setting whose default is "whatever the
+     * OS says", the word "unset" alone does not tell you what you are getting;
+     * this names the field that does.
+     */
+    defaultFrom?: string;
     unit?: string;
     min?: number;
     max?: number;
     /**
      * Required when type is "enum": the allowed values, in display order.
+     * Optional when type is "enum-open", where they are suggestions rather
+     * than a closed set — the field still accepts anything typed into it.
      *
      * An option may carry its own info panel. When it does, the UI shows that
      * one for the current selection instead of the parameter's — three runtimes
@@ -53,6 +66,13 @@ export interface RuntimeParam {
         info?: { what: string; why: string; ifWrong: string };
     }[];
     appliesAt: AppliesAt;
+    /**
+     * Runtimes this parameter actually does something on. Omitted means all of
+     * them. Bun and Deno tolerate NODE_OPTIONS they do not implement rather
+     * than refusing to start, so a Node-only flag under them is silently
+     * ignored — the UI has to say so, because nothing else will.
+     */
+    appliesTo?: readonly JsRuntime[];
     category: Category;
     label: string;
     info: {
@@ -64,6 +84,28 @@ export interface RuntimeParam {
         ifWrong: string;
     };
 }
+
+/**
+ * The version of the runtime this install actually carries, read from the file
+ * the installer writes beside the binary.
+ *
+ * Used in the option label so "the default" names a version instead of making
+ * the reader go and look it up. Falls back to the running process if the file
+ * is missing, and to an empty string if that fails too — a label must never be
+ * the reason startup fails.
+ */
+function bundledRuntimeVersion(): string {
+    try {
+        const here = dirname(fileURLToPath(import.meta.url));
+        const version = readFileSync(join(here, "..", "runtime", "VERSION"), "utf8").trim();
+        if (version) return version;
+    } catch {
+        // No bundled runtime present — a source checkout, for instance.
+    }
+    return process.version ?? "";
+}
+
+const BUNDLED = bundledRuntimeVersion();
 
 export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
     {
@@ -78,7 +120,9 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
         options: [
             {
                 value: "node",
-                label: "Node — the default",
+                label: BUNDLED
+                    ? `Node ${BUNDLED} — the default`
+                    : "Node — the default",
                 info: {
                     what:
                         "The runtime rn ships with: a Node binary inside the install " +
@@ -272,6 +316,8 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
     },
     {
         id: "maxOldSpaceSize",
+        // V8 flag; Bun runs JavaScriptCore and Deno takes V8 flags only via --v8-flags.
+        appliesTo: ["node"],
         flag: "--max-old-space-size",
         kind: "node-option",
         type: "int",
@@ -298,6 +344,8 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
     },
     {
         id: "threadpoolSize",
+        // libuv; Deno has none, and Bun does not read UV_THREADPOOL_SIZE.
+        appliesTo: ["node"],
         flag: "UV_THREADPOOL_SIZE",
         kind: "env",
         type: "int",
@@ -359,15 +407,40 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
         id: "timezone",
         flag: "TZ",
         kind: "env",
-        type: "string",
+        type: "enum-open",
         default: null,
+        defaultFrom: "timezone",
+        // Suggestions, not a closed set: these cover most users, and IANA has
+        // some 600 more. The field stays typable so the other 600 are reachable
+        // without this list having to grow to meet them.
+        options: [
+            { value: "UTC", label: "UTC" },
+            { value: "Europe/Amsterdam", label: "Europe/Amsterdam" },
+            { value: "Europe/London", label: "Europe/London" },
+            { value: "Europe/Berlin", label: "Europe/Berlin" },
+            { value: "Europe/Paris", label: "Europe/Paris" },
+            { value: "Europe/Madrid", label: "Europe/Madrid" },
+            { value: "America/New_York", label: "America/New_York" },
+            { value: "America/Chicago", label: "America/Chicago" },
+            { value: "America/Denver", label: "America/Denver" },
+            { value: "America/Los_Angeles", label: "America/Los_Angeles" },
+            { value: "America/Sao_Paulo", label: "America/Sao_Paulo" },
+            { value: "Asia/Kolkata", label: "Asia/Kolkata" },
+            { value: "Asia/Dubai", label: "Asia/Dubai" },
+            { value: "Asia/Shanghai", label: "Asia/Shanghai" },
+            { value: "Asia/Tokyo", label: "Asia/Tokyo" },
+            { value: "Australia/Sydney", label: "Australia/Sydney" },
+            { value: "Pacific/Auckland", label: "Pacific/Auckland" },
+        ],
         appliesAt: "restart",
         category: "time",
         label: "Time zone",
         info: {
             what:
-                "The time zone every Date and every schedule is interpreted in. Unset, " +
-                "Node follows the operating system.",
+                "The time zone every Date and every schedule is interpreted in. Left " +
+                "unset, Node follows the operating system, and the placeholder shows " +
+                "which zone that currently resolves to. The dropdown lists the common " +
+                "zones; any other IANA name can be typed in.",
             why:
                 "Pin it when jobs must run at a fixed local time regardless of what the " +
                 "machine thinks, or when logs are compared across machines. Use an IANA " +
@@ -379,6 +452,8 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
     },
     {
         id: "extraCaCerts",
+        // NODE_EXTRA_CA_CERTS is Node's; Deno uses DENO_CERT.
+        appliesTo: ["node"],
         flag: "NODE_EXTRA_CA_CERTS",
         kind: "env",
         type: "string",
@@ -400,6 +475,8 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
     },
     {
         id: "traceWarnings",
+        // Node's warning system.
+        appliesTo: ["node"],
         flag: "--trace-warnings",
         kind: "node-option",
         type: "bool",
@@ -417,6 +494,8 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
     },
     {
         id: "traceDeprecation",
+        // Node's deprecation warnings.
+        appliesTo: ["node"],
         flag: "--trace-deprecation",
         kind: "node-option",
         type: "bool",
@@ -432,6 +511,8 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
     },
     {
         id: "stackTraceLimit",
+        // Error.stackTraceLimit is V8's.
+        appliesTo: ["node"],
         flag: "--stack-trace-limit",
         kind: "node-option",
         type: "int",
@@ -453,6 +534,8 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
     },
     {
         id: "heapSnapshotSignal",
+        // Node/V8 heap snapshots.
+        appliesTo: ["node"],
         flag: "--heapsnapshot-signal",
         kind: "node-option",
         type: "string",

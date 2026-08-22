@@ -54,7 +54,7 @@ pub fn RuntimeBoard(effective: serde_json::Value) -> Element {
         .to_string();
 
     rsx! {
-        div { class: PARAM_BOARD_CLASS,
+        div { class: PARAM_BOARD_FIXED_CLASS,
             div { class: "flex items-center gap-2 mb-3",
                 span { class: PARAM_BOARD_TITLE_CLASS, "Active runtime" }
             }
@@ -97,6 +97,16 @@ pub fn RuntimeBoard(effective: serde_json::Value) -> Element {
                 div { class: PARAM_BLOCK_CLASS,
                     label { class: PARAM_LABEL_CLASS, "path" }
                     div { class: PARAM_INPUT_ROW_CLASS,
+                        // Truncated, not wrapped: a full runtime path is long
+                        // enough to set the board's width on its own and drag
+                        // this row's info button out of line with the others.
+                        // The whole path stays one click away in the panel, and
+                        // in the hover title.
+                        span {
+                            class: "text-gray-300 font-mono truncate max-w-xs",
+                            title: "{exec_path}",
+                            "{exec_path}"
+                        }
                         InfoButton {
                             title: "Runtime path".to_string(),
                             what: format!("The binary that is running, from `process.execPath`:\n\n{exec_path}\n\nIt is shown here rather than on the board because the full path is long enough to crowd out everything beside it, and it only matters when you are checking it."),

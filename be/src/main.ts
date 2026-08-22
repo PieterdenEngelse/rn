@@ -1,5 +1,6 @@
 import { config } from "./config.ts";
 import { step } from "./log.ts";
+import { display as displayPath } from "./paths.ts";
 
 /**
  * Refuse to run against a production install with an environment we did not
@@ -21,7 +22,7 @@ function main(): void {
 
     step("boot", {
         node: process.version,
-        execPath: process.execPath,
+        execPath: displayPath(process.execPath),
         sealed: process.env.RN_ENV_SEALED === "1",
         logLevel: config.logLevel,
         dryRun: config.dryRun,

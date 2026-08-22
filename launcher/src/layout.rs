@@ -298,3 +298,38 @@ fn settings_path() -> PathBuf {
         .unwrap_or_else(|_| ".".to_string());
     PathBuf::from(home).join(".config").join("rn").join("settings.json")
 }
+
+/// Format arbitrary text for display, shortening the home directory wherever
+/// it appears — including inside a flag like `--env-file=/home/you/...`, which
+/// a prefix match would miss.
+pub fn display_text(text: &str) -> String {
+    let Ok(home) = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) else {
+        return text.to_string();
+    };
+    if home.is_empty() || home == "/" {
+        return text.to_string();
+    }
+    text.replace(&home, "~")
+}
+
+/// Format a path for showing to a person: home directory as `~`.
+///
+/// Display only. Everything that spawns, opens or compares a path keeps the
+/// absolute form — `~` is a shell convention, not something the file system
+/// resolves.
+pub fn display_path(p: &Path) -> String {
+    let text = p.display().to_string();
+    let Ok(home) = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) else {
+        return text;
+    };
+    if home.is_empty() || home == "/" {
+        return text;
+    }
+    if text == home {
+        return "~".to_string();
+    }
+    match text.strip_prefix(&format!("{home}/")) {
+        Some(rest) => format!("~/{rest}"),
+        None => text,
+    }
+}

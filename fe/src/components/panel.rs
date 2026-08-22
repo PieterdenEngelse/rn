@@ -8,13 +8,17 @@ pub fn Panel(
     /// Optional control rendered beside the title — an InfoButton explaining
     /// what the whole panel is about, as opposed to any one row inside it.
     #[props(default = None)] info: Option<Element>,
+    /// Extra classes for the title row. Lets a page size that row so its info
+    /// button lines up with a column of them further down the panel; without
+    /// it the button lands wherever the title and subtitle happen to end.
+    #[props(default = String::new())] header_class: String,
     children: Element,
 ) -> Element {
     rsx! {
         div { class: "bg-gray-800 border border-gray-700 rounded-lg p-4 shadow",
             if let Some(title) = title {
                 div { class: "flex items-center justify-between mb-3",
-                    div { class: "flex items-center gap-3",
+                    div { class: "flex items-center gap-3 {header_class}",
                         h3 { class: "text-sm font-semibold text-gray-200", "{title}" }
                         if let Some(subtitle) = subtitle {
                             span { class: "text-[10px] text-gray-400", "{subtitle}" }

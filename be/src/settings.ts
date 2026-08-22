@@ -12,6 +12,7 @@ import { getHeapStatistics } from "node:v8";
 import { availableParallelism } from "node:os";
 import { dirname } from "node:path";
 import { RUNTIME_PARAMS, paramById, type RuntimeParam } from "./runtime-params.ts";
+import { display as displayPath } from "./paths.ts";
 
 export type SettingValue = string | number | boolean | null;
 export type Settings = Record<string, SettingValue>;
@@ -41,7 +42,9 @@ export function validate(id: string, value: SettingValue): ValidationError | nul
     if (p.type === "bool" && typeof value !== "boolean") {
         return { id, message: `${p.label} must be true or false` };
     }
-    if (p.type === "string" && typeof value !== "string") {
+    // "enum-open" offers suggestions but accepts anything, so it validates as
+    // text — the closed "enum" below is the one that checks membership.
+    if ((p.type === "string" || p.type === "enum-open") && typeof value !== "string") {
         return { id, message: `${p.label} must be text` };
     }
     if (p.type === "enum") {
@@ -149,7 +152,7 @@ export function effectiveValues(): Record<string, string | number> {
     const h = getHeapStatistics();
     return {
         nodeVersion: process.version,
-        execPath: process.execPath,
+        execPath: displayPath(process.execPath),
         // What this process actually is, and what the launcher was asked for.
         // The two differ when a selected runtime is not bundled; the launcher
         // falls back rather than refusing to boot, and says so here.
@@ -223,11 +226,17 @@ export function pendingRestart(settings: Settings): PendingChange[] {
     // Flags this process was actually started with.
     const activeOptions = [process.env.NODE_OPTIONS ?? "", ...process.execArgv].join(" ");
 
+    const running = activeRuntime("jsRuntime");
+
     for (const p of RUNTIME_PARAMS) {
         if (p.appliesAt !== "restart") continue;
         const value = settings[p.id];
         if (value === undefined || value === null) continue;
         if (p.type === "bool" && value === false) continue;
+        // A parameter this runtime ignores will never take effect, so calling it
+        // pending a restart would promise something no restart can deliver. The
+        // UI marks it ignored instead.
+        if (p.appliesTo && !p.appliesTo.includes(running as never)) continue;
 
         // Launcher-kind settings are not flags, so NODE_OPTIONS says nothing
         // about them. Compare against what this process actually is instead,
