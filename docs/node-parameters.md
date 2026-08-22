@@ -16,6 +16,8 @@ scales with installed RAM, so expect a different number elsewhere.
 | **Node version line** | `nodeVersion` (NODE_OPTIONS) | unset (system default) | — | on restart |
 | **Heap memory limit** | `--max-old-space-size` (NODE_OPTIONS) | unset (system default) | 64 … 32768 MB | on restart |
 | **libuv thread pool** | `UV_THREADPOOL_SIZE` | 4 | 1 … 1024 | on restart |
+| **Bun low-memory mode** | `--smol` (NODE_OPTIONS) | off | — | on restart |
+| **Deno V8 flags** | `--v8-flags` (NODE_OPTIONS) | unset (system default) | — | on restart |
 | **Time zone** | `TZ` | unset (system default) | — | on restart |
 | **Extra CA certificates** | `NODE_EXTRA_CA_CERTS` | unset (system default) | — | on restart |
 | **Trace warnings** | `--trace-warnings` (NODE_OPTIONS) | off | — | on restart |
@@ -67,6 +69,26 @@ Default: unset (system default) · Takes effect: on restart · Settings key: `no
 **If it's wrong.** Too low and the job dies part-way through. Note it sets old space, not the total: setting 256 produced a 2240 MB → 448 MB total limit, not 256.
 
 Default: unset (system default) · Takes effect: on restart · Settings key: `maxOldSpaceSize`
+
+### Bun low-memory mode — `--smol`
+
+**What it does.** Runs Bun in a reduced-memory configuration: smaller heap targets and more eager garbage collection. It is Bun's answer to the question the heap memory limit answers on Node, which is why that setting is struck through while Bun is running — --max-old-space-size is a V8 flag and Bun runs JavaScriptCore.
+
+**Why you would change it.** Worth it when the app shares a machine and the automation is not memory-hungry. Collecting more often trades a little throughput for a meaningfully smaller resident footprint.
+
+**If it's wrong.** On an allocation-heavy job the extra collection shows up as slower wall-clock time for the same work. It is a dial between footprint and speed, not a fix for running out of memory — a job that genuinely needs the memory will still need it.
+
+Default: off · Takes effect: on restart · Settings key: `bunSmol`
+
+### Deno V8 flags — `--v8-flags`
+
+**What it does.** Passes flags straight through to V8, comma-separated — for example --max-old-space-size=512,--max-semi-space-size=64. Deno runs V8 like Node does, but does not read NODE_OPTIONS, so this is the only route to V8 tuning under it.
+
+**Why you would change it.** It is how you set a heap limit while Deno is the runtime. The Heap memory limit row above does nothing here: it exports NODE_OPTIONS, which Deno ignores. Put --max-old-space-size here instead and it takes effect exactly as it would on Node.
+
+**If it's wrong.** V8 rejects an unknown flag at startup, so a typo means the process does not come up rather than quietly running unconfigured. Check the launcher output if it fails to start after a change here.
+
+Default: unset (system default) · Takes effect: on restart · Settings key: `denoV8Flags`
 
 ## Concurrency
 

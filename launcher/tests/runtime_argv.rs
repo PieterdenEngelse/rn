@@ -6,7 +6,7 @@ use rn::layout::{bind_address, net_allowlist, runtime_argv, RuntimeKind};
 use std::path::Path;
 
 fn strings(kind: RuntimeKind, env_file: &Path) -> Vec<String> {
-    runtime_argv(kind, env_file, Path::new("/app/src/server.ts"), &["127.0.0.1:3010".to_string()])
+    runtime_argv(kind, env_file, Path::new("/app/src/server.ts"), &["127.0.0.1:3010".to_string()], &[])
         .iter()
         .map(|a| a.to_string_lossy().into_owned())
         .collect()

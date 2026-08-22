@@ -13,6 +13,9 @@ pub struct RuntimeParam {
     pub kind: String,
     #[serde(rename = "type")]
     pub value_type: String,
+    /// Runtimes this parameter does anything on; None means all of them.
+    #[serde(default, rename = "appliesTo")]
+    pub applies_to: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -41,9 +44,21 @@ pub fn load_settings(path: &Path) -> Settings {
 
 /// The launcher half of what `resolveLaunch()` does in be/src/settings.ts:
 /// turn saved settings into environment variables and NODE_OPTIONS entries.
-pub fn resolve(params: &[RuntimeParam], settings: &Settings) -> (BTreeMap<String, String>, Vec<String>) {
+/// env vars, NODE_OPTIONS entries, and flags for the runtime's own argv.
+pub struct Launch {
+    pub env: BTreeMap<String, String>,
+    pub node_options: Vec<String>,
+    pub runtime_flags: Vec<String>,
+}
+
+/// `runtime` is what will actually be spawned. A parameter that does nothing on
+/// it is dropped rather than passed and ignored: Bun and Deno tolerate a Node
+/// flag, but Node does not tolerate --smol, so passing everything to everyone
+/// would stop the default runtime booting.
+pub fn resolve(params: &[RuntimeParam], settings: &Settings, runtime: &str) -> Launch {
     let mut env = BTreeMap::new();
     let mut node_options = Vec::new();
+    let mut runtime_flags = Vec::new();
 
     for p in params {
         let Some(value) = settings.get(&p.id) else { continue };
@@ -67,6 +82,23 @@ pub fn resolve(params: &[RuntimeParam], settings: &Settings) -> (BTreeMap<String
             continue;
         }
 
+        if let Some(list) = &p.applies_to {
+            if !list.iter().any(|r| r == runtime) {
+                continue;
+            }
+        }
+
+        // Not a Node flag: it belongs in the runtime's own command line, which
+        // differs per runtime — see layout::runtime_argv.
+        if p.kind == "runtime-flag" {
+            if p.value_type == "bool" {
+                runtime_flags.push(p.flag.clone());
+            } else {
+                runtime_flags.push(format!("{}={}", p.flag, rendered));
+            }
+            continue;
+        }
+
         if p.kind == "env" {
             let v = if p.value_type == "bool" { "1".to_string() } else { rendered };
             env.insert(p.flag.clone(), v);
@@ -77,5 +109,5 @@ pub fn resolve(params: &[RuntimeParam], settings: &Settings) -> (BTreeMap<String
         }
     }
 
-    (env, node_options)
+    Launch { env, node_options, runtime_flags }
 }

@@ -31,6 +31,17 @@ pub enum RuntimeKind {
     Deno,
 }
 
+impl RuntimeKind {
+    /// Matches the values used in the registry's appliesTo.
+    pub fn name(self) -> &'static str {
+        match self {
+            RuntimeKind::Node => "node",
+            RuntimeKind::Bun => "bun",
+            RuntimeKind::Deno => "deno",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct RuntimeSelection {
     /// Absolute path to the binary to spawn.
@@ -105,6 +116,8 @@ pub fn runtime_argv(
     env_file: &Path,
     entry: &Path,
     allow_net: &[String],
+    // Flags for this runtime's own command line, from runtime-flag params.
+    extra: &[String],
 ) -> Vec<std::ffi::OsString> {
     use std::ffi::OsString;
     let mut argv: Vec<OsString> = Vec::new();
@@ -145,6 +158,12 @@ pub fn runtime_argv(
                 argv.push(OsString::from(format!("--env-file={}", env_file.display())));
             }
         }
+    }
+
+    // Before the script path: every one of the three parses options first and
+    // treats the first non-option argument as the program to run.
+    for f in extra {
+        argv.push(OsString::from(f));
     }
 
     argv.push(entry.as_os_str().to_os_string());

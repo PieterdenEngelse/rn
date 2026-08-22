@@ -106,6 +106,9 @@
     },
     {
       "id": "maxOldSpaceSize",
+      "appliesTo": [
+        "node"
+      ],
       "flag": "--max-old-space-size",
       "kind": "node-option",
       "type": "int",
@@ -124,6 +127,9 @@
     },
     {
       "id": "threadpoolSize",
+      "appliesTo": [
+        "node"
+      ],
       "flag": "UV_THREADPOOL_SIZE",
       "kind": "env",
       "type": "int",
@@ -137,6 +143,42 @@
         "what": "Size of libuv's thread pool: a fixed set of operating-system threads that exist to do blocking work off the main thread. Default 4, regardless of how many cores the machine has.\n\nThese threads never run JavaScript. A thread takes a blocking call, waits in the kernel for it to finish, and posts the result back to the event loop, which then runs your callback on the one JavaScript thread as usual. The pool is how a single-threaded runtime does slow I/O without stopping.\n\nIt covers filesystem calls, dns.lookup, zlib, and the crypto functions with no non-blocking form — pbkdf2, scrypt, randomBytes. It does not cover network sockets: those are event-driven through epoll or kqueue and need no thread at all, which is why a server handling thousands of connections is unaffected by this number. Note dns.lookup uses the pool but dns.resolve does not, because the first calls the blocking system resolver and the second speaks DNS over a socket.\n\nThis is not node:worker_threads, despite the similar names. Those are real JavaScript threads you create in code, each with its own V8 isolate and its own event loop, and this setting has no effect on them. The threads here are invisible: you never see one, never schedule onto one, and only notice them as the reason a filesystem job is or is not waiting.",
         "why": "The highest-leverage setting for file automation. A job touching thousands of files spends its time queued behind these 4 threads — the work is not slow, it is waiting for a slot.\n\nIt follows from what the pool covers that raising it helps exactly one shape of workload: many concurrent filesystem, zlib or password-hashing operations. If the automation is mostly network calls, or mostly computation in JavaScript, this number changes nothing.",
         "ifWrong": "Too high wastes memory and adds contention. Above 1024 libuv silently clamps — a value of 2000 starts with no warning and behaves as 1024.\n\nThe symptom of it being too low is a job that is slow while the machine looks idle: low CPU, low event-loop utilisation, and the Monitor's thread pool figure sitting at its ceiling. That combination is this setting and almost nothing else."
+      }
+    },
+    {
+      "id": "bunSmol",
+      "flag": "--smol",
+      "kind": "runtime-flag",
+      "type": "bool",
+      "default": false,
+      "appliesAt": "restart",
+      "appliesTo": [
+        "bun"
+      ],
+      "category": "memory",
+      "label": "Bun low-memory mode",
+      "info": {
+        "what": "Runs Bun in a reduced-memory configuration: smaller heap targets and more eager garbage collection. It is Bun's answer to the question the heap memory limit answers on Node, which is why that setting is struck through while Bun is running — --max-old-space-size is a V8 flag and Bun runs JavaScriptCore.",
+        "why": "Worth it when the app shares a machine and the automation is not memory-hungry. Collecting more often trades a little throughput for a meaningfully smaller resident footprint.",
+        "ifWrong": "On an allocation-heavy job the extra collection shows up as slower wall-clock time for the same work. It is a dial between footprint and speed, not a fix for running out of memory — a job that genuinely needs the memory will still need it."
+      }
+    },
+    {
+      "id": "denoV8Flags",
+      "flag": "--v8-flags",
+      "kind": "runtime-flag",
+      "type": "string",
+      "default": null,
+      "appliesAt": "restart",
+      "appliesTo": [
+        "deno"
+      ],
+      "category": "memory",
+      "label": "Deno V8 flags",
+      "info": {
+        "what": "Passes flags straight through to V8, comma-separated — for example --max-old-space-size=512,--max-semi-space-size=64. Deno runs V8 like Node does, but does not read NODE_OPTIONS, so this is the only route to V8 tuning under it.",
+        "why": "It is how you set a heap limit while Deno is the runtime. The Heap memory limit row above does nothing here: it exports NODE_OPTIONS, which Deno ignores. Put --max-old-space-size here instead and it takes effect exactly as it would on Node.",
+        "ifWrong": "V8 rejects an unknown flag at startup, so a typo means the process does not come up rather than quietly running unconfigured. Check the launcher output if it fails to start after a change here."
       }
     },
     {
@@ -227,6 +269,9 @@
     },
     {
       "id": "extraCaCerts",
+      "appliesTo": [
+        "node"
+      ],
       "flag": "NODE_EXTRA_CA_CERTS",
       "kind": "env",
       "type": "string",
@@ -242,6 +287,9 @@
     },
     {
       "id": "traceWarnings",
+      "appliesTo": [
+        "node"
+      ],
       "flag": "--trace-warnings",
       "kind": "node-option",
       "type": "bool",
@@ -257,6 +305,9 @@
     },
     {
       "id": "traceDeprecation",
+      "appliesTo": [
+        "node"
+      ],
       "flag": "--trace-deprecation",
       "kind": "node-option",
       "type": "bool",
@@ -272,6 +323,9 @@
     },
     {
       "id": "stackTraceLimit",
+      "appliesTo": [
+        "node"
+      ],
       "flag": "--stack-trace-limit",
       "kind": "node-option",
       "type": "int",
@@ -289,6 +343,9 @@
     },
     {
       "id": "heapSnapshotSignal",
+      "appliesTo": [
+        "node"
+      ],
       "flag": "--heapsnapshot-signal",
       "kind": "node-option",
       "type": "string",

@@ -20,7 +20,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 export type JsRuntime = "node" | "bun" | "deno";
-export type ParamKind = "env" | "node-option" | "launcher";
+export type ParamKind = "env" | "node-option" | "launcher" | "runtime-flag";
 export type ParamType = "int" | "string" | "bool" | "enum" | "enum-open";
 export type AppliesAt = "restart" | "runtime";
 export type Category =
@@ -401,6 +401,62 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
                 "looks idle: low CPU, low event-loop utilisation, and the Monitor's " +
                 "thread pool figure sitting at its ceiling. That combination is this " +
                 "setting and almost nothing else.",
+        },
+    },
+    {
+        id: "bunSmol",
+        // kind "runtime-flag": goes in the runtime's own argv, not NODE_OPTIONS.
+        flag: "--smol",
+        kind: "runtime-flag",
+        type: "bool",
+        default: false,
+        appliesAt: "restart",
+        appliesTo: ["bun"],
+        category: "memory",
+        label: "Bun low-memory mode",
+        info: {
+            what:
+                "Runs Bun in a reduced-memory configuration: smaller heap targets and " +
+                "more eager garbage collection. It is Bun's answer to the question the " +
+                "heap memory limit answers on Node, which is why that setting is struck " +
+                "through while Bun is running — --max-old-space-size is a V8 flag and " +
+                "Bun runs JavaScriptCore.",
+            why:
+                "Worth it when the app shares a machine and the automation is not " +
+                "memory-hungry. Collecting more often trades a little throughput for a " +
+                "meaningfully smaller resident footprint.",
+            ifWrong:
+                "On an allocation-heavy job the extra collection shows up as slower " +
+                "wall-clock time for the same work. It is a dial between footprint and " +
+                "speed, not a fix for running out of memory — a job that genuinely needs " +
+                "the memory will still need it.",
+        },
+    },
+    {
+        id: "denoV8Flags",
+        flag: "--v8-flags",
+        kind: "runtime-flag",
+        type: "string",
+        default: null,
+        appliesAt: "restart",
+        appliesTo: ["deno"],
+        category: "memory",
+        label: "Deno V8 flags",
+        info: {
+            what:
+                "Passes flags straight through to V8, comma-separated — for example " +
+                "--max-old-space-size=512,--max-semi-space-size=64. Deno runs V8 like " +
+                "Node does, but does not read NODE_OPTIONS, so this is the only route to " +
+                "V8 tuning under it.",
+            why:
+                "It is how you set a heap limit while Deno is the runtime. The Heap " +
+                "memory limit row above does nothing here: it exports NODE_OPTIONS, " +
+                "which Deno ignores. Put --max-old-space-size here instead and it takes " +
+                "effect exactly as it would on Node.",
+            ifWrong:
+                "V8 rejects an unknown flag at startup, so a typo means the process does " +
+                "not come up rather than quietly running unconfigured. Check the " +
+                "launcher output if it fails to start after a change here.",
         },
     },
     {

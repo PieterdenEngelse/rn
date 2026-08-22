@@ -86,6 +86,8 @@ export function resolveLaunch(settings: Settings): {
         // binary to spawn. Falling through to the else would emit a bogus
         // NODE_OPTIONS entry and stop the process booting.
         if (p.kind === "launcher") continue;
+        // Goes in the runtime's argv; the launcher builds that, not this.
+        if (p.kind === "runtime-flag") continue;
 
         if (p.kind === "env") {
             env[p.flag] = p.type === "bool" ? "1" : String(value);
@@ -251,6 +253,17 @@ export function pendingRestart(settings: Settings): PendingChange[] {
                 const haveLabel =
                     have || `not applicable under ${activeRuntime("jsRuntime")}`;
                 pending.push({ id: p.id, label: p.label, want, have: haveLabel });
+            }
+            continue;
+        }
+
+        // The launcher echoes the argv flags it built, so a saved-but-not-yet
+        // applied one shows up here the same way a NODE_OPTIONS entry does.
+        if (p.kind === "runtime-flag") {
+            const want = p.type === "bool" ? p.flag : `${p.flag}=${value}`;
+            const applied = process.env.RN_RUNTIME_FLAGS ?? "";
+            if (!applied.split(" ").includes(want)) {
+                pending.push({ id: p.id, label: p.label, want, have: "unset" });
             }
             continue;
         }

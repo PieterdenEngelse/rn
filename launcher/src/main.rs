@@ -103,11 +103,12 @@ The Node runtime ships with rn. Nothing here uses a Node from PATH."
 /// can never disagree about what actually gets run.
 fn build_command(layout: &Layout, params: &[settings::RuntimeParam]) -> NodeCommand {
     let saved = settings::load_settings(&layout.settings);
-    let (env, node_options) = settings::resolve(params, &saved);
     let selection = layout.select_runtime(&saved);
+    let launch = settings::resolve(params, &saved, selection.kind.name());
+    let (env, node_options) = (&launch.env, &launch.node_options);
 
     let mut cmd = NodeCommand::new(&selection.path, &layout.app_dir);
-    cmd.envs(&env);
+    cmd.envs(env);
 
     // The child reports these back through /api/params, so the Config page can
     // say what was asked for and what actually happened rather than leaving a
@@ -121,6 +122,10 @@ fn build_command(layout: &Layout, params: &[settings::RuntimeParam]) -> NodeComm
     if !node_options.is_empty() {
         cmd.env("NODE_OPTIONS", node_options.join(" "));
     }
+
+    // Echoed so /api/params can tell a saved runtime flag from an applied one,
+    // the same way NODE_OPTIONS lets it do that for Node flags.
+    cmd.env("RN_RUNTIME_FLAGS", launch.runtime_flags.join(" "));
 
     // Pass-throughs, each deliberate:
     //   TERM       so the child can decide about colored output
@@ -144,7 +149,13 @@ fn build_command(layout: &Layout, params: &[settings::RuntimeParam]) -> NodeComm
     cmd.env("RN_NET_ALLOWLIST", allow_net.join(","));
     cmd.env("RN_NET_EXTRA", &extra);
 
-    for a in layout::runtime_argv(selection.kind, &env_file, &layout.entry, &allow_net) {
+    for a in layout::runtime_argv(
+        selection.kind,
+        &env_file,
+        &layout.entry,
+        &allow_net,
+        &launch.runtime_flags,
+    ) {
         cmd.arg(a);
     }
     cmd.current_dir(&layout.app_dir);
@@ -153,14 +164,21 @@ fn build_command(layout: &Layout, params: &[settings::RuntimeParam]) -> NodeComm
 
 fn print_env(layout: &Layout, params: &[settings::RuntimeParam]) -> Result<(), String> {
     let saved = settings::load_settings(&layout.settings);
-    let (env, node_options) = settings::resolve(params, &saved);
-
     let selection = layout.select_runtime(&saved);
+    let launch = settings::resolve(params, &saved, selection.kind.name());
+    let (env, node_options) = (&launch.env, &launch.node_options);
+
     let env_file = layout.app_dir.join(".env");
     let (host, port) = layout::bind_address(&env_file);
     let extra = saved.get("netAllowlist").and_then(|v| v.as_str()).unwrap_or_default();
     let allow_net = layout::net_allowlist(&host, port, extra);
-    let argv = layout::runtime_argv(selection.kind, &env_file, &layout.entry, &allow_net);
+    let argv = layout::runtime_argv(
+        selection.kind,
+        &env_file,
+        &layout.entry,
+        &allow_net,
+        &launch.runtime_flags,
+    );
     println!(
         "runtime     {} -> {}",
         selection.requested,
@@ -187,7 +205,7 @@ fn print_env(layout: &Layout, params: &[settings::RuntimeParam]) -> Result<(), S
     } else {
         println!("NODE_OPTIONS  {}", node_options.join(" "));
     }
-    for (k, v) in &env {
+    for (k, v) in env {
         println!("env         {k}={v}");
     }
     Ok(())

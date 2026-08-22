@@ -97,7 +97,8 @@ fn settings_resolve_to_env_vars_and_node_options() {
     settings.insert("traceWarnings".into(), serde_json::json!(true));
     settings.insert("timezone".into(), serde_json::json!("Europe/Amsterdam"));
 
-    let (env, opts) = resolve(&params, &settings);
+    let l = resolve(&params, &settings, "node");
+    let (env, opts) = (l.env, l.node_options);
 
     assert_eq!(env.get("UV_THREADPOOL_SIZE").map(String::as_str), Some("16"));
     // A string value must not arrive JSON-quoted.
@@ -112,6 +113,6 @@ fn a_false_boolean_is_omitted_rather_than_passed_as_off() {
     let mut settings = Settings::new();
     settings.insert("traceWarnings".into(), serde_json::json!(false));
 
-    let (_, opts) = resolve(&params, &settings);
+    let opts = resolve(&params, &settings, "node").node_options;
     assert!(opts.is_empty(), "there is no --no-trace-warnings form to pass");
 }
