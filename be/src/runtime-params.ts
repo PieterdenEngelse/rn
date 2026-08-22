@@ -458,6 +458,16 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
  */
 export const WITHHELD: readonly { flag: string; reason: string }[] = [
     {
+        flag: "--stack-size",
+        reason:
+            "Sounds like the companion to the memory limit and is not. It raises V8's " +
+            "call-stack ceiling, but the operating system fixed the real thread stack at " +
+            "about 1MB when the thread started, so setting it higher does not buy deeper " +
+            "recursion — it removes the check that would have raised 'Maximum call stack " +
+            "size exceeded' and lets the process run off the end of its stack instead. " +
+            "A catchable RangeError becomes a segfault with no JavaScript error at all.",
+    },
+    {
         flag: "--inspect / --inspect-brk",
         reason:
             "Opens a debugger port on the user's machine. Anything that can reach it can " +
