@@ -306,7 +306,10 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
         max: 1024,
         appliesAt: "restart",
         category: "concurrency",
-        label: "Worker threads",
+        // Not "Worker threads": that names node:worker_threads, which is a
+        // different feature this setting has no effect on. These threads never
+        // run JavaScript.
+        label: "libuv thread pool",
         info: {
             what:
                 "Size of libuv's thread pool, which runs file system operations, DNS " +

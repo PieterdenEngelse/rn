@@ -132,7 +132,7 @@
       "max": 1024,
       "appliesAt": "restart",
       "category": "concurrency",
-      "label": "Worker threads",
+      "label": "libuv thread pool",
       "info": {
         "what": "Size of libuv's thread pool, which runs file system operations, DNS lookups, zlib and some crypto. Default 4, regardless of CPU count.",
         "why": "The highest-leverage setting for file automation. A job touching thousands of files spends its time queued behind these 4 threads.",

@@ -15,7 +15,7 @@ scales with installed RAM, so expect a different number elsewhere.
 | **Extra network hosts** | `netAllowlist` (NODE_OPTIONS) | unset (system default) | — | on restart |
 | **Node version line** | `nodeVersion` (NODE_OPTIONS) | unset (system default) | — | on restart |
 | **Heap memory limit** | `--max-old-space-size` (NODE_OPTIONS) | unset (system default) | 64 … 32768 MB | on restart |
-| **Worker threads** | `UV_THREADPOOL_SIZE` | 4 | 1 … 1024 | on restart |
+| **libuv thread pool** | `UV_THREADPOOL_SIZE` | 4 | 1 … 1024 | on restart |
 | **Time zone** | `TZ` | unset (system default) | — | on restart |
 | **Extra CA certificates** | `NODE_EXTRA_CA_CERTS` | unset (system default) | — | on restart |
 | **Trace warnings** | `--trace-warnings` (NODE_OPTIONS) | off | — | on restart |
@@ -70,7 +70,7 @@ Default: unset (system default) · Takes effect: on restart · Settings key: `ma
 
 ## Concurrency
 
-### Worker threads — `UV_THREADPOOL_SIZE`
+### libuv thread pool — `UV_THREADPOOL_SIZE`
 
 **What it does.** Size of libuv's thread pool, which runs file system operations, DNS lookups, zlib and some crypto. Default 4, regardless of CPU count.
 

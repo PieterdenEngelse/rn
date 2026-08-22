@@ -341,8 +341,9 @@ fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -
                                 "before the next one starts.\n\n",
 
                                 "That last part is the whole bargain. Nothing interrupts a ",
-                                "running callback — no pre-emption, no second thread arriving ",
-                                "mid-function — which is why you never need a mutex around a ",
+                                "running callback — no [[pre-emption]], no second thread ",
+                                "arriving ",
+                                "mid-function — which is why you never need a [[mutex]] around a ",
                                 "shared object in Node. The cost is that a callback which takes ",
                                 "200ms holds the loop for 200ms, and everything else waits: ",
                                 "timers fire late, requests queue, and the process looks frozen ",
@@ -379,6 +380,12 @@ fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -
                                 "one rude callback. That is a scaling limit, and adding more ",
                                 "asynchronous work will not help.",
                             ).to_string(),
+                            glossary: vec![
+                                preemption_entry(),
+                                mutex_entry(),
+                                atomic_entry(),
+                                process_boundary_entry(),
+                            ],
                         }
                     }),
                     if let Some(h) = hist.as_ref() {
@@ -447,50 +454,7 @@ fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -
                         what: "How late the loop is on a typical tick — the 50th [[percentile]], measured above the 10ms sampling interval, which is subtracted.".to_string(),
                         why: "The single best indicator that an automation is blocking. Node runs your code on one thread and there is no [[pre-emption]] inside it: while a function is busy, nothing else — including this page — is served.".to_string(),
                         if_wrong: "Sustained tens of milliseconds means synchronous work is starving everything else. Move it to the thread pool or a Rust component.".to_string(),
-                        glossary: vec![GlossaryEntry {
-                            term: "pre-emption".to_string(),
-                            body: concat!(
-                                "Pre-emption is a scheduler's ability to interrupt a running ",
-                                "task part-way through, hand the processor to something else, ",
-                                "and resume the first one later. Your operating system does ",
-                                "this constantly: a timer interrupt fires, the kernel saves ",
-                                "where the thread had got to, and runs another. The interrupted ",
-                                "code neither consents nor notices.\n\n",
-
-                                "Node's event loop does not work that way. It is cooperative, ",
-                                "or run-to-completion: once a callback starts, it runs to its ",
-                                "last line and nothing can take the thread away. Not an ",
-                                "arriving request, not an expired timer, not a resolved ",
-                                "promise. They are all queued, and the loop only regains ",
-                                "control when your function returns.\n\n",
-
-                                "That single fact is why this number matters. A `while` loop ",
-                                "over a large array, a JSON.parse of a big payload, a ",
-                                "readFileSync, a synchronous hash — each holds the thread for ",
-                                "its full duration, and everything else waits behind it. Event ",
-                                "loop delay is precisely the measurement of that waiting.\n\n",
-
-                                "Note the boundary: the operating system still pre-empts the rn ",
-                                "process against everything else on the machine, so a blocked ",
-                                "loop never freezes your computer. The absence of pre-emption ",
-                                "is strictly inside this one process, among the callbacks ",
-                                "sharing its thread.\n\n",
-
-                                "await is not pre-emption either. It is voluntary yielding at a ",
-                                "point you chose: the function suspends there and the loop runs ",
-                                "something else, but between one await and the next your code ",
-                                "still runs uninterrupted. Work that never awaits never ",
-                                "yields, however long it takes.\n\n",
-
-                                "The ways out all amount to not doing the work on this thread: ",
-                                "break it into chunks that yield (await or setImmediate between ",
-                                "them), push it to libuv's thread pool, which is real operating ",
-                                "system threads and therefore genuinely pre-emptive, use a ",
-                                "worker thread, or move it into a Rust component invoked as a ",
-                                "separate process.",
-                            )
-                            .to_string(),
-                        },
+                        glossary: vec![preemption_entry(),
                         GlossaryEntry {
                             term: "percentile".to_string(),
                             body: concat!(
@@ -583,7 +547,7 @@ fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -
                         label: "threadpool",
                         value: m.concurrency.threadpool_size.to_string(),
                         what: "Threads libuv uses for file system, DNS, zlib and some crypto work.".to_string(),
-                        why: "The measured counterpart of the Worker threads setting. Read it with event-loop utilisation: low utilisation plus a slow file job means this is the bottleneck.".to_string(),
+                        why: "The measured counterpart of the libuv thread pool setting. Read it with event-loop utilisation: low utilisation plus a slow file job means this is the bottleneck.".to_string(),
                         if_wrong: "If it does not match what you set, the setting has not been applied — it needs a restart, and the banner on Config → Settings will say so.".to_string(),
                     }
                     Metric {
@@ -691,6 +655,173 @@ fn Metric(
                 InfoButton { title: label, what, why, if_wrong, glossary }
             }
         }
+    }
+}
+
+/// What "atomic" means, linked from the mutex entry.
+fn atomic_entry() -> GlossaryEntry {
+    GlossaryEntry {
+        term: "atomic".to_string(),
+        body: concat!(
+            "An operation is atomic when nothing can observe it half-done. It either ",
+            "has not happened or has completely happened; there is no moment at which ",
+            "another observer sees a state in between. The word is from the Greek for ",
+            "indivisible, and that is the whole idea — the operation cannot be split.\n\n",
+
+            "The counter-example makes it concrete. `count = count + 1` is not atomic: ",
+            "it reads count, adds one, then writes the result. An observer arriving ",
+            "between the read and the write sees the old value and can act on it. Two ",
+            "of them can both read 7 and both write 8, and one increment simply ",
+            "vanishes.\n\n",
+
+            "Atomicity is always relative to who is watching, which is the part that ",
+            "matters here. Node gives you atomicity with respect to other callbacks: ",
+            "because a callback runs to completion, no other callback can run partway ",
+            "through yours, so any sequence of synchronous statements is indivisible ",
+            "as far as they are concerned — however many separate machine operations ",
+            "it really takes. That is a weaker guarantee than a CPU-level atomic ",
+            "instruction, and it is enough precisely because there is no second thread ",
+            "inside the process to do the observing.\n\n",
+
+            "Where there is a second thread, you need the real thing. JavaScript's ",
+            "Atomics object provides genuinely indivisible reads, writes and ",
+            "read-modify-write operations on a SharedArrayBuffer, implemented with the ",
+            "processor instructions that guarantee no other core can interleave. That ",
+            "is what you reach for across a [[process boundary]], and never need ",
+            "within one event loop.",
+        )
+        .to_string(),
+    }
+}
+
+/// What a process boundary is, linked from the mutex entry.
+fn process_boundary_entry() -> GlossaryEntry {
+    GlossaryEntry {
+        term: "process boundary".to_string(),
+        body: concat!(
+            "A process is the operating system's unit of isolation: its own memory, ",
+            "its own file descriptors, its own view of the world. The process boundary ",
+            "is the wall around that. Nothing inside one process can read or write ",
+            "another's memory directly — the kernel enforces it with hardware support, ",
+            "which is why a crashing program takes down only itself.\n\n",
+
+            "Crossing the boundary therefore means copying rather than sharing. Data ",
+            "has to be serialised on one side and rebuilt on the other, whether that ",
+            "travels as JSON on a pipe, bytes on a socket, or a file on disk. That ",
+            "copying is the cost, and it is why a call across a boundary is orders of ",
+            "magnitude slower than a function call within one.\n\n",
+
+            "rn crosses this boundary deliberately. The Rust launcher and the Node ",
+            "process are separate processes; the launcher builds Node's environment ",
+            "and watches it, but cannot reach into its memory. The same applies to any ",
+            "Rust component invoked from Node: arguments in, JSON out, no shared ",
+            "state. CLAUDE.md prefers that over FFI for exactly this reason — a ",
+            "documented interface across a hard wall is easier to reason about than ",
+            "shared memory, and a crash on one side cannot corrupt the other.\n\n",
+
+            "Worker threads sit between the two cases. They are inside the same ",
+            "process, so they can share memory through a SharedArrayBuffer, but they ",
+            "are real operating-system threads running in parallel — so the ",
+            "single-threaded guarantees stop applying and [[atomic]] operations become ",
+            "necessary again.",
+        )
+        .to_string(),
+    }
+}
+
+/// The mutex explainer, linked from the event loop panel.
+fn mutex_entry() -> GlossaryEntry {
+    GlossaryEntry {
+        term: "mutex".to_string(),
+        body: concat!(
+            "A mutex — short for mutual exclusion — is a lock that guarantees only ",
+            "one thread touches a piece of shared data at a time. A thread acquires ",
+            "it before reading or writing, releases it after, and anyone else who ",
+            "arrives meanwhile waits their turn.\n\n",
+
+            "It exists because pre-emptive threads can be interrupted anywhere, ",
+            "including half-way through an update. `count = count + 1` looks like ",
+            "one step but is three: read, add, write. Two threads running it at once ",
+            "can both read 7, both write 8, and lose an increment. Worse, an object ",
+            "with two fields that must agree can be seen by another thread after the ",
+            "first field is written and before the second — a state your code never ",
+            "intended to exist.\n\n",
+
+            "In Node you do not need one, and the reason is the absence of ",
+            "pre-emption. A callback runs to completion, so every statement inside ",
+            "one is effectively [[atomic]] with respect to every other callback: nothing ",
+            "else runs in between, and no other code can observe a half-updated ",
+            "object. be/src/jobs.ts mutates a module-level Map from several request ",
+            "handlers with no lock anywhere, and that is not an oversight — it is ",
+            "safe by construction.\n\n",
+
+            "The guarantee has a hard edge, and it is worth knowing exactly where it ",
+            "stops: it ends at an await. Awaiting suspends your function and lets ",
+            "other callbacks run, so anything you read before an await may have ",
+            "changed by the time you continue. Check-then-act across an await — read ",
+            "a count, await something, then act on the value you read — is the Node ",
+            "form of a race condition. Nothing is corrupted at the memory level, but ",
+            "the interleaving is real, and the fix is to re-read after the await or ",
+            "keep the whole sequence synchronous.\n\n",
+
+            "It also stops at the [[process boundary]]. Worker threads and separate ",
+            "processes are genuine parallelism, so shared memory between them ",
+            "(SharedArrayBuffer) does need [[atomic]] operations or a lock. Single-threaded ",
+            "safety ",
+            "is a property of one event loop, not of JavaScript.",
+        )
+        .to_string(),
+    }
+}
+
+/// The pre-emption explainer, shared by the board panel and the delay metrics.
+///
+/// Defined once because it is linked from several panels: two copies of an
+/// explanation drift, and the drift is invisible until someone reads both.
+fn preemption_entry() -> GlossaryEntry {
+    GlossaryEntry {
+        term: "pre-emption".to_string(),
+        body: concat!(
+                                "Pre-emption is a scheduler's ability to interrupt a running ",
+                                "task part-way through, hand the processor to something else, ",
+                                "and resume the first one later. Your operating system does ",
+                                "this constantly: a timer interrupt fires, the kernel saves ",
+                                "where the thread had got to, and runs another. The interrupted ",
+                                "code neither consents nor notices.\n\n",
+
+                                "Node's event loop does not work that way. It is cooperative, ",
+                                "or run-to-completion: once a callback starts, it runs to its ",
+                                "last line and nothing can take the thread away. Not an ",
+                                "arriving request, not an expired timer, not a resolved ",
+                                "promise. They are all queued, and the loop only regains ",
+                                "control when your function returns.\n\n",
+
+                                "That single fact is why this number matters. A `while` loop ",
+                                "over a large array, a JSON.parse of a big payload, a ",
+                                "readFileSync, a synchronous hash — each holds the thread for ",
+                                "its full duration, and everything else waits behind it. Event ",
+                                "loop delay is precisely the measurement of that waiting.\n\n",
+
+                                "Note the boundary: the operating system still pre-empts the rn ",
+                                "process against everything else on the machine, so a blocked ",
+                                "loop never freezes your computer. The absence of pre-emption ",
+                                "is strictly inside this one process, among the callbacks ",
+                                "sharing its thread.\n\n",
+
+                                "await is not pre-emption either. It is voluntary yielding at a ",
+                                "point you chose: the function suspends there and the loop runs ",
+                                "something else, but between one await and the next your code ",
+                                "still runs uninterrupted. Work that never awaits never ",
+                                "yields, however long it takes.\n\n",
+
+                                "The ways out all amount to not doing the work on this thread: ",
+                                "break it into chunks that yield (await or setImmediate between ",
+                                "them), push it to libuv's thread pool, which is real operating ",
+                                "system threads and therefore genuinely pre-emptive, use a ",
+                                "worker thread, or move it into a Rust component invoked as a ",
+                                "separate process.",
+                            )
+                            .to_string(),
     }
 }
 

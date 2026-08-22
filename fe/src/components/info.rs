@@ -68,7 +68,7 @@ fn segments(text: &str) -> Vec<(bool, String)> {
 fn RichText(
     text: String,
     glossary: Vec<GlossaryEntry>,
-    open_term: Signal<Option<GlossaryEntry>>,
+    open_term: Signal<Vec<GlossaryEntry>>,
 ) -> Element {
     rsx! {
         p { class: "mt-1 text-gray-200 leading-relaxed whitespace-pre-line",
@@ -89,7 +89,7 @@ fn RichText(
                                 onclick: move |evt| {
                                     evt.stop_propagation();
                                     if let Some(e) = entry.clone() {
-                                        open_term.set(Some(e));
+                                        open_term.write().push(e);
                                     }
                                 },
                                 "{label}"
@@ -120,7 +120,9 @@ pub fn InfoButton(
     glossary: Vec<GlossaryEntry>,
 ) -> Element {
     let mut open = use_signal(|| false);
-    let open_term = use_signal(|| Option::<GlossaryEntry>::None);
+    // A trail, not a single term: entries link to each other, and "back"
+    // should return to the one you came from rather than closing everything.
+    let open_term = use_signal(Vec::<GlossaryEntry>::new);
 
     rsx! {
         button {
@@ -170,9 +172,11 @@ pub fn InfoButton(
         }
 
         // Nested explainer, above the panel that linked to it.
-        if let Some(entry) = open_term() {
+        if let Some(entry) = open_term().last().cloned() {
             {
                 let mut open_term = open_term;
+                let depth = open_term().len();
+                let g = glossary.clone();
                 rsx! {
                     div {
                         class: "fixed inset-0 flex bg-black/70",
@@ -183,16 +187,20 @@ pub fn InfoButton(
                                 h2 { class: "text-xl font-bold text-gray-100", "{entry.term}" }
                                 button {
                                     class: "text-gray-400 hover:text-gray-200 text-xl font-bold cursor-pointer",
-                                    onclick: move |_| open_term.set(None),
+                                    title: "Close",
+                                    onclick: move |_| open_term.write().clear(),
                                     "×"
                                 }
                             }
-                            p { class: "text-gray-200 leading-relaxed whitespace-pre-line", "{entry.body}" }
+                            // Rendered as rich text so one entry can link to
+                            // another — the terms these explanations need are
+                            // themselves worth explaining.
+                            RichText { text: entry.body.clone(), glossary: g, open_term }
                             button {
                                 class: "text-xs cursor-pointer hover:underline bg-transparent border-0 p-0",
                                 style: "color: #60a5fa;",
-                                onclick: move |_| open_term.set(None),
-                                "← back"
+                                onclick: move |_| { open_term.write().pop(); },
+                                if depth > 1 { "← back" } else { "← back to the panel" }
                             }
                         }
                     }

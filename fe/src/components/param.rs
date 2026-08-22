@@ -7,7 +7,13 @@
 pub const PARAM_COLUMN_CLASS: &str = "param-column-spacing";
 pub const PARAM_BLOCK_CLASS: &str = "flex flex-col gap-1 text-xs text-gray-200";
 pub const PARAM_LABEL_CLASS: &str = "text-gray-400 whitespace-nowrap";
-pub const PARAM_INPUT_ROW_CLASS: &str = "flex items-end gap-2";
+/// A parameter row: label/value on the left, info button on the right.
+///
+/// `w-full` plus the `param-row` rule below pushes the last child — the info
+/// button — to the row's right edge. Since a board sizes to its widest row and
+/// every row then fills that width, the buttons line up in a single column
+/// down the board instead of tracking the length of each value.
+pub const PARAM_INPUT_ROW_CLASS: &str = "param-row flex items-end gap-2 w-full";
 pub const PARAM_NUMBER_INPUT_CLASS: &str =
     "input input-xs input-bordered bg-gray-700 text-gray-200 !w-24";
 pub const PARAM_TEXT_INPUT_CLASS: &str =

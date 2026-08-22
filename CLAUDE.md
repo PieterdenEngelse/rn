@@ -90,6 +90,22 @@ this is deliberate over-provision, not restraint:
 - Also worth surfacing the same way: what a step *just did* (counts, durations,
   paths), why an automation was skipped, and what the next run will do.
 
+**Alignment.** Within a board, info buttons line up in one vertical column,
+whatever the length of the values beside them. A button that tracks the width of
+its own row makes a board look like scattered punctuation and makes the reader
+hunt for the next one.
+
+This is handled once, not per page: `PARAM_INPUT_ROW_CLASS` carries `w-full` and
+the `.param-row` rule in `fe/assets/styling/index.css` pushes each row's last
+child to the right edge. A board sizes to its widest row, every row then fills
+that width, so the buttons coincide. Use that row class for any labelled value
+or control with an info button and the alignment follows; nothing needs a fixed
+width per page.
+
+The exception is a button that belongs to a board or panel *header*, or sits
+inline next to a control — those are deliberately beside their subject, not in a
+column, and are left alone.
+
 **Style recipe** (to live in `fe/src/components/info.rs` once the first one is
 built — not scaffolded yet):
 

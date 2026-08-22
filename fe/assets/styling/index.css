@@ -56,3 +56,14 @@ input[type="number"]:disabled {
 .param-column-spacing > * + * {
   margin-top: 0;
 }
+
+/* ── Parameter rows ────────────────────────────────────────────────────
+ * Info buttons align in one vertical column per board: the last child of a
+ * row is pushed to the right edge, and rows are full width, so the buttons
+ * stop tracking the length of whatever value sits beside them.
+ *
+ * Applies to every board on every page — see the rule in CLAUDE.md.
+ */
+.param-row > *:last-child {
+  margin-left: auto;
+}
