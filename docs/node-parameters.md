@@ -17,6 +17,8 @@ scales with installed RAM, so expect a different number elsewhere.
 | **Heap memory limit** | `--max-old-space-size` (NODE_OPTIONS) | unset (system default) | 64 … 32768 MB | on restart |
 | **libuv thread pool** | `UV_THREADPOOL_SIZE` | 4 | 1 … 1024 | on restart |
 | **Bun low-memory mode** | `--smol` (NODE_OPTIONS) | off | — | on restart |
+| **Bun kill orphans** | `--no-orphans` (NODE_OPTIONS) | off | — | on restart |
+| **Bun no auto-install** | `--no-install` (NODE_OPTIONS) | off | — | on restart |
 | **Deno V8 flags** | `--v8-flags` (NODE_OPTIONS) | unset (system default) | — | on restart |
 | **Time zone** | `TZ` | unset (system default) | — | on restart |
 | **Extra CA certificates** | `NODE_EXTRA_CA_CERTS` | unset (system default) | — | on restart |
@@ -72,11 +74,13 @@ Default: unset (system default) · Takes effect: on restart · Settings key: `ma
 
 ### Bun low-memory mode — `--smol`
 
-**What it does.** Runs Bun in a reduced-memory configuration: smaller heap targets and more eager garbage collection. It is Bun's answer to the question the heap memory limit answers on Node, which is why that setting is struck through while Bun is running — --max-old-space-size is a V8 flag and Bun runs JavaScriptCore.
+**What it does.** Runs Bun in a reduced-memory configuration: smaller heap targets and more eager garbage collection.
+
+It is a pressure dial, not a ceiling. Node's heap memory limit sets a hard cap that a job dies against; this only makes Bun try harder to stay small. Bun has no clean equivalent of --max-old-space-size — that is a V8 flag and Bun runs JavaScriptCore — so if you need a guaranteed upper bound rather than a tendency, this is not it.
 
 **Why you would change it.** Worth it when the app shares a machine and the automation is not memory-hungry. Collecting more often trades a little throughput for a meaningfully smaller resident footprint.
 
-**If it's wrong.** On an allocation-heavy job the extra collection shows up as slower wall-clock time for the same work. It is a dial between footprint and speed, not a fix for running out of memory — a job that genuinely needs the memory will still need it.
+**If it's wrong.** On an allocation-heavy job the extra collection shows up as slower wall-clock time for the same work. It is a trade between footprint and speed, not a fix for running out of memory — a job that genuinely needs the memory will still need it, and will still get it.
 
 Default: off · Takes effect: on restart · Settings key: `bunSmol`
 
@@ -112,6 +116,38 @@ The symptom of it being too low is a job that is slow while the machine looks id
 
 Default: 4 · Takes effect: on restart · Settings key: `threadpoolSize`
 
+### Bun kill orphans — `--no-orphans`
+
+**What it does.** Makes Bun exit when its parent process dies, and kill every descendant of its own on the way out. Without it a child outlives whatever started it and keeps running unattached.
+
+**Why you would change it.** It matches how rn is meant to run. The launcher supervises the backend, so a backend still alive after the launcher is gone is not doing anyone any good — it holds the API port and the next launcher cannot bind it. Orphaned processes are hard to notice precisely because nothing is watching them.
+
+**If it's wrong.** The hazard is the opposite of the one it fixes: work you deliberately detached dies with the parent too. If a job spawns something meant to outlive the run, this kills it.
+
+Default: off · Takes effect: on restart · Settings key: `bunNoOrphans`
+
+## Network
+
+### Bun no auto-install — `--no-install`
+
+**What it does.** Turns off Bun's auto-install. By default Bun fetches a missing package from the network mid-run rather than failing on the import, which is convenient in a scratch script and surprising in a shipped app.
+
+**Why you would change it.** An installed app that reaches the network unasked is the thing the sealed environment exists to prevent. It also makes runs deterministic: what is on disk is what executes, rather than whatever the registry served that afternoon.
+
+**If it's wrong.** A genuinely missing dependency now stops the run with a resolution error instead of quietly appearing. That is the point — the error names the package, and installing it deliberately is a decision rather than a side effect.
+
+Default: off · Takes effect: on restart · Settings key: `bunNoInstall`
+
+### Extra CA certificates — `NODE_EXTRA_CA_CERTS`
+
+**What it does.** Path to a PEM file of additional trusted certificate authorities, added to Node's built-in list.
+
+**Why you would change it.** Needed behind a corporate proxy that re-signs TLS traffic — the classic 'works at home, fails at the office' failure.
+
+**If it's wrong.** A wrong path fails SILENTLY: Node starts with no warning and TLS keeps failing. rn validates the path itself and reports it, because Node won't.
+
+Default: unset (system default) · Takes effect: on restart · Settings key: `extraCaCerts`
+
 ## Time
 
 ### Time zone — `TZ`
@@ -123,18 +159,6 @@ Default: 4 · Takes effect: on restart · Settings key: `threadpoolSize`
 **If it's wrong.** Nothing errors. Timestamps are quietly wrong and scheduled jobs fire at the wrong hour — usually noticed only after a daylight-saving change.
 
 Default: unset (system default) · Takes effect: on restart · Settings key: `timezone`
-
-## Network
-
-### Extra CA certificates — `NODE_EXTRA_CA_CERTS`
-
-**What it does.** Path to a PEM file of additional trusted certificate authorities, added to Node's built-in list.
-
-**Why you would change it.** Needed behind a corporate proxy that re-signs TLS traffic — the classic 'works at home, fails at the office' failure.
-
-**If it's wrong.** A wrong path fails SILENTLY: Node starts with no warning and TLS keeps failing. rn validates the path itself and reports it, because Node won't.
-
-Default: unset (system default) · Takes effect: on restart · Settings key: `extraCaCerts`
 
 ## Diagnostics
 
@@ -196,6 +220,7 @@ These are decisions, not omissions. Each has a reason a user would want it and a
 better reason not to give it to them.
 
 - **`--stack-size`** — Sounds like the companion to the memory limit and is not. It raises V8's call-stack ceiling, but the operating system fixed the real thread stack at about 1MB when the thread started, so setting it higher does not buy deeper recursion — it removes the check that would have raised 'Maximum call stack size exceeded' and lets the process run off the end of its stack instead. A catchable RangeError becomes a segfault with no JavaScript error at all.
+- **`--preload (bun)`** — Bun's alias set for --require and --import, and the same injection vector: it runs arbitrary code before the app does. Withheld for the reason its Node counterpart is.
 - **`--inspect / --inspect-brk`** — Opens a debugger port on the user's machine. Anything that can reach it can run code in the process. A gated diagnostic at most, never a checkbox.
 - **`--require / --import`** — Preloads arbitrary code. This is the injection vector the launcher's sealed environment exists to block; offering it in the UI reopens the door by hand.
 - **`NODE_TLS_REJECT_UNAUTHORIZED`** — Disables certificate validation entirely. Users find it on forums as the fix for a TLS error. Use the Extra CA certificates setting instead.

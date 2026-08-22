@@ -417,19 +417,76 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
         info: {
             what:
                 "Runs Bun in a reduced-memory configuration: smaller heap targets and " +
-                "more eager garbage collection. It is Bun's answer to the question the " +
-                "heap memory limit answers on Node, which is why that setting is struck " +
-                "through while Bun is running — --max-old-space-size is a V8 flag and " +
-                "Bun runs JavaScriptCore.",
+                "more eager garbage collection.\n\n" +
+
+                "It is a pressure dial, not a ceiling. Node's heap memory limit sets a " +
+                "hard cap that a job dies against; this only makes Bun try harder to " +
+                "stay small. Bun has no clean equivalent of --max-old-space-size — that " +
+                "is a V8 flag and Bun runs JavaScriptCore — so if you need a guaranteed " +
+                "upper bound rather than a tendency, this is not it.",
             why:
                 "Worth it when the app shares a machine and the automation is not " +
                 "memory-hungry. Collecting more often trades a little throughput for a " +
                 "meaningfully smaller resident footprint.",
             ifWrong:
                 "On an allocation-heavy job the extra collection shows up as slower " +
-                "wall-clock time for the same work. It is a dial between footprint and " +
+                "wall-clock time for the same work. It is a trade between footprint and " +
                 "speed, not a fix for running out of memory — a job that genuinely needs " +
-                "the memory will still need it.",
+                "the memory will still need it, and will still get it.",
+        },
+    },
+    {
+        id: "bunNoOrphans",
+        flag: "--no-orphans",
+        kind: "runtime-flag",
+        type: "bool",
+        default: false,
+        appliesAt: "restart",
+        appliesTo: ["bun"],
+        category: "concurrency",
+        label: "Bun kill orphans",
+        info: {
+            what:
+                "Makes Bun exit when its parent process dies, and kill every descendant " +
+                "of its own on the way out. Without it a child outlives whatever started " +
+                "it and keeps running unattached.",
+            why:
+                "It matches how rn is meant to run. The launcher supervises the backend, " +
+                "so a backend still alive after the launcher is gone is not doing anyone " +
+                "any good — it holds the API port and the next launcher cannot bind it. " +
+                "Orphaned processes are hard to notice precisely because nothing is " +
+                "watching them.",
+            ifWrong:
+                "The hazard is the opposite of the one it fixes: work you deliberately " +
+                "detached dies with the parent too. If a job spawns something meant to " +
+                "outlive the run, this kills it.",
+        },
+    },
+    {
+        id: "bunNoInstall",
+        flag: "--no-install",
+        kind: "runtime-flag",
+        type: "bool",
+        default: false,
+        appliesAt: "restart",
+        appliesTo: ["bun"],
+        category: "network",
+        label: "Bun no auto-install",
+        info: {
+            what:
+                "Turns off Bun's auto-install. By default Bun fetches a missing package " +
+                "from the network mid-run rather than failing on the import, which is " +
+                "convenient in a scratch script and surprising in a shipped app.",
+            why:
+                "An installed app that reaches the network unasked is the thing the " +
+                "sealed environment exists to prevent. It also makes runs deterministic: " +
+                "what is on disk is what executes, rather than whatever the registry " +
+                "served that afternoon.",
+            ifWrong:
+                "A genuinely missing dependency now stops the run with a resolution error " +
+                "instead of quietly appearing. That is the point — the error names the " +
+                "package, and installing it deliberately is a decision rather than a " +
+                "side effect.",
         },
     },
     {
@@ -643,6 +700,13 @@ export const WITHHELD: readonly { flag: string; reason: string }[] = [
             "recursion — it removes the check that would have raised 'Maximum call stack " +
             "size exceeded' and lets the process run off the end of its stack instead. " +
             "A catchable RangeError becomes a segfault with no JavaScript error at all.",
+    },
+    {
+        flag: "--preload (bun)",
+        reason:
+            "Bun's alias set for --require and --import, and the same injection vector: " +
+            "it runs arbitrary code before the app does. Withheld for the reason its " +
+            "Node counterpart is.",
     },
     {
         flag: "--inspect / --inspect-brk",
