@@ -68,15 +68,15 @@ pub fn InfoButton(
 
                     div {
                         h4 { class: "text-sm font-semibold text-gray-300", "What it does" }
-                        p { class: "mt-1 text-gray-200 leading-relaxed", "{what}" }
+                        p { class: "mt-1 text-gray-200 leading-relaxed whitespace-pre-line", "{what}" }
                     }
                     div {
                         h4 { class: "text-sm font-semibold text-gray-300", "Why you would change it" }
-                        p { class: "mt-1 text-gray-200 leading-relaxed", "{why}" }
+                        p { class: "mt-1 text-gray-200 leading-relaxed whitespace-pre-line", "{why}" }
                     }
                     div {
                         h4 { class: "text-sm font-semibold text-gray-300", "If it's wrong" }
-                        p { class: "mt-1 text-gray-200 leading-relaxed", "{if_wrong}" }
+                        p { class: "mt-1 text-gray-200 leading-relaxed whitespace-pre-line", "{if_wrong}" }
                     }
                 }
             }
