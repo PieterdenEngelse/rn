@@ -258,3 +258,26 @@ Detail, measured sizes, and the build checklist: `docs/packaging.md`.
 
 - **Confirmation threshold**: Don't ask for confirmation on small or single-file edits — only ask before major or multi-file changes.
 - **No speculative pre-builds**: Don't run `cargo build` just to check for errors after making changes.
+
+## The dev servers are the user's
+
+The frontend dev server on **:1790** belongs to the user, who runs it in their
+own terminal with `fe/s`. Do not start it, and do not restart it after killing
+something — `dx serve` binds the port exclusively, so a session that starts one
+makes `./s` fail with `Address already in use`, and the user cannot tell whose
+process took it.
+
+- To check the frontend compiles, run `cargo check` in `fe/`. It needs no port
+  and is the answer nearly every time.
+- If you genuinely need a running server — a screenshot, reproducing a runtime
+  bug — take another port: `./serve.sh --port 1791`. Say which port you took.
+- Never run it detached (`setsid`, `nohup`, `disown`). A server that outlives
+  your session is one the user cannot see, cannot stop from your transcript,
+  and will not think to look for.
+- Before concluding a server "died", check `ss -lptn 'sport = :1790'` and
+  `ps -o ppid= -p <pid>`. More than one session works in this repo, so the
+  process holding a port is often not the one you started.
+
+The backend on **:3010** is different: it is launcher-supervised, and
+`./launcher/target/debug/rn` with `--stop` and `--status` is the way to manage
+it. Restarting it to pick up a registry change is normal and expected.

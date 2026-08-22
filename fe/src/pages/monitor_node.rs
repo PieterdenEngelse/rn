@@ -411,7 +411,7 @@ fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -
                             if !h.loop_percentiles.is_empty() {
                                 div { class: "mt-2",
                                     p { class: "text-[10px] text-gray-400 mb-1",
-                                        "distribution since start"
+                                        "distribution since start — pN is the level N% of ticks stayed under"
                                     }
                                     {
                                         let worst = h
@@ -444,16 +444,122 @@ fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -
                     Metric {
                         label: "delay p50",
                         value: format!("{} ms", m.event_loop.p50_ms),
-                        what: "How late the loop is on a typical tick, measured above the 10ms sampling interval, which is subtracted.".to_string(),
-                        why: "The single best indicator that an automation is blocking. Node runs your code on one thread; while it is busy, nothing else — including this page — is served.".to_string(),
+                        what: "How late the loop is on a typical tick — the 50th [[percentile]], measured above the 10ms sampling interval, which is subtracted.".to_string(),
+                        why: "The single best indicator that an automation is blocking. Node runs your code on one thread and there is no [[pre-emption]] inside it: while a function is busy, nothing else — including this page — is served.".to_string(),
                         if_wrong: "Sustained tens of milliseconds means synchronous work is starving everything else. Move it to the thread pool or a Rust component.".to_string(),
+                        glossary: vec![GlossaryEntry {
+                            term: "pre-emption".to_string(),
+                            body: concat!(
+                                "Pre-emption is a scheduler's ability to interrupt a running ",
+                                "task part-way through, hand the processor to something else, ",
+                                "and resume the first one later. Your operating system does ",
+                                "this constantly: a timer interrupt fires, the kernel saves ",
+                                "where the thread had got to, and runs another. The interrupted ",
+                                "code neither consents nor notices.\n\n",
+
+                                "Node's event loop does not work that way. It is cooperative, ",
+                                "or run-to-completion: once a callback starts, it runs to its ",
+                                "last line and nothing can take the thread away. Not an ",
+                                "arriving request, not an expired timer, not a resolved ",
+                                "promise. They are all queued, and the loop only regains ",
+                                "control when your function returns.\n\n",
+
+                                "That single fact is why this number matters. A `while` loop ",
+                                "over a large array, a JSON.parse of a big payload, a ",
+                                "readFileSync, a synchronous hash — each holds the thread for ",
+                                "its full duration, and everything else waits behind it. Event ",
+                                "loop delay is precisely the measurement of that waiting.\n\n",
+
+                                "Note the boundary: the operating system still pre-empts the rn ",
+                                "process against everything else on the machine, so a blocked ",
+                                "loop never freezes your computer. The absence of pre-emption ",
+                                "is strictly inside this one process, among the callbacks ",
+                                "sharing its thread.\n\n",
+
+                                "await is not pre-emption either. It is voluntary yielding at a ",
+                                "point you chose: the function suspends there and the loop runs ",
+                                "something else, but between one await and the next your code ",
+                                "still runs uninterrupted. Work that never awaits never ",
+                                "yields, however long it takes.\n\n",
+
+                                "The ways out all amount to not doing the work on this thread: ",
+                                "break it into chunks that yield (await or setImmediate between ",
+                                "them), push it to libuv's thread pool, which is real operating ",
+                                "system threads and therefore genuinely pre-emptive, use a ",
+                                "worker thread, or move it into a Rust component invoked as a ",
+                                "separate process.",
+                            )
+                            .to_string(),
+                        },
+                        GlossaryEntry {
+                            term: "percentile".to_string(),
+                            body: concat!(
+                                "The p is for percentile. pN is the value that N per cent of ",
+                                "the measurements come in at or below, so p50 is the median — ",
+                                "half the ticks were at least this fast, half were slower — and ",
+                                "p99 is the level only the worst one per cent exceeded.\n\n",
+
+                                "Percentiles are used here instead of an average because an ",
+                                "average is dragged around by outliers while hiding them at the ",
+                                "same time. Take ninety-nine ticks at 0.2ms and one at 2000ms: ",
+                                "the mean comes out near 20ms, which describes no tick that ",
+                                "actually happened — it is twenty times worse than the typical ",
+                                "case and a hundred times better than the bad one. p50 and p99 ",
+                                "keep those two facts apart.\n\n",
+
+                                "Read them as a pair. p50 tells you what normal looks like; p99 ",
+                                "tells you how bad the tail gets. A low p50 with a high p99 is ",
+                                "the signature of occasional blocking — most work is fine and ",
+                                "something specific stalls now and then. Both rising together ",
+                                "means the process is simply overloaded.\n\n",
+
+                                "The tail matters more than its share suggests. One per cent ",
+                                "sounds rare until you notice that a job doing ten thousand ",
+                                "file operations hits it a hundred times, and that the slowest ",
+                                "operation is often the one everything else is waiting behind. ",
+                                "max is the single worst measurement seen, with no averaging at ",
+                                "all — the one that got away.",
+                            )
+                            .to_string(),
+                        }],
                     }
                     Metric {
                         label: "delay p99",
                         value: format!("{} ms", m.event_loop.p99_ms),
-                        what: "The worst 1% of ticks.".to_string(),
+                        what: "The worst 1% of ticks — the 99th [[percentile]].".to_string(),
                         why: "Averages hide stalls. A fine p50 with a large p99 is the classic occasional-blocking-call profile.".to_string(),
                         if_wrong: "A p99 far above p50 points at one specific operation — a big synchronous read, a JSON.parse of something huge.".to_string(),
+                        glossary: vec![GlossaryEntry {
+                            term: "percentile".to_string(),
+                            body: concat!(
+                                "The p is for percentile. pN is the value that N per cent of ",
+                                "the measurements come in at or below, so p50 is the median — ",
+                                "half the ticks were at least this fast, half were slower — and ",
+                                "p99 is the level only the worst one per cent exceeded.\n\n",
+
+                                "Percentiles are used here instead of an average because an ",
+                                "average is dragged around by outliers while hiding them at the ",
+                                "same time. Take ninety-nine ticks at 0.2ms and one at 2000ms: ",
+                                "the mean comes out near 20ms, which describes no tick that ",
+                                "actually happened — it is twenty times worse than the typical ",
+                                "case and a hundred times better than the bad one. p50 and p99 ",
+                                "keep those two facts apart.\n\n",
+
+                                "Read them as a pair. p50 tells you what normal looks like; p99 ",
+                                "tells you how bad the tail gets. A low p50 with a high p99 is ",
+                                "the signature of occasional blocking — most work is fine and ",
+                                "something specific stalls now and then. Both rising together ",
+                                "means the process is simply overloaded.\n\n",
+
+                                "The tail matters more than its share suggests. One per cent ",
+                                "sounds rare until you notice that a job doing ten thousand ",
+                                "file operations hits it a hundred times, and that the slowest ",
+                                "operation is often the one everything else is waiting behind. ",
+                                "max is the single worst measurement seen, with no averaging at ",
+                                "all — the one that got away.",
+                            )
+                            .to_string(),
+                        }],
                     }
                     Metric {
                         label: "delay max",
