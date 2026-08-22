@@ -53,6 +53,18 @@ fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -
     let mut paused = paused;
     let heap_pct = m.memory.heap_used_pct;
 
+    // A shim that answers 0 is indistinguishable from a genuinely quiet
+    // process, so anything this runtime does not count says so instead.
+    let unsupported = m.unsupported.clone();
+    let not_counted = move |path: &str| unsupported.iter().any(|u| u == path);
+    let running = m
+        .versions
+        .get("bun")
+        .map(|_| "bun")
+        .or_else(|| m.versions.get("deno").map(|_| "deno"))
+        .unwrap_or("node")
+        .to_string();
+
     rsx! {
         Panel {
             title: "Node runtime".to_string(),
@@ -314,7 +326,7 @@ fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -
                     }
                     Metric {
                         label: "largest space",
-                        value: format!("{} ({} MB)", m.memory.largest_space.name, m.memory.largest_space.used_mb),
+                        value: if not_counted("memory.largestSpace") { format!("not reported by {running}") } else { format!("{} ({} MB)", m.memory.largest_space.name, m.memory.largest_space.used_mb) },
                         what: "The V8 heap space holding the most: old_space for long-lived objects, new_space for recent ones.".to_string(),
                         why: "Tells you what kind of memory is growing, not just that it is. Growth in old_space is retained data; growth in new_space is churn.".to_string(),
                         if_wrong: "Persistent old_space growth across idle periods is the signature of a leak.".to_string(),
@@ -534,7 +546,7 @@ fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -
                     }
                     Metric {
                         label: "utilization",
-                        value: format!("{}%", m.event_loop.utilization_pct),
+                        value: if not_counted("eventLoop.utilizationPct") { format!("not reported by {running}") } else { format!("{}%", m.event_loop.utilization_pct) },
                         what: "Share of the last interval the loop spent working rather than waiting, measured since this page last asked.".to_string(),
                         why: "Near 100% means the process is saturated and more concurrency will not help. Near 0 while a job runs means it is waiting on I/O, where more thread pool would.".to_string(),
                         if_wrong: "High utilisation with low throughput usually means work that belongs off the main thread.".to_string(),
@@ -584,7 +596,9 @@ fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -
                     }
                     Metric {
                         label: "active handles",
-                        value: if m.concurrency.active_resources.is_empty() {
+                        value: if not_counted("concurrency.activeResources") {
+                            format!("not reported by {running}")
+                        } else if m.concurrency.active_resources.is_empty() {
                             "none".to_string()
                         } else {
                             m.concurrency

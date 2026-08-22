@@ -331,6 +331,9 @@ pub struct NodeMetrics {
     pub concurrency: NodeConcurrency,
     pub host: NodeHost,
     pub versions: std::collections::BTreeMap<String, String>,
+    /// Dotted paths this runtime does not actually count — see node_metrics.ts.
+    #[serde(default)]
+    pub unsupported: Vec<String>,
     #[serde(rename = "uptimeMs")] pub uptime_ms: f64,
 }
 

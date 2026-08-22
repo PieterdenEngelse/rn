@@ -33,7 +33,12 @@ loopDelay.enable();
  * which is the thing worth watching.
  */
 function delayMs(nanos: number): number {
-    const ms = nanos / NS_TO_MS - LOOP_RESOLUTION_MS;
+    // Node's histogram measures scheduled-to-actual, so every reading carries
+    // the sampling interval and an idle loop reads ~10ms. Bun's does not — it
+    // reports the lateness directly, so subtracting would drive every reading
+    // to zero and the board would claim a loop that never blocks.
+    const offset = runtimeName() === "node" ? LOOP_RESOLUTION_MS : 0;
+    const ms = nanos / NS_TO_MS - offset;
     return Number(Math.max(0, ms).toFixed(2));
 }
 
@@ -77,6 +82,50 @@ export interface NodeMetrics {
     };
     versions: Record<string, string>;
     uptimeMs: number;
+    /**
+     * Which figures above this runtime does not actually produce. Bun ships the
+     * node:v8 and node:perf_hooks shapes but not all of their behaviour, and a
+     * shim that returns a confident zero is worse than one that throws — the
+     * board would read "loop never blocked" for a runtime that simply is not
+     * counting. Named here so the UI can say "not reported" instead.
+     */
+    unsupported: string[];
+}
+
+/**
+ * Measured against bun 1.4 and deno 2.9 rather than assumed: each entry is a
+ * figure the runtime returns a plausible-looking value for without counting
+ * anything. Recheck when a runtime is upgraded — these are shims filling in,
+ * and they do get filled in properly over time.
+ */
+function unsupportedHere(): string[] {
+    switch (runtimeName()) {
+        case "bun":
+            return [
+                // eventLoopUtilization() returns {idle:0,active:0,utilization:0}
+                // forever, so the tile would read 0% under any load.
+                "eventLoop.utilizationPct",
+                // getActiveResourcesInfo() returns [] even with timers pending.
+                "concurrency.activeResources",
+                // getHeapSpaceStatistics() reports one synthetic "old_space"
+                // holding the whole JSC heap, so "which space is biggest" has
+                // no answer — and old_space is V8 vocabulary for machinery Bun
+                // does not have.
+                "memory.largestSpace",
+            ];
+        case "deno":
+            return [];
+        default:
+            return [];
+    }
+}
+
+/** What is actually executing, which decides how to read the counters below. */
+function runtimeName(): "node" | "bun" | "deno" {
+    const v = process.versions as Record<string, string | undefined>;
+    if (v.bun) return "bun";
+    if (v.deno) return "deno";
+    return "node";
 }
 
 export function collect(): NodeMetrics {
@@ -151,6 +200,7 @@ export function collect(): NodeMetrics {
             ),
         ),
         uptimeMs: Math.round(process.uptime() * 1000),
+        unsupported: unsupportedHere(),
     };
 }
 
