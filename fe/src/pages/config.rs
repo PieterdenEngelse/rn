@@ -109,12 +109,20 @@ fn ParamBoards(resp: ParamsResponse, reload: Signal<u32>) -> Element {
         .unwrap_or("node")
         .to_string();
 
+    // The tile follows the *selected* runtime, not the running one. Picking bun
+    // and having to restart before its settings appear would mean restarting
+    // twice: once to reveal them, once to apply what you then set. Selecting it
+    // shows them now, and one restart applies the lot.
+    let selected = draft()
+        .get("jsRuntime")
+        .and_then(|v| v.as_str().map(str::to_string))
+        .unwrap_or_else(|| running.clone());
+    let pending_switch = selected != running;
+
     // Settings split by who owns them. A parameter naming runtimes belongs to
-    // those runtimes; one naming none belongs to all of them. The first group is
-    // filtered to what is actually running, so the page shows the settings for
-    // the runtime in front of you rather than a museum of the other two.
+    // those runtimes; one naming none belongs to all of them.
     let owned_by_running = |p: &RuntimeParam| -> bool {
-        p.applies_to.as_ref().is_some_and(|l| l.iter().any(|r| r == &running))
+        p.applies_to.as_ref().is_some_and(|l| l.iter().any(|r| r == &selected))
     };
     let is_universal = |p: &RuntimeParam| -> bool { p.applies_to.is_none() };
 
@@ -221,11 +229,21 @@ fn ParamBoards(resp: ParamsResponse, reload: Signal<u32>) -> Element {
 
         if !runtime_tuning.is_empty() {
             Panel {
-                title: format!("{running} settings"),
-                subtitle: Some("only while this runtime is the one running".to_string()),
+                title: format!("{selected} settings"),
+                subtitle: Some(if pending_switch {
+                    format!("{selected} is selected but {running} is running")
+                } else {
+                    "only while this runtime is the one running".to_string()
+                }),
 
-                p { class: "text-gray-400 mb-3 max-w-3xl",
-                    "These belong to {running} specifically. The other runtimes' settings are not shown here — they are still saved, and reappear when you switch back."
+                if pending_switch {
+                    p { class: "text-amber-400 mb-3 max-w-3xl",
+                        "Shown because {selected} is selected below. Set them now and one restart applies both the switch and these — {running} is still what is running."
+                    }
+                } else {
+                    p { class: "text-gray-400 mb-3 max-w-3xl",
+                        "These belong to {selected} specifically. The other runtimes' settings are not shown here — they are still saved, and reappear when you switch back."
+                    }
                 }
 
                 div { class: "flex flex-wrap gap-4 items-stretch",
@@ -503,11 +521,19 @@ fn ParamBlock(
     // refusing to boot, so a Node-only flag under them is silently inert. The
     // control stays editable — the value is saved and applies the moment Node
     // runs again — but the row has to stop implying it is doing something.
-    let running = effective
+    // The selection, not the running process — otherwise a setting shown because
+    // you just picked its runtime would be struck through inside its own tile
+    // for belonging to the runtime you picked.
+    let running = draft()
         .get("jsRuntime")
-        .and_then(|v| v.as_str())
-        .unwrap_or("node")
-        .to_string();
+        .and_then(|v| v.as_str().map(str::to_string))
+        .unwrap_or_else(|| {
+            effective
+                .get("jsRuntime")
+                .and_then(|v| v.as_str())
+                .unwrap_or("node")
+                .to_string()
+        });
     let ignored = param
         .applies_to
         .as_ref()
