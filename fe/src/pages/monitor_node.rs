@@ -57,6 +57,13 @@ fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -
     // process, so anything this runtime does not count says so instead.
     let unsupported = m.unsupported.clone();
     let not_counted = move |path: &str| unsupported.iter().any(|u| u == path);
+    // A board with every tile hidden is an empty frame, which reads as "nothing
+    // is happening here" rather than "this runtime does not count it". Drop it.
+    let loop_board_useful =
+        !(not_counted("eventLoop.delay") && not_counted("eventLoop.utilizationPct"));
+    let concurrency_board_useful = !(not_counted("concurrency.threadpoolSize")
+        && not_counted("concurrency.activeResources"));
+
     let running = m
         .versions
         .get("bun")
@@ -67,7 +74,7 @@ fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -
 
     rsx! {
         Panel {
-            title: "Node runtime".to_string(),
+            title: format!("{running} runtime"),
             subtitle: Some("live, sampled every 2s".to_string()),
 
             // The "not reported" marks are only as good as the version they
@@ -334,16 +341,20 @@ fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -
                         why: "This is the number that matters to the rest of the machine. It is always well above the heap; the gap is Node itself.".to_string(),
                         if_wrong: "RSS growing while the heap stays flat points at native memory — buffers or an addon, which the heap limit does not constrain.".to_string(),
                     }
+                    if !not_counted("memory.largestSpace") {
                     Metric {
                         label: "largest space",
-                        value: if not_counted("memory.largestSpace") { format!("not reported by {running}") } else { format!("{} ({} MB)", m.memory.largest_space.name, m.memory.largest_space.used_mb) },
+                        value: format!("{} ({} MB)", m.memory.largest_space.name, m.memory.largest_space.used_mb),
                         what: "The V8 heap space holding the most: old_space for long-lived objects, new_space for recent ones.".to_string(),
                         why: "Tells you what kind of memory is growing, not just that it is. Growth in old_space is retained data; growth in new_space is churn.".to_string(),
                         if_wrong: "Persistent old_space growth across idle periods is the signature of a leak.".to_string(),
                     }
+                    }
                 }
 
                 // ── Event loop ────────────────────────────────────────
+                // Every figure here is inert under Deno, and an empty frame reads as a
+                if loop_board_useful {
                 Board {
                     title: "Event loop".to_string(),
                     info: Some(rsx! {
@@ -470,9 +481,10 @@ fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -
                             }
                         }
                     }
+                    if !not_counted("eventLoop.delay") {
                     Metric {
                         label: "delay p50",
-                        value: if not_counted("eventLoop.delay") { format!("not reported by {running}") } else { format!("{} ms", m.event_loop.p50_ms) },
+                        value: format!("{} ms", m.event_loop.p50_ms),
                         what: "How late the loop is on a typical tick — the 50th [[percentile]], measured above the 10ms sampling interval, which is subtracted.".to_string(),
                         why: "The single best indicator that an automation is blocking. Node runs your code on one thread and there is no [[pre-emption]] inside it: while a function is busy, nothing else — including this page — is served.".to_string(),
                         if_wrong: "Sustained tens of milliseconds means synchronous work is starving everything else. Move it to the thread pool or a Rust component.".to_string(),
@@ -509,9 +521,11 @@ fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -
                             .to_string(),
                         }],
                     }
+                    }
+                    if !not_counted("eventLoop.delay") {
                     Metric {
                         label: "delay p99",
-                        value: if not_counted("eventLoop.delay") { format!("not reported by {running}") } else { format!("{} ms", m.event_loop.p99_ms) },
+                        value: format!("{} ms", m.event_loop.p99_ms),
                         what: "The worst 1% of ticks — the 99th [[percentile]].".to_string(),
                         why: "Averages hide stalls. A fine p50 with a large p99 is the classic occasional-blocking-call profile.".to_string(),
                         if_wrong: "A p99 far above p50 points at one specific operation — a big synchronous read, a JSON.parse of something huge.".to_string(),
@@ -547,30 +561,40 @@ fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -
                             .to_string(),
                         }],
                     }
+                    }
+                    if !not_counted("eventLoop.delay") {
                     Metric {
                         label: "delay max",
-                        value: if not_counted("eventLoop.delay") { format!("not reported by {running}") } else { format!("{} ms", m.event_loop.max_ms) },
+                        value: format!("{} ms", m.event_loop.max_ms),
                         what: "The worst tick since the process started, or since the history was reset.".to_string(),
                         why: "Catches the one stall that happened while you were not looking.".to_string(),
                         if_wrong: "A max in the seconds means the process was unresponsive for that long — requests during it simply waited.".to_string(),
                     }
+                    }
+                    if !not_counted("eventLoop.utilizationPct") {
                     Metric {
                         label: "utilization",
-                        value: if not_counted("eventLoop.utilizationPct") { format!("not reported by {running}") } else { format!("{}%", m.event_loop.utilization_pct) },
+                        value: format!("{}%", m.event_loop.utilization_pct),
                         what: "Share of the last interval the loop spent working rather than waiting, measured since this page last asked.".to_string(),
                         why: "Near 100% means the process is saturated and more concurrency will not help. Near 0 while a job runs means it is waiting on I/O, where more thread pool would.".to_string(),
                         if_wrong: "High utilisation with low throughput usually means work that belongs off the main thread.".to_string(),
                     }
+                    }
+                }
                 }
 
                 // ── Concurrency ───────────────────────────────────────
+                // Both figures are inert under Bun; same reasoning as the loop board.
+                if concurrency_board_useful {
                 Board { title: "Concurrency".to_string(),
+                    if !not_counted("concurrency.threadpoolSize") {
                     Metric {
                         label: "threadpool",
-                        value: if not_counted("concurrency.threadpoolSize") { format!("not reported by {running}") } else { m.concurrency.threadpool_size.to_string() },
+                        value: m.concurrency.threadpool_size.to_string(),
                         what: "Threads libuv uses for file system, DNS, zlib and some crypto work.".to_string(),
                         why: "The measured counterpart of the libuv thread pool setting. Read it with event-loop utilisation: low utilisation plus a slow file job means this is the bottleneck.".to_string(),
                         if_wrong: "If it does not match what you set, the setting has not been applied — it needs a restart, and the banner on Config → Settings will say so.".to_string(),
+                    }
                     }
                     Metric {
                         label: "cpu (user)",
@@ -594,7 +618,18 @@ fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -
                         if_wrong: "Load persistently above the core count means everything on this machine is queueing.".to_string(),
                     }
                 }
+                }
 
+            }
+        }
+
+        // The machine, not the runtime: these read the same whichever
+        // runtime is running, so they do not belong in a tile named after one.
+        Panel {
+            title: "All runtimes".to_string(),
+            subtitle: Some("the machine rn is running on".to_string()),
+
+            div { class: "flex flex-wrap gap-4 items-stretch",
                 // ── Host & versions ───────────────────────────────────
                 Board { title: "Host".to_string(),
                     Metric {
@@ -604,11 +639,10 @@ fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -
                         why: "The heap limit is only meaningful against this. A limit larger than free memory will be enforced by the operating system first, and less politely.".to_string(),
                         if_wrong: "If free memory approaches zero the kernel may kill the process outright — that shows as a restart with no JavaScript error.".to_string(),
                     }
+                    if !not_counted("concurrency.activeResources") {
                     Metric {
                         label: "active handles",
-                        value: if not_counted("concurrency.activeResources") {
-                            format!("not reported by {running}")
-                        } else if m.concurrency.active_resources.is_empty() {
+                        value: if m.concurrency.active_resources.is_empty() {
                             "none".to_string()
                         } else {
                             m.concurrency
@@ -621,6 +655,7 @@ fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -
                         what: "Open resources keeping the process alive — sockets, servers, timers.".to_string(),
                         why: "Explains why a process will not exit, and shows leaked handles: a count that only grows is a connection or timer never cleaned up.".to_string(),
                         if_wrong: "Steadily growing socket counts mean something is opening connections without closing them.".to_string(),
+                    }
                     }
                     for key in ["node", "v8", "uv", "openssl"] {
                         if let Some(v) = m.versions.get(key) {
