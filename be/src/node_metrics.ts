@@ -112,9 +112,24 @@ function unsupportedHere(): string[] {
                 // no answer — and old_space is V8 vocabulary for machinery Bun
                 // does not have.
                 "memory.largestSpace",
+                // No libuv, and Bun does not read UV_THREADPOOL_SIZE, so the
+                // figure is the default this code passes through — not a size
+                // anything honours.
+                "concurrency.threadpoolSize",
             ];
         case "deno":
-            return [];
+            // Deno runs V8, so heap spaces and active resources are real here,
+            // unlike under Bun. Two things are not.
+            return [
+                // Same as Bun: always {idle:0,active:0,utilization:0}.
+                "eventLoop.utilizationPct",
+                // monitorEventLoopDelay exists and stays flat: a deliberate
+                // 60ms block moved the max to 0.01ms, i.e. it is not counting.
+                // Every figure on the delay board would be a decoration.
+                "eventLoop.delay",
+                // Deno has no libuv threadpool at all.
+                "concurrency.threadpoolSize",
+            ];
         default:
             return [];
     }

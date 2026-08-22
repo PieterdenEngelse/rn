@@ -462,7 +462,7 @@ fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -
                     }
                     Metric {
                         label: "delay p50",
-                        value: format!("{} ms", m.event_loop.p50_ms),
+                        value: if not_counted("eventLoop.delay") { format!("not reported by {running}") } else { format!("{} ms", m.event_loop.p50_ms) },
                         what: "How late the loop is on a typical tick — the 50th [[percentile]], measured above the 10ms sampling interval, which is subtracted.".to_string(),
                         why: "The single best indicator that an automation is blocking. Node runs your code on one thread and there is no [[pre-emption]] inside it: while a function is busy, nothing else — including this page — is served.".to_string(),
                         if_wrong: "Sustained tens of milliseconds means synchronous work is starving everything else. Move it to the thread pool or a Rust component.".to_string(),
@@ -501,7 +501,7 @@ fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -
                     }
                     Metric {
                         label: "delay p99",
-                        value: format!("{} ms", m.event_loop.p99_ms),
+                        value: if not_counted("eventLoop.delay") { format!("not reported by {running}") } else { format!("{} ms", m.event_loop.p99_ms) },
                         what: "The worst 1% of ticks — the 99th [[percentile]].".to_string(),
                         why: "Averages hide stalls. A fine p50 with a large p99 is the classic occasional-blocking-call profile.".to_string(),
                         if_wrong: "A p99 far above p50 points at one specific operation — a big synchronous read, a JSON.parse of something huge.".to_string(),
@@ -539,7 +539,7 @@ fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -
                     }
                     Metric {
                         label: "delay max",
-                        value: format!("{} ms", m.event_loop.max_ms),
+                        value: if not_counted("eventLoop.delay") { format!("not reported by {running}") } else { format!("{} ms", m.event_loop.max_ms) },
                         what: "The worst tick since the process started, or since the history was reset.".to_string(),
                         why: "Catches the one stall that happened while you were not looking.".to_string(),
                         if_wrong: "A max in the seconds means the process was unresponsive for that long — requests during it simply waited.".to_string(),
@@ -557,7 +557,7 @@ fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -
                 Board { title: "Concurrency".to_string(),
                     Metric {
                         label: "threadpool",
-                        value: m.concurrency.threadpool_size.to_string(),
+                        value: if not_counted("concurrency.threadpoolSize") { format!("not reported by {running}") } else { m.concurrency.threadpool_size.to_string() },
                         what: "Threads libuv uses for file system, DNS, zlib and some crypto work.".to_string(),
                         why: "The measured counterpart of the libuv thread pool setting. Read it with event-loop utilisation: low utilisation plus a slow file job means this is the bottleneck.".to_string(),
                         if_wrong: "If it does not match what you set, the setting has not been applied — it needs a restart, and the banner on Config → Settings will say so.".to_string(),
