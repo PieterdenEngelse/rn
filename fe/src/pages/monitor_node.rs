@@ -143,13 +143,13 @@ fn NodeBoards(m: NodeMetrics, paused: Signal<bool>) -> Element {
                             "page, which sounds related and is not: that is how many frames get ",
                             "captured into an Error object, not how deep the stack may go.",
                         ).to_string(),
-                        why: "The measured counterpart of the Memory limit setting. Watch the percentage: a job that fails with 'heap out of memory' was pushing this to 100.".to_string(),
+                        why: "The measured counterpart of the Heap memory limit setting. Watch the percentage: a job that fails with 'heap out of memory' was pushing this to 100.".to_string(),
                         if_wrong: "Climbing steadily across runs and never falling back after a job ends means something is retained — a leak, not a limit that is too low.".to_string(),
                     }
                     Metric {
                         label: "heap limit",
                         value: format!("{} MB", m.memory.heap_limit_mb),
-                        what: "The ceiling V8 will not grow past. Chosen from installed RAM unless the Memory limit setting overrides it.".to_string(),
+                        what: "The ceiling V8 will not grow past. Chosen from installed RAM unless the Heap memory limit setting overrides it.".to_string(),
                         why: "It is what --max-old-space-size actually produced, which is worth checking: the flag sets old space, so the effective total lands higher than the number you typed.".to_string(),
                         if_wrong: "If this does not match what you set under Config → Settings, the setting is not reaching the process — check `rn --print-env`.".to_string(),
                     }

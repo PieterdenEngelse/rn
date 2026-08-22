@@ -115,7 +115,7 @@
       "max": 32768,
       "appliesAt": "restart",
       "category": "memory",
-      "label": "Memory limit",
+      "label": "Heap memory limit",
       "info": {
         "what": "Caps V8's old-space heap. Unset, Node picks a limit from installed RAM — on this machine that came out at 2240 MB.",
         "why": "Raise it when a large job dies with 'JavaScript heap out of memory'. Lower it to stop rn competing for memory on a shared machine.",

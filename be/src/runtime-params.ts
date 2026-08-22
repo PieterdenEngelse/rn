@@ -281,7 +281,9 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
         max: 32768,
         appliesAt: "restart",
         category: "memory",
-        label: "Memory limit",
+        // Names the region, not just "memory": the process also has a call
+        // stack, which this does not govern and nothing here does.
+        label: "Heap memory limit",
         info: {
             what:
                 "Caps V8's old-space heap. Unset, Node picks a limit from installed RAM — " +

@@ -14,7 +14,7 @@ scales with installed RAM, so expect a different number elsewhere.
 | **JavaScript runtime** | `runtime` (NODE_OPTIONS) | node | — | on restart |
 | **Extra network hosts** | `netAllowlist` (NODE_OPTIONS) | unset (system default) | — | on restart |
 | **Node version line** | `nodeVersion` (NODE_OPTIONS) | unset (system default) | — | on restart |
-| **Memory limit** | `--max-old-space-size` (NODE_OPTIONS) | unset (system default) | 64 … 32768 MB | on restart |
+| **Heap memory limit** | `--max-old-space-size` (NODE_OPTIONS) | unset (system default) | 64 … 32768 MB | on restart |
 | **Worker threads** | `UV_THREADPOOL_SIZE` | 4 | 1 … 1024 | on restart |
 | **Time zone** | `TZ` | unset (system default) | — | on restart |
 | **Extra CA certificates** | `NODE_EXTRA_CA_CERTS` | unset (system default) | — | on restart |
@@ -58,7 +58,7 @@ Default: unset (system default) · Takes effect: on restart · Settings key: `no
 
 ## Memory
 
-### Memory limit — `--max-old-space-size`
+### Heap memory limit — `--max-old-space-size`
 
 **What it does.** Caps V8's old-space heap. Unset, Node picks a limit from installed RAM — on this machine that came out at 2240 MB.
 
