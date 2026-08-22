@@ -99,13 +99,31 @@ The Node runtime ships with rn. Nothing here uses a Node from PATH."
     );
 }
 
+/// Where a Node option travels, which is not the same for every runtime.
+///
+/// Bun ignores NODE_OPTIONS outright — verified: --stack-trace-limit=42 set that
+/// way leaves the limit at 10 — but accepts the same flags as argv, and tolerates
+/// the ones it does not implement rather than refusing to start. Deno takes
+/// neither: it rejects unknown arguments and would not boot, which is why no
+/// Node option is ever routed to it.
+///
+/// Returns (NODE_OPTIONS entries, argv flags).
+fn split_options(kind: layout::RuntimeKind, launch: &settings::Launch) -> (Vec<String>, Vec<String>) {
+    let mut argv = launch.runtime_flags.clone();
+    if kind == layout::RuntimeKind::Bun {
+        argv.extend(launch.node_options.iter().cloned());
+        return (Vec::new(), argv);
+    }
+    (launch.node_options.clone(), argv)
+}
+
 /// Build the child invocation. One place, so the supervisor and --print-env
 /// can never disagree about what actually gets run.
 fn build_command(layout: &Layout, params: &[settings::RuntimeParam]) -> NodeCommand {
     let saved = settings::load_settings(&layout.settings);
     let selection = layout.select_runtime(&saved);
     let launch = settings::resolve(params, &saved, selection.kind.name());
-    let (env, node_options) = (&launch.env, &launch.node_options);
+    let env = &launch.env;
 
     let mut cmd = NodeCommand::new(&selection.path, &layout.app_dir);
     cmd.envs(env);
@@ -119,8 +137,16 @@ fn build_command(layout: &Layout, params: &[settings::RuntimeParam]) -> NodeComm
         cmd.env("RN_RUNTIME_NOTE", note);
     }
 
-    if !node_options.is_empty() {
-        cmd.env("NODE_OPTIONS", node_options.join(" "));
+    let (env_opts, argv_flags) = split_options(selection.kind, &launch);
+
+    // Bun ignores NODE_OPTIONS outright — verified: --stack-trace-limit=42 set
+    // that way leaves the limit at 10 — but accepts the same flags as argv, and
+    // tolerates the ones it does not implement rather than refusing to start. So
+    // under Bun they travel in the command line instead. Deno takes neither: it
+    // rejects unknown arguments and would not boot, which is why nothing routed
+    // here reaches it.
+    if !env_opts.is_empty() {
+        cmd.env("NODE_OPTIONS", env_opts.join(" "));
     }
 
     // Echoed so /api/params can tell a saved runtime flag from an applied one,
@@ -154,7 +180,7 @@ fn build_command(layout: &Layout, params: &[settings::RuntimeParam]) -> NodeComm
         &env_file,
         &layout.entry,
         &allow_net,
-        &launch.runtime_flags,
+        &argv_flags,
     ) {
         cmd.arg(a);
     }
@@ -166,18 +192,19 @@ fn print_env(layout: &Layout, params: &[settings::RuntimeParam]) -> Result<(), S
     let saved = settings::load_settings(&layout.settings);
     let selection = layout.select_runtime(&saved);
     let launch = settings::resolve(params, &saved, selection.kind.name());
-    let (env, node_options) = (&launch.env, &launch.node_options);
+    let env = &launch.env;
 
     let env_file = layout.app_dir.join(".env");
     let (host, port) = layout::bind_address(&env_file);
     let extra = saved.get("netAllowlist").and_then(|v| v.as_str()).unwrap_or_default();
     let allow_net = layout::net_allowlist(&host, port, extra);
+    let (env_opts, argv_flags) = split_options(selection.kind, &launch);
     let argv = layout::runtime_argv(
         selection.kind,
         &env_file,
         &layout.entry,
         &allow_net,
-        &launch.runtime_flags,
+        &argv_flags,
     );
     println!(
         "runtime     {} -> {}",
@@ -200,10 +227,10 @@ fn print_env(layout: &Layout, params: &[settings::RuntimeParam]) -> Result<(), S
     println!("entry       {}", display_path(&layout.entry));
     println!("settings    {}", display_path(&layout.settings));
     println!("sealed      RN_ENV_SEALED=1 (environment cleared, then built explicitly)");
-    if node_options.is_empty() {
+    if env_opts.is_empty() {
         println!("NODE_OPTIONS  (none)");
     } else {
-        println!("NODE_OPTIONS  {}", node_options.join(" "));
+        println!("NODE_OPTIONS  {}", env_opts.join(" "));
     }
     for (k, v) in env {
         println!("env         {k}={v}");

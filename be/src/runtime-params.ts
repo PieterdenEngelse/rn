@@ -589,7 +589,8 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
     {
         id: "traceWarnings",
         // Node's warning system.
-        appliesTo: ["node"],
+        // Bun implements it as a flag; verified it adds stack frames.
+        appliesTo: ["node", "bun"],
         flag: "--trace-warnings",
         kind: "node-option",
         type: "bool",
@@ -608,7 +609,8 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
     {
         id: "traceDeprecation",
         // Node's deprecation warnings.
-        appliesTo: ["node"],
+        // Bun implements it as a flag; verified it adds stack frames.
+        appliesTo: ["node", "bun"],
         flag: "--trace-deprecation",
         kind: "node-option",
         type: "bool",
@@ -625,7 +627,10 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
     {
         id: "stackTraceLimit",
         // Error.stackTraceLimit is V8's.
-        appliesTo: ["node"],
+        // No appliesTo: this one is not delivered by a flag at all. The backend
+        // assigns Error.stackTraceLimit in JavaScript at startup, which every
+        // runtime here honours — verified reading back as 42 under all three,
+        // including Deno, which never receives the flag.
         flag: "--stack-trace-limit",
         kind: "node-option",
         type: "int",
