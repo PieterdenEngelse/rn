@@ -56,7 +56,7 @@ pub fn Header() -> Element {
                     style: "font-family: ui-sans-serif, system-ui, sans-serif;",
 
                     Link {
-                        to: Route::Monitor {},
+                        to: Route::MonitorNode {},
                         class: NAV_LINK_CLASS,
                         style: format!("color: {};", monitor_color),
                         "Monitor"
@@ -78,7 +78,7 @@ pub fn Header() -> Element {
             if menu_open() {
                 div { class: "md:hidden absolute top-full right-0 w-40 bg-gray-900 shadow-md p-4 flex flex-col gap-4",
                     Link {
-                        to: Route::Monitor {},
+                        to: Route::MonitorNode {},
                         class: "text-teal-100 hover:text-white transition-colors",
                         onclick: move |_| menu_open.set(false),
                         "Monitor"

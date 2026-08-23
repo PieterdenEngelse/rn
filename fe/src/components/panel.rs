@@ -8,6 +8,10 @@ pub fn Panel(
     /// Optional control rendered beside the title — an InfoButton explaining
     /// what the whole panel is about, as opposed to any one row inside it.
     #[props(default = None)] info: Option<Element>,
+    /// Controls belonging to the panel as a whole — placed on the title line,
+    /// to the right of the title and subtitle, rather than as a strip beneath
+    /// it that costs a row of vertical space.
+    #[props(default = None)] actions: Option<Element>,
     /// Extra classes for the title row. Lets a page size that row so its info
     /// button lines up with a column of them further down the panel; without
     /// it the button lands wherever the title and subtitle happen to end.
@@ -25,6 +29,9 @@ pub fn Panel(
                         }
                         if let Some(info) = info {
                             {info}
+                        }
+                        if let Some(actions) = actions {
+                            {actions}
                         }
                     }
                 }

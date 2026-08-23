@@ -3,6 +3,8 @@
 pub mod header;
 pub mod info;
 pub mod panel;
+pub mod process_boards;
+pub use process_boards::ProcessBoards;
 pub mod process_panel;
 pub use process_panel::ProcessPanel;
 pub mod restart_banner;

@@ -24,6 +24,11 @@ pub fn Sparkline(
     /// curve across a restart implies a continuity that did not happen.
     #[props(default = 0.0)]
     before_start: f64,
+    /// Stretch to the height of whatever the plot sits beside, instead of the
+    /// fixed `height`. The viewBox is unchanged, so the curve simply resolves
+    /// over more pixels — the same data, read against a taller y axis.
+    #[props(default = false)]
+    fill_height: bool,
 ) -> Element {
     let width = 240.0_f64;
     let h = height as f64;
@@ -60,10 +65,12 @@ pub fn Sparkline(
     };
 
     rsx! {
-        div { class: "flex flex-col gap-1",
+        div {
+            class: if fill_height { "flex flex-col gap-1 h-full" } else { "flex flex-col gap-1" },
             svg {
+                class: if fill_height { "flex-1 min-h-0" } else { "" },
                 width: "100%",
-                height: "{height}",
+                height: if fill_height { "100%".to_string() } else { height.to_string() },
                 view_box: "0 0 {width} {h}",
                 preserve_aspect_ratio: "none",
                 role: "img",

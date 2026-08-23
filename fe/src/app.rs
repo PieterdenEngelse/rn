@@ -1,7 +1,7 @@
 use crate::components::header::Header;
 use crate::components::SubNav;
 use crate::pages::{
-    Config, Home, Monitor, MonitorJobs, MonitorNode, PageNotFound,
+    Config, Home, MonitorJobs, MonitorNode, PageNotFound,
 };
 use dioxus::prelude::*;
 use dioxus_router::{Outlet, Routable, Router};
@@ -12,8 +12,6 @@ pub enum Route {
     #[layout(Layout)]
         #[route("/")]
         Home {},
-        #[route("/monitor")]
-        Monitor {},
         #[route("/monitor/node")]
         MonitorNode {},
         #[route("/monitor/jobs")]

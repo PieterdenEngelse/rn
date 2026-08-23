@@ -1,6 +1,6 @@
-use crate::api::{fetch_node_history, fetch_node_metrics, NodeHistory, NodeMetrics};
+use crate::api::{fetch_node_history, fetch_node_metrics, fetch_status, StatusResponse, NodeHistory, NodeMetrics};
 use crate::components::param::*;
-use crate::components::{GlossaryEntry, InfoButton, Panel, Series, Sparkline};
+use crate::components::{GlossaryEntry, InfoButton, Panel, ProcessBoards, Series, Sparkline};
 use dioxus::prelude::*;
 
 /// Monitor → Node. What the runtime is actually doing.
@@ -12,6 +12,9 @@ use dioxus::prelude::*;
 pub fn MonitorNode() -> Element {
     let mut metrics = use_signal(|| Option::<Result<NodeMetrics, String>>::None);
     let mut hist = use_signal(|| Option::<NodeHistory>::None);
+    // The process readings shown beside Concurrency come from /api/status,
+    // which the metrics endpoint does not carry.
+    let mut status = use_signal(|| Option::<StatusResponse>::None);
     let paused = use_signal(|| false);
 
     use_future(move || async move {
@@ -22,6 +25,9 @@ pub fn MonitorNode() -> Element {
                 if let Ok(h) = fetch_node_history().await {
                     hist.set(Some(h));
                 }
+                if let Ok(st) = fetch_status().await {
+                    status.set(Some(st));
+                }
             }
             // Fast enough to see a job land, slow enough not to be the load.
             gloo_timers::future::TimeoutFuture::new(2_000).await;
@@ -31,7 +37,7 @@ pub fn MonitorNode() -> Element {
     rsx! {
         div { class: "p-6 w-full space-y-4",
             match metrics() {
-                Some(Ok(m)) => rsx! { NodeBoards { m, hist: hist(), paused } },
+                Some(Ok(m)) => rsx! { NodeBoards { m, hist: hist(), status: status(), paused } },
                 Some(Err(e)) => rsx! {
                     Panel { title: "Node".to_string(),
                         p { class: "text-red-400", "Backend unreachable" }
@@ -49,7 +55,12 @@ pub fn MonitorNode() -> Element {
 }
 
 #[component]
-fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -> Element {
+fn NodeBoards(
+    m: NodeMetrics,
+    hist: Option<NodeHistory>,
+    status: Option<StatusResponse>,
+    paused: Signal<bool>,
+) -> Element {
     let mut paused = paused;
     // Which window the History panel draws. Index into hist.tiers.
     let mut window = use_signal(|| 0usize);
@@ -78,6 +89,106 @@ fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -
         Panel {
             title: format!("{running} runtime"),
             subtitle: Some("live, sampled every 2s".to_string()),
+            actions: Some(rsx! {
+                div { class: "flex items-center gap-3",
+                    button {
+                        class: "text-xs cursor-pointer hover:underline bg-transparent border-0 p-0",
+                        style: "color: #22d3ee;",
+                        onclick: move |_| paused.set(!paused()),
+                        if paused() { "Resume sampling" } else { "Pause sampling" }
+                    }
+                    InfoButton {
+                        title: "Sampling".to_string(),
+                        what: "Two different intervals share the word, and they are worth telling apart.\n\nThe first is this page polling the backend every 2 seconds. Each poll asks for the [[metrics]] and the backend [[computes]] them at that moment; pausing stops the asking, so the numbers on screen freeze at the last answer.\n\nThe second is Node measuring its own event loop, always, whether or not this page exists. It schedules a timer every 10ms and records how late that timer actually fires — the lateness is the delay figure. That histogram starts when the process starts and is never reset, so it covers the whole life of the process rather than the last 2 seconds. Every raw reading includes the 10ms interval itself, so an idle loop would report ~10ms rather than ~0; the backend subtracts it, which is why the number means how late the loop was and not how often it was checked.".to_string(),
+                        why: "It matters because the rate figures — CPU share and event-loop utilisation — are deltas since this page last asked, not averages since the process booted. That is a deliberate choice: a lifetime average smooths away the spike you opened this page to find, so a burst that would vanish into an hour of idle shows up here at full size.\n\nThe cost of that choice is that the window is defined by your polling, not by the clock. Pause for a minute and the first reading after you resume covers that entire minute — one number averaging sixty seconds, sitting in a column that otherwise means two. Pause is for reading a value without it changing under you, not for stepping away.".to_string(),
+                        glossary: vec![
+                            GlossaryEntry {
+                                term: "metrics".to_string(),
+                                body: concat!(
+                                    "A metric is one named number describing the process — either ",
+                                    "at an instant, like heap used right now, or across an interval, ",
+                                    "like CPU share since the last poll. The boards on this page are ",
+                                    "each a handful of them.\n\n",
+
+                                    "They come from four places, none of which is a log or a file. ",
+                                    "V8 reports the heap: used, total, the limit it will not grow ",
+                                    "past, and which [[space]] holds the most. The operating system ",
+                                    "reports RSS, the memory it has actually handed this process, ",
+                                    "which is always larger than the heap because the runtime itself ",
+                                    "is in there. The kernel reports CPU time, split into user and ",
+                                    "system. libuv reports the event loop: how late its timers fire, ",
+                                    "how much of the time it is busy rather than waiting, and how ",
+                                    "many handles and requests are still open.\n\n",
+
+                                    "History is deliberately shallow. The backend samples heap, ",
+                                    "RSS and loop delay every two seconds and keeps the last five ",
+                                    "minutes in memory — enough to show the shape of what just ",
+                                    "happened, and enough to survive reloading this page, since the ",
+                                    "window lives in the process rather than in the browser. ",
+                                    "Nothing beyond that: no database, no file on disk. Samples ",
+                                    "older than the window are dropped, and restarting rn starts the ",
+                                    "window empty.",
+                                ).to_string(),
+                            },
+                            GlossaryEntry {
+                                term: "space".to_string(),
+                                body: concat!(
+                                    "V8 does not keep one pool of memory. It divides the heap into ",
+                                    "regions called spaces, each with its own allocation rules and ",
+                                    "its own collector — thirteen of them on this runtime, though ",
+                                    "only a few ever hold anything.\n\n",
+
+                                    "Two carry the story. Every object is born in new_space, which ",
+                                    "is small and swept constantly by a cheap copying pass; most ",
+                                    "objects die there and cost almost nothing to reclaim. Anything ",
+                                    "surviving a couple of those passes is promoted to old_space, ",
+                                    "which is collected by mark-and-sweep and is far more expensive ",
+                                    "to work through. Long-lived data lives in old_space, so a leak ",
+                                    "looks like old_space growing and never shrinking.\n\n",
+
+                                    "The rest are specialised: code_space for compiled machine code, ",
+                                    "large_object_space for objects too big to fit an ordinary page, ",
+                                    "read_only_space for immutable roots. The tile reports whichever ",
+                                    "is using the most right now. On a healthy process that is ",
+                                    "old_space; large_object_space winning instead points at one ",
+                                    "enormous buffer or array rather than an ordinary leak.\n\n",
+
+                                    "It is also why the Heap memory limit setting is named ",
+                                    "--max-old-space-size. It caps that one space and not the sum of ",
+                                    "all of them, which is why asking for 256 MB produces a total ",
+                                    "limit well above 256.",
+                                ).to_string(),
+                            },
+                            GlossaryEntry {
+                                term: "computes".to_string(),
+                                body: concat!(
+                                    "Deliberate word: the numbers do not exist until you ask. There ",
+                                    "is no metrics object being kept up to date in the background ",
+                                    "that a request merely reads.\n\n",
+
+                                    "On each request the backend asks V8 and the operating system ",
+                                    "for their current counters, most of which are totals since the ",
+                                    "process started and are useless on their own — CPU time since ",
+                                    "boot tells you nothing about whether it is busy now. So it ",
+                                    "subtracts the values it saw last time, divides by the elapsed ",
+                                    "milliseconds, and turns a pair of totals into a rate. Then it ",
+                                    "converts bytes to megabytes and rounds, because a heap figure ",
+                                    "to the byte is noise.\n\n",
+
+                                    "The subtraction is what makes the previous reading matter, and ",
+                                    "why the interval between polls is part of the answer rather ",
+                                    "than incidental to it. It is also why two tabs interfere: each ",
+                                    "one moves the baseline the other subtracts from.",
+                                ).to_string(),
+                            },
+                        ],
+                        if_wrong: "The trap is two viewers at once. Each poll consumes the baseline and resets it, so two browser tabs on this page take turns: each sees only the sliver since the other one asked, and both report suspiciously low CPU. A second tab, a phone left on this page, or a forgotten window is enough to make the whole board read quiet while the process is busy. If the numbers look impossibly calm, close the other tabs before believing them.\n\nMemory and the loop-delay histogram are unaffected — they are absolute readings, not deltas, so they stay correct however many people are watching.".to_string(),
+                    }
+                    span { class: "text-gray-400 text-xs",
+                        "uptime {format_uptime(m.uptime_ms)}"
+                    }
+                }
+            }),
 
             // The "not reported" marks are only as good as the version they
             // were measured on, so a runtime upgrade has to say so rather than
@@ -89,134 +200,41 @@ fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -
                 }
             }
 
-            div { class: "flex items-center gap-3 mb-3",
-                button {
-                    class: "text-xs cursor-pointer hover:underline bg-transparent border-0 p-0",
-                    style: "color: #22d3ee;",
-                    onclick: move |_| paused.set(!paused()),
-                    if paused() { "Resume sampling" } else { "Pause sampling" }
-                }
-                InfoButton {
-                    title: "Sampling".to_string(),
-                    what: "Two different intervals share the word, and they are worth telling apart.\n\nThe first is this page polling the backend every 2 seconds. Each poll asks for the [[metrics]] and the backend [[computes]] them at that moment; pausing stops the asking, so the numbers on screen freeze at the last answer.\n\nThe second is Node measuring its own event loop, always, whether or not this page exists. It schedules a timer every 10ms and records how late that timer actually fires — the lateness is the delay figure. That histogram starts when the process starts and is never reset, so it covers the whole life of the process rather than the last 2 seconds. Every raw reading includes the 10ms interval itself, so an idle loop would report ~10ms rather than ~0; the backend subtracts it, which is why the number means how late the loop was and not how often it was checked.".to_string(),
-                    why: "It matters because the rate figures — CPU share and event-loop utilisation — are deltas since this page last asked, not averages since the process booted. That is a deliberate choice: a lifetime average smooths away the spike you opened this page to find, so a burst that would vanish into an hour of idle shows up here at full size.\n\nThe cost of that choice is that the window is defined by your polling, not by the clock. Pause for a minute and the first reading after you resume covers that entire minute — one number averaging sixty seconds, sitting in a column that otherwise means two. Pause is for reading a value without it changing under you, not for stepping away.".to_string(),
-                    glossary: vec![
-                        GlossaryEntry {
-                            term: "metrics".to_string(),
-                            body: concat!(
-                                "A metric is one named number describing the process — either ",
-                                "at an instant, like heap used right now, or across an interval, ",
-                                "like CPU share since the last poll. The boards on this page are ",
-                                "each a handful of them.\n\n",
-
-                                "They come from four places, none of which is a log or a file. ",
-                                "V8 reports the heap: used, total, the limit it will not grow ",
-                                "past, and which [[space]] holds the most. The operating system ",
-                                "reports RSS, the memory it has actually handed this process, ",
-                                "which is always larger than the heap because the runtime itself ",
-                                "is in there. The kernel reports CPU time, split into user and ",
-                                "system. libuv reports the event loop: how late its timers fire, ",
-                                "how much of the time it is busy rather than waiting, and how ",
-                                "many handles and requests are still open.\n\n",
-
-                                "History is deliberately shallow. The backend samples heap, ",
-                                "RSS and loop delay every two seconds and keeps the last five ",
-                                "minutes in memory — enough to show the shape of what just ",
-                                "happened, and enough to survive reloading this page, since the ",
-                                "window lives in the process rather than in the browser. ",
-                                "Nothing beyond that: no database, no file on disk. Samples ",
-                                "older than the window are dropped, and restarting rn starts the ",
-                                "window empty.",
-                            ).to_string(),
-                        },
-                        GlossaryEntry {
-                            term: "space".to_string(),
-                            body: concat!(
-                                "V8 does not keep one pool of memory. It divides the heap into ",
-                                "regions called spaces, each with its own allocation rules and ",
-                                "its own collector — thirteen of them on this runtime, though ",
-                                "only a few ever hold anything.\n\n",
-
-                                "Two carry the story. Every object is born in new_space, which ",
-                                "is small and swept constantly by a cheap copying pass; most ",
-                                "objects die there and cost almost nothing to reclaim. Anything ",
-                                "surviving a couple of those passes is promoted to old_space, ",
-                                "which is collected by mark-and-sweep and is far more expensive ",
-                                "to work through. Long-lived data lives in old_space, so a leak ",
-                                "looks like old_space growing and never shrinking.\n\n",
-
-                                "The rest are specialised: code_space for compiled machine code, ",
-                                "large_object_space for objects too big to fit an ordinary page, ",
-                                "read_only_space for immutable roots. The tile reports whichever ",
-                                "is using the most right now. On a healthy process that is ",
-                                "old_space; large_object_space winning instead points at one ",
-                                "enormous buffer or array rather than an ordinary leak.\n\n",
-
-                                "It is also why the Heap memory limit setting is named ",
-                                "--max-old-space-size. It caps that one space and not the sum of ",
-                                "all of them, which is why asking for 256 MB produces a total ",
-                                "limit well above 256.",
-                            ).to_string(),
-                        },
-                        GlossaryEntry {
-                            term: "computes".to_string(),
-                            body: concat!(
-                                "Deliberate word: the numbers do not exist until you ask. There ",
-                                "is no metrics object being kept up to date in the background ",
-                                "that a request merely reads.\n\n",
-
-                                "On each request the backend asks V8 and the operating system ",
-                                "for their current counters, most of which are totals since the ",
-                                "process started and are useless on their own — CPU time since ",
-                                "boot tells you nothing about whether it is busy now. So it ",
-                                "subtracts the values it saw last time, divides by the elapsed ",
-                                "milliseconds, and turns a pair of totals into a rate. Then it ",
-                                "converts bytes to megabytes and rounds, because a heap figure ",
-                                "to the byte is noise.\n\n",
-
-                                "The subtraction is what makes the previous reading matter, and ",
-                                "why the interval between polls is part of the answer rather ",
-                                "than incidental to it. It is also why two tabs interfere: each ",
-                                "one moves the baseline the other subtracts from.",
-                            ).to_string(),
-                        },
-                    ],
-                    if_wrong: "The trap is two viewers at once. Each poll consumes the baseline and resets it, so two browser tabs on this page take turns: each sees only the sliver since the other one asked, and both report suspiciously low CPU. A second tab, a phone left on this page, or a forgotten window is enough to make the whole board read quiet while the process is busy. If the numbers look impossibly calm, close the other tabs before believing them.\n\nMemory and the loop-delay histogram are unaffected — they are absolute readings, not deltas, so they stay correct however many people are watching.".to_string(),
-                }
-                span { class: "text-gray-400 text-xs",
-                    "uptime {format_uptime(m.uptime_ms)}"
-                }
-            }
-
-            div { class: "flex flex-wrap gap-4 items-stretch",
+                        div { class: "flex flex-wrap gap-4 items-stretch",
 
                 // ── Memory ────────────────────────────────────────────
                 Board { title: "Memory".to_string(),
-                    if let Some(h) = hist.as_ref() {
-                        div { class: "mb-2",
-                            Sparkline {
-                                    before_start: h.before_start_fraction(),
-                                series: vec![
-                                    Series {
-                                        label: "heap".to_string(),
-                                        color: "#22c55e".to_string(),
-                                        points: h.samples.iter().map(|s| s.heap_used_mb).collect(),
-                                    },
-                                    Series {
-                                        label: "rss".to_string(),
-                                        color: "#60a5fa".to_string(),
-                                        points: h.samples.iter().map(|s| s.rss_mb).collect(),
-                                    },
-                                ],
-                                unit: " MB".to_string(),
-                                height: 44,
-                            }
-                            p { class: "text-[10px] text-gray-500",
-                                "last {window_minutes(h)} · heap limit {h.heap_limit_mb} MB"
+                    chart: Some(rsx! {
+                        if let Some(h) = hist.as_ref() {
+                            // Stretches so the plot can fill the board: h-full on the
+                            // Sparkline resolves against this, and an auto-height
+                            // wrapper would collapse it back to its content.
+                            div { class: "mb-2 flex flex-col flex-1 min-h-0",
+                                Sparkline {
+                                        before_start: h.before_start_fraction(),
+                                    series: vec![
+                                        Series {
+                                            label: "heap".to_string(),
+                                            color: "#22c55e".to_string(),
+                                            points: h.samples.iter().map(|s| s.heap_used_mb).collect(),
+                                        },
+                                        Series {
+                                            label: "rss".to_string(),
+                                            color: "#60a5fa".to_string(),
+                                            points: h.samples.iter().map(|s| s.rss_mb).collect(),
+                                        },
+                                    ],
+                                    unit: " MB".to_string(),
+                                    fill_height: true,
+                                    height: 44,
+                                }
+                                p { class: "text-[10px] text-gray-500",
+                                    "last {window_minutes(h)} · heap limit {h.heap_limit_mb} MB"
+                                }
                             }
                         }
-                    }
-                    Metric {
+                    }),
+                                        Metric {
                         label: "heap used",
                         value: format!("{} MB ({}%)", m.memory.heap_used_mb, heap_pct),
                         what: concat!(
@@ -424,58 +442,60 @@ fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -
                             ],
                         }
                     }),
-                    if let Some(h) = hist.as_ref().filter(|h| h.measures("loopP50Ms")) {
-                        div { class: "mb-2",
-                            Sparkline {
-                                    before_start: h.before_start_fraction(),
-                                series: vec![
-                                    Series {
-                                        label: "p50".to_string(),
-                                        color: "#22c55e".to_string(),
-                                        points: h.samples.iter().map(|s| s.loop_p50_ms).collect(),
-                                    },
-                                    Series {
-                                        label: "p99".to_string(),
-                                        color: "#eab308".to_string(),
-                                        points: h.samples.iter().map(|s| s.loop_p99_ms).collect(),
-                                    },
-                                    Series {
-                                        label: "max".to_string(),
-                                        color: "#ec4899".to_string(),
-                                        points: h.samples.iter().map(|s| s.loop_max_ms).collect(),
-                                    },
-                                ],
-                                unit: " ms".to_string(),
-                                height: 44,
-                            }
-                            p { class: "text-[10px] text-gray-500",
-                                "last {window_minutes(h)} · per-interval, not cumulative"
-                            }
+                    chart: Some(rsx! {
+                        if let Some(h) = hist.as_ref().filter(|h| h.measures("loopP50Ms")) {
+                            div { class: "mb-2",
+                                Sparkline {
+                                        before_start: h.before_start_fraction(),
+                                    series: vec![
+                                        Series {
+                                            label: "p50".to_string(),
+                                            color: "#22c55e".to_string(),
+                                            points: h.samples.iter().map(|s| s.loop_p50_ms).collect(),
+                                        },
+                                        Series {
+                                            label: "p99".to_string(),
+                                            color: "#eab308".to_string(),
+                                            points: h.samples.iter().map(|s| s.loop_p99_ms).collect(),
+                                        },
+                                        Series {
+                                            label: "max".to_string(),
+                                            color: "#ec4899".to_string(),
+                                            points: h.samples.iter().map(|s| s.loop_max_ms).collect(),
+                                        },
+                                    ],
+                                    unit: " ms".to_string(),
+                                    height: 44,
+                                }
+                                p { class: "text-[10px] text-gray-500",
+                                    "last {window_minutes(h)} · per-interval, not cumulative"
+                                }
 
-                            if !h.loop_percentiles.is_empty() {
-                                div { class: "mt-2",
-                                    p { class: "text-[10px] text-gray-400 mb-1",
-                                        "distribution since start — pN is the level N% of ticks stayed under"
-                                    }
-                                    {
-                                        let worst = h
-                                            .loop_percentiles
-                                            .iter()
-                                            .map(|p| p.ms)
-                                            .fold(0.0_f64, f64::max)
-                                            .max(0.01);
-                                        rsx! {
-                                            div { class: "space-y-0.5",
-                                                for p in h.loop_percentiles.iter() {
-                                                    div { class: "flex items-center gap-2",
-                                                        span { class: "text-[10px] text-gray-400 w-6", "{p.label}" }
-                                                        div { class: "flex-1 bg-gray-900 rounded-sm h-2 overflow-hidden",
-                                                            div {
-                                                                class: "h-full",
-                                                                style: "width: {(p.ms / worst * 100.0).clamp(2.0, 100.0):.0}%; background-color: #0D98BA;",
+                                if !h.loop_percentiles.is_empty() {
+                                    div { class: "mt-2",
+                                        p { class: "text-[10px] text-gray-400 mb-1",
+                                            "distribution since start — pN is the level N% of ticks stayed under"
+                                        }
+                                        {
+                                            let worst = h
+                                                .loop_percentiles
+                                                .iter()
+                                                .map(|p| p.ms)
+                                                .fold(0.0_f64, f64::max)
+                                                .max(0.01);
+                                            rsx! {
+                                                div { class: "space-y-0.5",
+                                                    for p in h.loop_percentiles.iter() {
+                                                        div { class: "flex items-center gap-2",
+                                                            span { class: "text-[10px] text-gray-400 w-6", "{p.label}" }
+                                                            div { class: "flex-1 bg-gray-900 rounded-sm h-2 overflow-hidden",
+                                                                div {
+                                                                    class: "h-full",
+                                                                    style: "width: {(p.ms / worst * 100.0).clamp(2.0, 100.0):.0}%; background-color: #0D98BA;",
+                                                                }
                                                             }
+                                                            span { class: "text-[10px] text-gray-300 w-12 text-right", "{p.ms} ms" }
                                                         }
-                                                        span { class: "text-[10px] text-gray-300 w-12 text-right", "{p.ms} ms" }
                                                     }
                                                 }
                                             }
@@ -484,8 +504,8 @@ fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -
                                 }
                             }
                         }
-                    }
-                    if !not_counted("eventLoop.delay") {
+                    }),
+                                        if !not_counted("eventLoop.delay") {
                     Metric {
                         label: "delay p50",
                         value: format!("{} ms", m.event_loop.p50_ms),
@@ -621,6 +641,13 @@ fn NodeBoards(m: NodeMetrics, hist: Option<NodeHistory>, paused: Signal<bool>) -
                         why: "Context for the numbers above: rn can look slow because the machine is busy with something else entirely.".to_string(),
                         if_wrong: "Load persistently above the core count means everything on this machine is queueing.".to_string(),
                     }
+                }
+
+                // The same process readings the Status page shows, beside the
+                // concurrency numbers they explain: threads and jobs are the
+                // same story from two directions.
+                if let Some(st) = status.as_ref() {
+                    ProcessBoards { status: st.clone() }
                 }
                 }
 
@@ -940,6 +967,8 @@ fn Board(
     /// Explains the board as a whole, where the metrics inside it each explain
     /// only themselves.
     #[props(default = None)] info: Option<Element>,
+    /// A plot for this board, placed to the left of the fields.
+    #[props(default = None)] chart: Option<Element>,
     children: Element,
 ) -> Element {
     rsx! {
@@ -950,7 +979,21 @@ fn Board(
                     {info}
                 }
             }
-            div { class: PARAM_COLUMN_CLASS, {children} }
+            if let Some(chart) = chart {
+                // Graph left, fields right: the numbers then read as labels for
+                // the shape beside them rather than as a separate list below
+                // it. Wraps to stacked on a narrow viewport.
+                // No flex-wrap here. The boards themselves sit in a wrapping
+                // row, so a wrapping inner row just folds the fields back under
+                // the chart whenever the board is width-constrained — which
+                // looks exactly like the change not having happened.
+                div { class: "flex items-stretch gap-4",
+                    div { class: "w-72 shrink-0 flex flex-col", {chart} }
+                    div { class: PARAM_COLUMN_CLASS, {children} }
+                }
+            } else {
+                div { class: PARAM_COLUMN_CLASS, {children} }
+            }
         }
     }
 }
