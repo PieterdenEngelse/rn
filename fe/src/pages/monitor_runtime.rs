@@ -72,7 +72,13 @@ fn MonitorBoards(
     // A shim that answers 0 is indistinguishable from a genuinely quiet
     // process, so anything this runtime does not count says so instead.
     let unsupported = m.unsupported.clone();
-    let not_counted = move |path: &str| unsupported.iter().any(|u| u == path);
+    // Returns the entry rather than a bool, so anywhere that hides a figure can
+    // also say why without looking the reason up a second time.
+    let why_not = move |path: &str| -> Option<crate::api::Unavailable> {
+        unsupported.iter().find(|u| u.id == path).cloned()
+    };
+    let for_not_counted = m.unsupported.clone();
+    let not_counted = move |path: &str| for_not_counted.iter().any(|u| u.id == path);
     // A board with every tile hidden is an empty frame, which reads as "nothing
     // is happening here" rather than "this runtime does not count it". Drop it.
     let loop_board_useful =
@@ -543,7 +549,17 @@ fn MonitorBoards(
                                 "Utilisation approaching 1 means the opposite problem: the loop ",
                                 "is never idle, so there is no spare capacity left rather than ",
                                 "one rude callback. That is a scaling limit, and adding more ",
-                                "asynchronous work will not help.",
+                                "asynchronous work will not help.\n\n",
+
+                                "Before blaming your own code, check the cpu wait figure on ",
+                                "this board. Delay measures how late a timer fired, and a timer ",
+                                "is just as late when the process was queued for a core as when ",
+                                "a callback ran long — the same number, opposite causes. A ",
+                                "spike with a flat heap and a jump in cpu wait is something ",
+                                "else on the machine taking the CPU, and no amount of rewriting ",
+                                "will move it. On a machine with few cores, a compile running ",
+                                "beside the app is enough to produce half a second of delay in ",
+                                "a process that did nothing at all.",
                             ).to_string(),
                             glossary: vec![
                                 preemption_entry(),
@@ -586,11 +602,38 @@ fn MonitorBoards(
                                 p { class: "text-[10px] text-gray-400",
                                     "last {window_minutes(h)} · per-interval, not cumulative"
                                 }
+
+                                // A plot of its own rather than a fourth series:
+                                // Sparkline puts every series on one scale so
+                                // they can be read against each other, and ms of
+                                // lateness against ms/s of waiting is not a
+                                // comparison. Stacked, aligned in time, so the
+                                // eye can still do the correlation.
+                                if h.has_cpu_wait() {
+                                    div { class: "mt-2",
+                                        Sparkline {
+                                            before_start: h.before_start_fraction(),
+                                            runtime_change: h.runtime_change(),
+                                            series: vec![
+                                                Series {
+                                                    label: "cpu wait".to_string(),
+                                                    color: "#60a5fa".to_string(),
+                                                    points: h.samples.iter().map(|s| s.cpu_wait_ms_per_sec).collect(),
+                                                },
+                                            ],
+                                            unit: " ms/s".to_string(),
+                                            height: 28,
+                                        }
+                                        p { class: "text-[10px] text-gray-400",
+                                            "time queued for a CPU — moving with the line above means the machine, not this process"
+                                        }
+                                    }
+                                }
                                 // The line stopping is the only visible sign
                                 // otherwise, and a stopped line reads as a bug.
-                                if !h.measures("loopP50Ms") {
+                                if let Some(u) = h.why_not("loopP50Ms") {
                                     p { class: "text-[10px] text-amber-400",
-                                        "{running} does not measure loop delay — the series ends where it took over"
+                                        "the series ends where {running} took over — {u.reason}"
                                     }
                                 }
 
@@ -727,6 +770,93 @@ fn MonitorBoards(
                         if_wrong: "High utilisation with low throughput usually means work that belongs off the main thread.".to_string(),
                     }
                     }
+                    // A kernel figure, on a board of runtime figures, because it
+                    // is the only thing here that can say the delay above was
+                    // not this process's fault. Reading it in the Process panel
+                    // meant knowing to go and look, which is knowing the answer.
+                    {
+                    let absent = why_not("resources.runqueueWaitMsPerSec");
+                    rsx! {
+                    Metric {
+                        label: "cpu wait",
+                        // Rendered rather than hidden when it cannot be
+                        // measured. The figure is missing; the reason it matters
+                        // is not, and a reader on a platform that cannot answer
+                        // still needs to know what would have answered it — and
+                        // that nothing they change will.
+                        value: match absent.as_ref() {
+                            Some(u) => u.short().to_string(),
+                            None => format!("{} ms/s", m.resources.runqueue_wait_ms_per_sec),
+                        },
+                        unavailable: absent.clone(),
+                        what: concat!(
+                            "How many milliseconds of each second this process spent ready to ",
+                            "work and waiting for a CPU core — [[run-queue]] time, read from ",
+                            "the kernel rather than from the runtime.\n\n",
+
+                            "Zero means it got a core every time it wanted one. Rising means ",
+                            "more work wants CPU on this machine than there are cores to give, ",
+                            "and this process is queueing behind it.",
+                        ).to_string(),
+                        why: concat!(
+                            "Because event-loop delay cannot tell you whose fault it is. The ",
+                            "delay figure measures how late a timer fired, and a timer is ",
+                            "exactly as late when the kernel could not give it a core as when ",
+                            "one of its own callbacks ran long. The two are the same number ",
+                            "and opposite problems: one is a bug in your code, the other is ",
+                            "something else on the machine.\n\n",
+
+                            "This is the tiebreaker. Delay spiking while this stays low is the ",
+                            "process blocking itself. Delay spiking while this climbs is the ",
+                            "process being starved — a build, a backup, another VM.",
+                        ).to_string(),
+                        if_wrong: concat!(
+                            "A delay spike with a flat heap and a jump here is not your ",
+                            "automation. Check what else was running: on a machine with few ",
+                            "cores, a compile or a container image pull will produce hundreds ",
+                            "of milliseconds of loop delay in a process that did nothing at ",
+                            "all.\n\n",
+
+                            "The shape of the delay says the same thing independently. One ",
+                            "blocking call gives a high max with a low p99 — a single tick ",
+                            "ruined. Starvation lifts p99 too, because every tick in the ",
+                            "window was late.\n\n",
+
+                            "A steady low figure is normal and means nothing; every process on ",
+                            "a shared machine waits for a core sometimes.",
+                        ).to_string(),
+                        glossary: vec![GlossaryEntry {
+                            term: "run-queue".to_string(),
+                            body: concat!(
+                                "The run queue is the kernel's list, per core, of processes ",
+                                "that are ready to run right now. A process on it is not ",
+                                "blocked and not sleeping — it has work to do and is waiting ",
+                                "for a turn.\n\n",
+
+                                "Time on that queue is invisible to the process. From inside, ",
+                                "code simply takes longer than it should have: a timer set for ",
+                                "10ms fires at 200ms, and nothing in the program can see why. ",
+                                "That is precisely the gap this figure fills.\n\n",
+
+                                "It is worth knowing why the more obvious counter does not ",
+                                "work here. An involuntary context switch is the kernel taking ",
+                                "a core away from a process that was using it, and a ",
+                                "mostly-idle backend is almost never in that position — it is ",
+                                "asleep, not holding a core. Measured on this machine under ",
+                                "six busy threads, involuntary switches stayed at zero while ",
+                                "event-loop delay rose fivefold; run-queue wait went from 0.3 ",
+                                "to 7.3 milliseconds per second and fell back the moment the ",
+                                "load stopped. An idle process starved of CPU is not taken off ",
+                                "a core — it waits to be put on one.\n\n",
+
+                                "The Process board still carries both context-switch totals. ",
+                                "They describe how the process is scheduled over its lifetime; ",
+                                "this describes whether it is being held up right now.",
+                            ).to_string(),
+                        }],
+                    }
+                    }
+                    }
                 }
                 }
 
@@ -855,7 +985,18 @@ fn MonitorBoards(
                                         "whenever the window holds any delay reading at all, even if ",
                                         "the runtime running now takes none — the readings taken ",
                                         "before the switch are real and are not thrown away because ",
-                                        "of what came after them.",
+                                        "of what came after them. ",
+                                        "\n\nUnder the delay plot is the time this process spent queued ",
+                                        "for a CPU, on its own scale because milliseconds of lateness ",
+                                        "and milliseconds per second of waiting are not the same unit. ",
+                                        "It is the one series that says whose fault a spike was. A delay ",
+                                        "peak standing alone over a flat cpu wait is this process ",
+                                        "blocking itself, and the fix is in the code. A delay peak with ",
+                                        "cpu wait raised underneath it is the machine — a build, a ",
+                                        "backup, something else wanting the cores — and no amount of ",
+                                        "rewriting will move it.\n\nBoth are peaks per bucket rather than ",
+                                        "averages, so a minute of contention inside a quiet hour still ",
+                                        "shows up instead of averaging away.",
                                     ).to_string(),
                                 }
                             }),
@@ -913,12 +1054,35 @@ fn MonitorBoards(
                                                 },
                                             ],
                                         }
+                                        // The reason this is recorded at all. A delay peak is
+                                        // found here, hours later, and on its own it cannot say
+                                        // whose fault it was. Aligned underneath, it can.
+                                        if h.tier_has_cpu_wait(tier) {
+                                            div { class: "mt-2",
+                                                Sparkline {
+                                                    before_start: marker,
+                                                    runtime_change: switch.clone(),
+                                                    series: vec![
+                                                        Series {
+                                                            label: "worst cpu wait".to_string(),
+                                                            color: "#60a5fa".to_string(),
+                                                            points: tier.buckets.iter().map(|b| b.cpu_wait_peak_ms_per_sec).collect(),
+                                                        },
+                                                    ],
+                                                    unit: " ms/s".to_string(),
+                                                    height: 28,
+                                                }
+                                                p { class: "text-[10px] text-gray-400",
+                                                    "a delay peak with this flat is the process; with this raised, the machine"
+                                                }
+                                            }
+                                        }
                                         // Same caveat as the live window: the board
                                         // is here because the buckets hold readings,
                                         // not because this runtime is taking any.
-                                        if !h.measures("loopP99Ms") {
+                                        if let Some(u) = h.why_not("loopP99Ms") {
                                             p { class: "text-[10px] text-amber-400 mt-1",
-                                                "{running} does not measure loop delay — the series ends where it took over"
+                                                "the series ends where {running} took over — {u.reason}"
                                             }
                                         }
                                     }
@@ -1390,13 +1554,28 @@ fn Metric(
     /// Terms the panel text links to with `[[term]]`.
     #[props(default = vec![])]
     glossary: Vec<GlossaryEntry>,
+    /// Set when the figure is not being measured here. The tile still renders —
+    /// its explanation is worth reading whether or not this machine can produce
+    /// the number — with the value greyed and the reason stated under it.
+    #[props(default = None)]
+    unavailable: Option<crate::api::Unavailable>,
 ) -> Element {
     rsx! {
         div { class: PARAM_BLOCK_CLASS,
             label { class: PARAM_LABEL_CLASS, "{label}" }
             div { class: PARAM_INPUT_ROW_CLASS,
-                span { class: "text-gray-200 font-mono break-all max-w-xs", "{value}" }
+                span {
+                    class: if unavailable.is_some() {
+                        "text-gray-400 font-mono italic break-all max-w-xs"
+                    } else {
+                        "text-gray-200 font-mono break-all max-w-xs"
+                    },
+                    "{value}"
+                }
                 InfoButton { title: label, what, why, if_wrong, glossary }
+            }
+            if let Some(u) = unavailable.as_ref() {
+                p { class: "text-[10px] text-gray-400 mt-1 max-w-xs", "{u.reason}" }
             }
         }
     }

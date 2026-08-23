@@ -11,6 +11,7 @@ import { getHeapStatistics } from "node:v8";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { config } from "./config.ts";
+import { platformUnavailable, runqueueNs, CPU_WAIT_AVAILABLE, type CapabilityKind, type Unavailable } from "./capabilities.ts";
 
 const SAMPLE_MS = 2_000;
 /** 150 samples × 2s = five minutes. Small enough to keep and send whole. */
@@ -50,6 +51,31 @@ const RUNTIME = ((): string => {
  * the runtime was switched. Null is a gap the chart can draw as one.
  */
 const LOOP_MEASURED = RUNTIME !== "deno";
+
+/**
+ * Previous run-queue reading, for this module's own delta.
+ *
+ * The probe and the reason for its absence live in capabilities.ts. The
+ * counter does not: node_metrics reads the same file when the page asks and
+ * this reads it every two seconds, and two consumers cannot share one previous
+ * value without stealing each other's interval.
+ *
+ * It is recorded rather than only shown live because the live tile cannot
+ * answer the question it exists for. A delay spike is found after the fact, in
+ * a window covering minutes or hours, and by then the live figure has moved on.
+ * Recorded, the spike explains itself.
+ */
+let lastRunqueueNs = runqueueNs() ?? 0;
+
+/** Run-queue wait since the last sample, as ms per second. */
+function cpuWait(elapsedMs: number): number | null {
+    if (!CPU_WAIT_AVAILABLE) return null;
+    const ns = runqueueNs();
+    if (ns === null) return null;
+    const deltaMs = Math.max(0, ns - lastRunqueueNs) / 1e6;
+    lastRunqueueNs = ns;
+    return Number(((deltaMs / elapsedMs) * 1000).toFixed(1));
+}
 
 /**
  * Longer windows, as a chain of buckets rather than one long ring.
@@ -98,6 +124,12 @@ export interface Bucket {
     /** null when no sample in it came from a runtime that measures delay. */
     loopP99Ms: number | null;
     loopMaxMs: number | null;
+    /**
+     * Worst run-queue wait in the bucket. Peak rather than mean for the same
+     * reason as the delay figures: a minute of contention inside an otherwise
+     * quiet hour averages away to nothing, and it is the thing worth finding.
+     */
+    cpuWaitPeakMsPerSec: number | null;
     /** How many fine samples landed in it — 0 buckets are never stored. */
     n: number;
     /**
@@ -122,9 +154,17 @@ const tierData = new Map<string, Bucket[]>(TIERS.map((t) => [t.id, []]));
  * real 40ms reading and one gap is a 40ms bucket, and a bucket holding only
  * gaps stays a gap rather than collapsing to a confident zero.
  */
-function maxOrNull(a: number | null, b: number | null): number | null {
-    if (a === null) return b;
-    if (b === null) return a;
+function maxOrNull(
+    // Undefined as well as null: a bucket restored from a file written before
+    // a field existed has it absent, not null, and `=== null` lets that
+    // through into Math.max, which answers NaN. NaN then survives every later
+    // merge, so one stale bucket stays poisoned until it rotates out of the
+    // window. Loose equality catches both spellings of "no reading".
+    a: number | null | undefined,
+    b: number | null | undefined,
+): number | null {
+    if (a == null) return b ?? null;
+    if (b == null) return a;
     return Math.max(a, b);
 }
 
@@ -140,6 +180,7 @@ function record(x: Sample): void {
             last.rssPeakMB = Math.max(last.rssPeakMB, x.rssMB);
             last.loopP99Ms = maxOrNull(last.loopP99Ms, x.loopP99Ms);
             last.loopMaxMs = maxOrNull(last.loopMaxMs, x.loopMaxMs);
+            last.cpuWaitPeakMsPerSec = maxOrNull(last.cpuWaitPeakMsPerSec, x.cpuWaitMsPerSec);
             last.n += 1;
             last.rt = x.rt;
             continue;
@@ -156,6 +197,7 @@ function record(x: Sample): void {
             rssPeakMB: x.rssMB,
             loopP99Ms: x.loopP99Ms,
             loopMaxMs: x.loopMaxMs,
+            cpuWaitPeakMsPerSec: x.cpuWaitMsPerSec,
             n: 1,
             rt: x.rt,
         });
@@ -179,6 +221,11 @@ export interface Sample {
     loopP99Ms: number | null;
     loopMaxMs: number | null;
     /**
+     * Milliseconds per second spent ready to run and waiting for a core. null
+     * where the kernel does not report it; the unsupported list says why.
+     */
+    cpuWaitMsPerSec: number | null;
+    /**
      * Which runtime measured it. Absent on samples written before this existed;
      * see RUNTIME above for why the same field means different things under
      * different runtimes.
@@ -199,6 +246,8 @@ const intervalDelay = monitorEventLoopDelay({ resolution: LOOP_RESOLUTION_MS });
 intervalDelay.enable();
 
 const samples: Sample[] = [];
+/** When take() last ran, so a rate can use the interval it really got. */
+let lastTake = Date.now();
 
 function delayMs(nanos: number): number {
     const ms = nanos / NS_TO_MS - LOOP_RESOLUTION_MS;
@@ -207,13 +256,20 @@ function delayMs(nanos: number): number {
 
 function take(): void {
     const mem = process.memoryUsage();
+    // The sampler runs on a fixed interval, but a starved process is exactly
+    // the one whose timers fire late — so the rate is divided by the elapsed
+    // time actually observed rather than by the interval we asked for.
+    const now = Date.now();
+    const elapsedMs = Math.max(1, now - lastTake);
+    lastTake = now;
     samples.push({
-        t: Date.now(),
+        t: now,
         heapUsedMB: Number((mem.heapUsed / MB).toFixed(1)),
         rssMB: Number((mem.rss / MB).toFixed(1)),
         loopP50Ms: LOOP_MEASURED ? delayMs(intervalDelay.percentile(50)) : null,
         loopP99Ms: LOOP_MEASURED ? delayMs(intervalDelay.percentile(99)) : null,
         loopMaxMs: LOOP_MEASURED ? delayMs(intervalDelay.max) : null,
+        cpuWaitMsPerSec: cpuWait(elapsedMs),
         rt: RUNTIME,
     });
     intervalDelay.reset();
@@ -312,7 +368,7 @@ export interface HistoryResponse {
      * measure are gaps, and this list is what lets the page caption the gap
      * with the reason instead of leaving a chart that simply stops.
      */
-    unsupported: string[];
+    unsupported: Unavailable[];
     /**
      * The longer windows, newest bucket last. Each carries its own width and
      * capacity so the page does not have to know the schedule.
@@ -333,9 +389,20 @@ export interface HistoryResponse {
     runtime: string;
 }
 
-function unsupportedSeries(): string[] {
-    if (!LOOP_MEASURED) return ["loopP50Ms", "loopP99Ms", "loopMaxMs"];
-    return [];
+function unsupportedSeries(): Unavailable[] {
+    const runtime: CapabilityKind = "runtime";
+    const reason =
+        "Deno accepts monitorEventLoopDelay and never moves it, so every delay " +
+        "reading it gives is a decoration. Samples taken under it record nothing " +
+        "rather than a zero, which is why the line stops instead of flattening.";
+    const out: Unavailable[] = LOOP_MEASURED
+        ? []
+        : (["loopP50Ms", "loopP99Ms", "loopMaxMs"] as const).map((id) => ({
+              id,
+              kind: runtime,
+              reason,
+          }));
+    return out.concat(platformUnavailable("cpuWaitMsPerSec"));
 }
 
 const STARTED_AT = Date.now() - Math.round(process.uptime() * 1000);
@@ -366,7 +433,7 @@ export function withDistribution(
     max: number,
 ): HistoryResponse {
     const base = history();
-    if (base.unsupported.includes("loopP50Ms")) {
+    if (base.unsupported.some((u) => u.id === "loopP50Ms")) {
         // The distribution comes from the same inert histogram as the series.
         return base;
     }

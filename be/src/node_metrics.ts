@@ -16,6 +16,13 @@ import { getHeapStatistics, getHeapSpaceStatistics } from "node:v8";
 import { availableParallelism, loadavg, totalmem, freemem } from "node:os";
 import { createRequire } from "node:module";
 import { PerformanceObserver } from "node:perf_hooks";
+import {
+    CPU_WAIT_AVAILABLE,
+    type CapabilityKind,
+    platformUnavailable,
+    runqueueNs,
+    type Unavailable,
+} from "./capabilities.ts";
 
 /**
  * Garbage collection, accumulated since start. Node only: Bun and Deno accept
@@ -70,6 +77,13 @@ function delayMs(nanos: number): number {
 let lastCpu = process.cpuUsage();
 let lastElu = performance.eventLoopUtilization();
 let lastSample = Date.now();
+/**
+ * Previous run-queue reading, for this module's own delta. The probe and the
+ * reason for its absence live in capabilities.ts; the counter does not, because
+ * node_history samples the same file on a different clock and two consumers
+ * cannot share one previous value.
+ */
+let lastRunqueueNs = runqueueNs() ?? 0;
 
 
 export interface NodeMetrics {
@@ -100,6 +114,20 @@ export interface NodeMetrics {
         maxRssMB: number;
         fsRead: number;
         fsWrite: number;
+        /**
+         * Milliseconds per second this process spent ready to run and waiting
+         * for a CPU, since the last poll.
+         *
+         * It is here to be read against event-loop delay, which cannot tell on
+         * its own whose fault a spike was: the delay figure measures how late a
+         * timer fired, and a timer is just as late when the process was waiting
+         * for a core as when its own callback ran long. A delay spike with a
+         * flat heap and this climbing is something else on the machine.
+         *
+         * 0 where the kernel does not report it — the unsupported list is what
+         * the UI reads, and it carries the reason.
+         */
+        runqueueWaitMsPerSec: number;
         ctxVoluntary: number;
         ctxInvoluntary: number;
     };
@@ -130,7 +158,7 @@ export interface NodeMetrics {
      * board would read "loop never blocked" for a runtime that simply is not
      * counting. Named here so the UI can say "not reported" instead.
      */
-    unsupported: string[];
+    unsupported: Unavailable[];
     /** Warning when the runtime version differs from the one probed. */
     probeNote: string | null;
     /**
@@ -255,41 +283,98 @@ function probeNote(): string | null {
  */
 const seenSpaces = new Set<string>();
 
-function unsupportedHere(): string[] {
+function unsupportedHere(): Unavailable[] {
+    // Platform, not runtime: /proc/self/schedstat is a Linux file, and all
+    // three runtimes read it or fail to read it identically. Prepended so the
+    // per-runtime lists below stay about the runtimes.
+    return platformUnavailable("resources.runqueueWaitMsPerSec").concat(runtimeUnavailable());
+}
+
+/**
+ * What the selected runtime does not measure, each with the sentence the UI
+ * shows in place of the figure.
+ *
+ * The reasons were comments here until the UI could carry them. Moving them
+ * into the payload is the point: a reader looking at a missing tile learns why
+ * it is missing without reading the source, and the explanation cannot drift
+ * from the list because it is the same entry.
+ */
+function runtimeUnavailable(): Unavailable[] {
+    const runtime: CapabilityKind = "runtime";
     switch (runtimeName()) {
         case "bun":
             return [
-                // eventLoopUtilization() returns {idle:0,active:0,utilization:0}
-                // forever, so the tile would read 0% under any load.
-                "eventLoop.utilizationPct",
-                // getActiveResourcesInfo() returns [] even with timers pending.
-                "concurrency.activeResources",
-                // getHeapSpaceStatistics() reports one synthetic "old_space"
-                // holding the whole JSC heap, so "which space is biggest" has
-                // no answer — and old_space is V8 vocabulary for machinery Bun
-                // does not have.
-                "memory.largestSpace",
-                // No libuv, and Bun does not read UV_THREADPOOL_SIZE, so the
-                // figure is the default this code passes through — not a size
-                // anything honours.
-                "concurrency.threadpoolSize",
-                // The observer accepts entryTypes: ["gc"] and never fires.
-                "gc",
+                {
+                    id: "eventLoop.utilizationPct",
+                    kind: runtime,
+                    reason:
+                        "Bun's eventLoopUtilization() returns zero for idle, active and " +
+                        "utilisation forever, so this tile would read 0% under any load.",
+                },
+                {
+                    id: "concurrency.activeResources",
+                    kind: runtime,
+                    reason:
+                        "Bun's getActiveResourcesInfo() returns an empty list even with " +
+                        "timers and sockets pending, so it cannot show what is holding the " +
+                        "process open.",
+                },
+                {
+                    id: "memory.largestSpace",
+                    kind: runtime,
+                    reason:
+                        "Spaces are regions of the V8 heap and Bun runs JavaScriptCore. It " +
+                        "reports one synthetic old_space holding everything, which is a " +
+                        "compatibility shim rather than a measurement.",
+                },
+                {
+                    id: "concurrency.threadpoolSize",
+                    kind: runtime,
+                    reason:
+                        "Bun has no libuv and does not read UV_THREADPOOL_SIZE. The number " +
+                        "would be the default this code passes through, not a size anything " +
+                        "honours.",
+                },
+                {
+                    id: "gc",
+                    kind: runtime,
+                    reason:
+                        "Bun accepts a performance observer for garbage collection and never " +
+                        "delivers an entry, so the counts would stay at zero however hard the " +
+                        "collector worked.",
+                },
             ];
         case "deno":
             // Deno runs V8, so heap spaces and active resources are real here,
-            // unlike under Bun. Two things are not.
+            // unlike under Bun. These are not.
             return [
-                // Same as Bun: always {idle:0,active:0,utilization:0}.
-                "eventLoop.utilizationPct",
-                // monitorEventLoopDelay exists and stays flat: a deliberate
-                // 60ms block moved the max to 0.01ms, i.e. it is not counting.
-                // Every figure on the delay board would be a decoration.
-                "eventLoop.delay",
-                // Deno has no libuv threadpool at all.
-                "concurrency.threadpoolSize",
-                // Same as Bun: the gc observer never delivers an entry.
-                "gc",
+                {
+                    id: "eventLoop.utilizationPct",
+                    kind: runtime,
+                    reason:
+                        "Deno's eventLoopUtilization() returns zero for idle, active and " +
+                        "utilisation, the same as Bun's.",
+                },
+                {
+                    id: "eventLoop.delay",
+                    kind: runtime,
+                    reason:
+                        "Deno accepts monitorEventLoopDelay and never moves it — a deliberate " +
+                        "60ms block left the maximum at 0.01ms. Every figure on the delay " +
+                        "board would be a decoration.",
+                },
+                {
+                    id: "concurrency.threadpoolSize",
+                    kind: runtime,
+                    reason: "Deno has no libuv thread pool at all.",
+                },
+                {
+                    id: "gc",
+                    kind: runtime,
+                    reason:
+                        "Deno's garbage-collection observer never delivers an entry, the same " +
+                        "as Bun's.",
+                },
             ];
         default:
             return [];
@@ -302,6 +387,16 @@ function runtimeName(): "node" | "bun" | "deno" {
     if (v.bun) return "bun";
     if (v.deno) return "deno";
     return "node";
+}
+
+/** Run-queue wait since the last poll, as ms per second. */
+function runqueueWait(elapsedMs: number): number {
+    if (!CPU_WAIT_AVAILABLE) return 0;
+    const ns = runqueueNs();
+    if (ns === null) return 0;
+    const deltaMs = Math.max(0, ns - lastRunqueueNs) / 1e6;
+    lastRunqueueNs = ns;
+    return Number(((deltaMs / elapsedMs) * 1000).toFixed(1));
 }
 
 export function collect(): NodeMetrics {
@@ -352,7 +447,7 @@ export function collect(): NodeMetrics {
             // make a board appear claiming to break down a heap it cannot see.
             // Suppressed by the same list that hides largestSpace, so the two
             // cannot disagree.
-            spaces: unsupportedHere().includes("memory.largestSpace")
+            spaces: unsupportedHere().some((u) => u.id === "memory.largestSpace")
                 ? []
                 : spaces
                 .filter((x) => seenSpaces.has(x.space_name))
@@ -391,6 +486,7 @@ export function collect(): NodeMetrics {
             fsWrite: ru.fsWrite,
             ctxVoluntary: ru.voluntaryContextSwitches,
             ctxInvoluntary: ru.involuntaryContextSwitches,
+            runqueueWaitMsPerSec: runqueueWait(elapsedMs),
         },
         gc: { count: gcCount, totalMs: Number(gcTotalMs.toFixed(1)) },
         host: {

@@ -407,6 +407,30 @@ pub struct DenoMetrics {
     #[serde(rename = "bindAddressAllowed")] pub bind_address_allowed: bool,
 }
 
+/// One figure that is not being measured, and why.
+///
+/// `kind` is what decides the wording: a `runtime` gap is a consequence of the
+/// runtime selected on Config and can be undone by selecting another, while a
+/// `platform` gap is a fact about the machine with no action attached. Saying
+/// "not reported" for both would flatten two different next steps into one.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Unavailable {
+    pub id: String,
+    pub kind: String,
+    pub reason: String,
+}
+
+impl Unavailable {
+    /// The short label that stands in for the value.
+    pub fn short(&self) -> &'static str {
+        if self.kind == "platform" {
+            "not on this platform"
+        } else {
+            "not measured here"
+        }
+    }
+}
+
 /// Kernel counters, reported by all three runtimes.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct NodeResources {
@@ -415,6 +439,11 @@ pub struct NodeResources {
     #[serde(rename = "fsWrite")] pub fs_write: u64,
     #[serde(rename = "ctxVoluntary")] pub ctx_voluntary: u64,
     #[serde(rename = "ctxInvoluntary")] pub ctx_involuntary: u64,
+    /// Milliseconds per second spent ready to run and waiting for a CPU. Read
+    /// beside event-loop delay: it is what separates "my code blocked" from
+    /// "this process could not get a core", which the delay figure alone
+    /// cannot say. 0 where the kernel does not report it.
+    #[serde(default, rename = "runqueueWaitMsPerSec")] pub runqueue_wait_ms_per_sec: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -433,9 +462,9 @@ pub struct NodeMetrics {
     pub concurrency: NodeConcurrency,
     pub host: NodeHost,
     pub versions: std::collections::BTreeMap<String, String>,
-    /// Dotted paths this runtime does not actually count — see node_metrics.ts.
+    /// Figures not being measured, each with the reason to show in place of it.
     #[serde(default)]
-    pub unsupported: Vec<String>,
+    pub unsupported: Vec<Unavailable>,
     /// Set when the runtime version differs from the one the list was probed on.
     #[serde(default, rename = "probeNote")]
     pub probe_note: Option<String>,
@@ -466,6 +495,9 @@ pub struct HistorySample {
     #[serde(default, rename = "loopP50Ms")] pub loop_p50_ms: Option<f64>,
     #[serde(default, rename = "loopP99Ms")] pub loop_p99_ms: Option<f64>,
     #[serde(default, rename = "loopMaxMs")] pub loop_max_ms: Option<f64>,
+    /// Milliseconds per second spent waiting for a core. None where the kernel
+    /// does not report it, or on samples stored before this was recorded.
+    #[serde(default, rename = "cpuWaitMsPerSec")] pub cpu_wait_ms_per_sec: Option<f64>,
     /// Runtime that measured it. None on samples stored before the tag existed.
     #[serde(default)] pub rt: Option<String>,
 }
@@ -485,6 +517,8 @@ pub struct Bucket {
     /// None when no sample in the bucket came from a runtime that measures it.
     #[serde(default, rename = "loopP99Ms")] pub loop_p99_ms: Option<f64>,
     #[serde(default, rename = "loopMaxMs")] pub loop_max_ms: Option<f64>,
+    /// Worst run-queue wait in the bucket.
+    #[serde(default, rename = "cpuWaitPeakMsPerSec")] pub cpu_wait_peak_ms_per_sec: Option<f64>,
     /// Fine samples that landed in it.
     pub n: u64,
     /// Runtime that measured it — the last one to write into it, when a restart
@@ -514,17 +548,6 @@ impl HistoryTier {
     }
 }
 
-/// One minute of the fine series, summarised — floor for heap, worst for the
-/// rest. See node_history.ts for why neither is a mean.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct CoarseSample {
-    pub t: f64,
-    #[serde(rename = "heapFloorMB")] pub heap_floor_mb: f64,
-    #[serde(rename = "rssPeakMB")] pub rss_peak_mb: f64,
-    #[serde(rename = "loopP99Ms")] pub loop_p99_ms: f64,
-    #[serde(rename = "loopMaxMs")] pub loop_max_ms: f64,
-}
-
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct NodeHistory {
     #[serde(rename = "sampleMs")] pub sample_ms: f64,
@@ -534,7 +557,7 @@ pub struct NodeHistory {
     #[serde(rename = "loopPercentiles")] pub loop_percentiles: Vec<LoopPercentile>,
     /// Series this runtime does not measure; charting them would draw zeros.
     #[serde(default)]
-    pub unsupported: Vec<String>,
+    pub unsupported: Vec<Unavailable>,
     /// Epoch ms this process started.
     #[serde(default, rename = "startedAt")] pub started_at: f64,
     /// The runtime answering right now, to read each entry's `rt` against.
@@ -547,7 +570,12 @@ impl NodeHistory {
     /// Whether the runtime running *now* measures a series. It says nothing
     /// about what the window already holds — see [`Self::has_loop_delay`].
     pub fn measures(&self, series: &str) -> bool {
-        !self.unsupported.iter().any(|u| u == series)
+        self.why_not(series).is_none()
+    }
+
+    /// Why a series is missing, when it is.
+    pub fn why_not(&self, series: &str) -> Option<&Unavailable> {
+        self.unsupported.iter().find(|u| u.id == series)
     }
 
     /// Whether the fine window holds any event-loop reading at all.
@@ -565,6 +593,18 @@ impl NodeHistory {
     /// The same question for a tier's buckets.
     pub fn tier_has_loop_delay(&self, tier: &HistoryTier) -> bool {
         tier.buckets.iter().any(|b| b.loop_p99_ms.is_some())
+    }
+
+    /// Whether the window holds any run-queue reading. Same reasoning as
+    /// [`Self::has_loop_delay`]: what the kernel reports now says nothing about
+    /// what it reported while the window was being filled.
+    pub fn has_cpu_wait(&self) -> bool {
+        self.samples.iter().any(|s| s.cpu_wait_ms_per_sec.is_some())
+    }
+
+    /// The same question for a tier's buckets.
+    pub fn tier_has_cpu_wait(&self, tier: &HistoryTier) -> bool {
+        tier.buckets.iter().any(|b| b.cpu_wait_peak_ms_per_sec.is_some())
     }
 
     /// Where in the drawn series this process began, as a fraction of its
