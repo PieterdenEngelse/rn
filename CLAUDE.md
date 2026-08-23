@@ -288,15 +288,26 @@ route rename, a value wrapping mid-number, a panel heading that contradicts its
 contents — none of those show up in the data, and all of them have shipped here
 because the data looked right.
 
-**Do not judge freshness by the wasm timestamp.** Dioxus hot-reloads changes
-inside `rsx!` by patching the running app, so edits to board contents, panel
-titles and info text never rebuild the wasm and never move that file's mtime. A
-stationary timestamp means the change was patchable, not that the watcher is
-dead. Adding or removing elements can fall outside patching and does trigger a
-rebuild.
+**Check whether a change is built by looking for it, not by reading a
+timestamp.** Pick a string unique to the change and grep the built wasm:
 
-If a screenshot really is stale, force one rebuild by touching a file outside
-`rsx!`. Never start a second `dx serve` to get one — it writes into the same
+    grep -qa 'items-stretch flex-1 min-h-0' \
+      fe/target/wasm32-unknown-unknown/wasm-dev/fe.wasm
+
+The mtime answers a different question and answers it misleadingly. The dev
+server here rebuilds intermittently — a change can sit unbuilt for ten minutes
+with no compiler running at all, then be picked up — so a stationary timestamp
+distinguishes nothing, and I have twice built a confident wrong theory on one.
+Pick a marker long enough to be unique: short strings match the surrounding
+prose, and `ceiling` once matched an info panel that already used the word.
+
+The same trap in process checks. `pgrep -f` and `pkill -f` match the shell
+command that contains the pattern — including this session's own — which has
+produced "the build is served", "the server was killed" and "two compiles are
+running", none of them true. Use `pgrep -x`.
+
+When a rebuild is genuinely needed, ask for one. Never start a second `dx serve`
+to get it — it writes into the same
 target directory as the user's, and has already produced a mismatched js/wasm
 pair that rendered a blank page.
 
