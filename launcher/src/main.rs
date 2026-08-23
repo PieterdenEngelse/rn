@@ -110,11 +110,45 @@ The Node runtime ships with rn. Nothing here uses a Node from PATH."
 /// Returns (NODE_OPTIONS entries, argv flags).
 fn split_options(kind: layout::RuntimeKind, launch: &settings::Launch) -> (Vec<String>, Vec<String>) {
     let mut argv = launch.runtime_flags.clone();
-    if kind == layout::RuntimeKind::Bun {
-        argv.extend(launch.node_options.iter().cloned());
-        return (Vec::new(), argv);
+
+    match kind {
+        // Node takes both kinds in NODE_OPTIONS; V8 flags are accepted there.
+        layout::RuntimeKind::Node => {
+            let mut env = launch.node_options.clone();
+            env.extend(launch.v8_flags.iter().cloned());
+            (env, argv)
+        }
+
+        // Bun ignores NODE_OPTIONS and has no V8, so Node flags move to argv
+        // and V8 flags are dropped — nothing there would read them.
+        layout::RuntimeKind::Bun => {
+            argv.extend(launch.node_options.iter().cloned());
+            (Vec::new(), argv)
+        }
+
+        // Deno runs V8 but ignores NODE_OPTIONS, so its V8 flags travel in
+        // --v8-flags. Node's own flags are dropped: Deno rejects arguments it
+        // does not know and would refuse to start.
+        //
+        // The Deno V8 flags setting emits a --v8-flags of its own, so the two
+        // are merged into one argument rather than passed twice, where the
+        // second would silently replace the first.
+        layout::RuntimeKind::Deno => {
+            let mut v8: Vec<String> = Vec::new();
+            argv.retain(|f| match f.strip_prefix("--v8-flags=") {
+                Some(rest) => {
+                    v8.extend(rest.split(',').map(str::trim).filter(|x| !x.is_empty()).map(String::from));
+                    false
+                }
+                None => true,
+            });
+            v8.extend(launch.v8_flags.iter().cloned());
+            if !v8.is_empty() {
+                argv.push(format!("--v8-flags={}", v8.join(",")));
+            }
+            (Vec::new(), argv)
+        }
     }
-    (launch.node_options.clone(), argv)
 }
 
 /// Build the child invocation. One place, so the supervisor and --print-env

@@ -16,6 +16,9 @@ pub struct RuntimeParam {
     /// Runtimes this parameter does anything on; None means all of them.
     #[serde(default, rename = "appliesTo")]
     pub applies_to: Option<Vec<String>>,
+    /// "v8" when the flag belongs to the engine rather than to Node.
+    #[serde(default)]
+    pub engine: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -49,6 +52,11 @@ pub struct Launch {
     pub env: BTreeMap<String, String>,
     pub node_options: Vec<String>,
     pub runtime_flags: Vec<String>,
+    /// Flags belonging to V8 rather than Node. Kept apart because the three
+    /// runtimes take them by three different roads: Node accepts them inside
+    /// NODE_OPTIONS, Deno needs them folded into --v8-flags, and Bun has no V8
+    /// to give them to.
+    pub v8_flags: Vec<String>,
 }
 
 /// `runtime` is what will actually be spawned. A parameter that does nothing on
@@ -59,6 +67,7 @@ pub fn resolve(params: &[RuntimeParam], settings: &Settings, runtime: &str) -> L
     let mut env = BTreeMap::new();
     let mut node_options = Vec::new();
     let mut runtime_flags = Vec::new();
+    let mut v8_flags = Vec::new();
 
     for p in params {
         let Some(value) = settings.get(&p.id) else { continue };
@@ -99,6 +108,11 @@ pub fn resolve(params: &[RuntimeParam], settings: &Settings, runtime: &str) -> L
             continue;
         }
 
+        if p.engine.as_deref() == Some("v8") {
+            v8_flags.push(format!("{}={}", p.flag, rendered));
+            continue;
+        }
+
         if p.kind == "env" {
             let v = if p.value_type == "bool" { "1".to_string() } else { rendered };
             env.insert(p.flag.clone(), v);
@@ -109,5 +123,5 @@ pub fn resolve(params: &[RuntimeParam], settings: &Settings, runtime: &str) -> L
         }
     }
 
-    Launch { env, node_options, runtime_flags }
+    Launch { env, node_options, runtime_flags, v8_flags }
 }

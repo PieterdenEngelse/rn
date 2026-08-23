@@ -74,6 +74,13 @@ export interface RuntimeParam {
      * ignored — the UI has to say so, because nothing else will.
      */
     appliesTo?: readonly JsRuntime[];
+    /**
+     * Set when the flag belongs to V8 rather than to Node. It decides how the
+     * launcher delivers it: Node accepts V8 flags in NODE_OPTIONS, but Deno
+     * runs V8 while ignoring NODE_OPTIONS, so its V8 flags have to be folded
+     * into --v8-flags instead. A Node flag must never end up there.
+     */
+    engine?: "v8";
     category: Category;
     label: string;
     info: {
@@ -317,8 +324,10 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
     },
     {
         id: "maxOldSpaceSize",
-        // V8 flag; Bun runs JavaScriptCore and Deno takes V8 flags only via --v8-flags.
-        appliesTo: ["node"],
+        // Deno runs V8 and has an old_space, so it is included: the launcher
+        // folds this into --v8-flags there, since Deno ignores NODE_OPTIONS.
+        // Bun runs JavaScriptCore, where old_space does not exist at all.
+        appliesTo: ["node", "deno"],
         flag: "--max-old-space-size",
         kind: "node-option",
         type: "int",
@@ -326,6 +335,7 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
         unit: "MB",
         min: 64,
         max: 32768,
+        engine: "v8",
         appliesAt: "restart",
         category: "memory",
         // Names the region, not just "memory": the process also has a call
@@ -413,10 +423,12 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
         unit: "MB",
         min: 1,
         max: 1024,
+        engine: "v8",
         appliesAt: "restart",
-        // V8 only. Bun runs JavaScriptCore and has no new_space; Deno runs V8
-        // but takes its flags through --v8-flags, which is its own setting.
-        appliesTo: ["node"],
+        // Bun runs JavaScriptCore and has no new_space at all. Deno runs V8 and
+        // does, so it is included — the launcher folds this into --v8-flags for
+        // it, since Deno ignores NODE_OPTIONS.
+        appliesTo: ["node", "deno"],
         category: "memory",
         label: "New-space size (advanced)",
         info: {
@@ -552,10 +564,12 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
                 "Node does, but does not read NODE_OPTIONS, so this is the only route to " +
                 "V8 tuning under it.",
             why:
-                "It is how you set a heap limit while Deno is the runtime. The Heap " +
-                "memory limit row above does nothing here: it exports NODE_OPTIONS, " +
-                "which Deno ignores. Put --max-old-space-size here instead and it takes " +
-                "effect exactly as it would on Node.",
+                "For V8 flags this app does not model. The common one no longer needs " +
+                "it: the Heap memory limit above works under Deno now, because the " +
+                "launcher folds it into this same --v8-flags argument rather than " +
+                "leaving it in NODE_OPTIONS, which Deno ignores.\n\n" +
+                "Anything set here is merged with what the launcher adds, into a single " +
+                "--v8-flags — passing two would silently keep only the last.",
             ifWrong:
                 "V8 rejects an unknown flag at startup, so a typo means the process does " +
                 "not come up rather than quietly running unconfigured. Check the " +

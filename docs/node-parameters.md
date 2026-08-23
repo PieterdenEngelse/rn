@@ -108,7 +108,9 @@ Default: off · Takes effect: on restart · Settings key: `bunSmol`
 
 **What it does.** Passes flags straight through to V8, comma-separated — for example --max-old-space-size=512,--max-semi-space-size=64. Deno runs V8 like Node does, but does not read NODE_OPTIONS, so this is the only route to V8 tuning under it.
 
-**Why you would change it.** It is how you set a heap limit while Deno is the runtime. The Heap memory limit row above does nothing here: it exports NODE_OPTIONS, which Deno ignores. Put --max-old-space-size here instead and it takes effect exactly as it would on Node.
+**Why you would change it.** For V8 flags this app does not model. The common one no longer needs it: the Heap memory limit above works under Deno now, because the launcher folds it into this same --v8-flags argument rather than leaving it in NODE_OPTIONS, which Deno ignores.
+
+Anything set here is merged with what the launcher adds, into a single --v8-flags — passing two would silently keep only the last.
 
 **If it's wrong.** V8 rejects an unknown flag at startup, so a typo means the process does not come up rather than quietly running unconfigured. Check the launcher output if it fails to start after a change here.
 
