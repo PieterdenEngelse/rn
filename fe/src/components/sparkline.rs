@@ -106,76 +106,83 @@ pub fn Sparkline(
             // the parent column for the leftover directly, which is what the
             // board actually has to give.
             class: if fill_height { "flex flex-col gap-1 flex-1 min-h-0" } else { "flex flex-col gap-1" },
-            svg {
-                class: if fill_height { "flex-1 min-h-0" } else { "" },
-                width: "100%",
-                height: if fill_height { "100%".to_string() } else { height.to_string() },
-                view_box: "0 0 {width} {h}",
-                preserve_aspect_ratio: "none",
-                role: "img",
+            // The plot is positioned inside its box rather than being the
+            // flex item itself. An svg as a flex item is sized differently by
+            // each engine — Chromium flexes it, Firefox falls back to its
+            // intrinsic height — so the box takes the leftover and the plot
+            // simply fills the box, which both agree on.
+            div { class: if fill_height { "relative flex-1 min-h-0" } else { "" },
+                svg {
+                    class: if fill_height { "absolute inset-0 w-full h-full" } else { "" },
+                    width: "100%",
+                    height: if fill_height { "100%".to_string() } else { height.to_string() },
+                    view_box: "0 0 {width} {h}",
+                    preserve_aspect_ratio: "none",
+                    role: "img",
 
-                // The stretch before this process existed, shaded and closed
-                // with a rule at the moment it started. Drawn first so the data
-                // sits on top of it.
-                if before_start > 0.0 {
-                    {
-                        let w = (before_start.clamp(0.0, 1.0)) * width;
-                        rsx! {
-                            rect {
-                                x: "0", y: "0", width: "{w:.1}", height: "{h}",
-                                fill: "#374151", fill_opacity: "0.45",
-                            }
-                            line {
-                                x1: "{w:.1}", y1: "0", x2: "{w:.1}", y2: "{h}",
-                                stroke: "#9ca3af", stroke_width: "1",
-                                stroke_dasharray: "2 2",
-                            }
-                        }
-                    }
-                }
-
-                // Baseline
-                line {
-                    x1: "0", y1: "{h}", x2: "{width}", y2: "{h}",
-                    stroke: "#4b5563", stroke_width: "1",
-                }
-
-                if let Some(r) = reference {
-                    {
-                        let y = h - (r / scale).clamp(0.0, 1.0) * h;
-                        rsx! {
-                            line {
-                                x1: "0", y1: "{y:.1}", x2: "{width}", y2: "{y:.1}",
-                                stroke: "#6b7280", stroke_width: "1",
-                                stroke_dasharray: "3 3",
+                    // The stretch before this process existed, shaded and closed
+                    // with a rule at the moment it started. Drawn first so the data
+                    // sits on top of it.
+                    if before_start > 0.0 {
+                        {
+                            let w = (before_start.clamp(0.0, 1.0)) * width;
+                            rsx! {
+                                rect {
+                                    x: "0", y: "0", width: "{w:.1}", height: "{h}",
+                                    fill: "#374151", fill_opacity: "0.45",
+                                }
+                                line {
+                                    x1: "{w:.1}", y1: "0", x2: "{w:.1}", y2: "{h}",
+                                    stroke: "#9ca3af", stroke_width: "1",
+                                    stroke_dasharray: "2 2",
+                                }
                             }
                         }
                     }
-                }
 
-                for s in series.iter() {
-                    for path in to_paths(&s.points, width, h, scale) {
-                        polyline {
-                            points: "{path}",
-                            fill: "none",
-                            stroke: "{s.color}",
-                            stroke_width: "1.5",
-                            stroke_linejoin: "round",
+                    // Baseline
+                    line {
+                        x1: "0", y1: "{h}", x2: "{width}", y2: "{h}",
+                        stroke: "#4b5563", stroke_width: "1",
+                    }
+
+                    if let Some(r) = reference {
+                        {
+                            let y = h - (r / scale).clamp(0.0, 1.0) * h;
+                            rsx! {
+                                line {
+                                    x1: "0", y1: "{y:.1}", x2: "{width}", y2: "{y:.1}",
+                                    stroke: "#6b7280", stroke_width: "1",
+                                    stroke_dasharray: "3 3",
+                                }
+                            }
                         }
                     }
-                }
 
-                // The runtime boundary, drawn last so it sits over the data
-                // rather than under it: it is a caveat on the curve, and has to
-                // stay visible where the curve is densest.
-                if let Some((at, _)) = runtime_change.as_ref() {
-                    {
-                        let x = at.clamp(0.0, 1.0) * width;
-                        rsx! {
-                            line {
-                                x1: "{x:.1}", y1: "0", x2: "{x:.1}", y2: "{h}",
-                                stroke: "#f59e0b", stroke_width: "1",
-                                stroke_dasharray: "4 2",
+                    for s in series.iter() {
+                        for path in to_paths(&s.points, width, h, scale) {
+                            polyline {
+                                points: "{path}",
+                                fill: "none",
+                                stroke: "{s.color}",
+                                stroke_width: "1.5",
+                                stroke_linejoin: "round",
+                            }
+                        }
+                    }
+
+                    // The runtime boundary, drawn last so it sits over the data
+                    // rather than under it: it is a caveat on the curve, and has to
+                    // stay visible where the curve is densest.
+                    if let Some((at, _)) = runtime_change.as_ref() {
+                        {
+                            let x = at.clamp(0.0, 1.0) * width;
+                            rsx! {
+                                line {
+                                    x1: "{x:.1}", y1: "0", x2: "{x:.1}", y2: "{h}",
+                                    stroke: "#f59e0b", stroke_width: "1",
+                                    stroke_dasharray: "4 2",
+                                }
                             }
                         }
                     }

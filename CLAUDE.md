@@ -214,6 +214,32 @@ The app is **dark-only**. `Layout` adds the `dark` class to `<html>` on mount so
 any `dark:` variant from daisyUI still resolves; there is no light theme and no
 toggle.
 
+## Browser independence
+
+**Everything built here works the same in every browser.** rn is an installed
+app; the browser it renders in is whatever the user's machine hands the
+launcher, and that is not a variable this project gets to control. A feature
+that only behaves correctly in Chrome is not finished.
+
+- **No browser-specific APIs or prefixed CSS** as the only path to a feature.
+  If something needs a vendor prefix, ship the standard property alongside it
+  and check the feature still works when neither applies.
+- **Never rely on a control's native rendering being identical anywhere.** Form
+  controls are the worst offenders — see Form Control Rules below, which exists
+  because of exactly this.
+- **Where a native element renders differently, the difference must be
+  cosmetic, never functional.** A dropdown that decorates a text field is fine:
+  a browser that ignores the decoration still leaves a typable field. A control
+  whose only affordance is browser-provided is not.
+- **Test in more than one engine before calling a UI change done.** A
+  screenshot proves the engine that took it and nothing else. `## Checking the
+  page` documents the Chromium command; Firefox is installed here too and
+  takes the second look with `firefox --headless --screenshot /tmp/p.png
+  --window-size=1400,2000 http://localhost:1790/...`.
+- The same applies to fonts, scrollbar styling and date/time inputs: assume the
+  user's browser draws them its own way, and make sure the page still reads
+  correctly when it does.
+
 ## Form Control Rules
 
 - **Never use the HTML `disabled` attribute** on custom-styled checkboxes or
