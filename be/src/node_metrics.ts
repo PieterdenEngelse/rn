@@ -241,6 +241,20 @@ function probeNote(): string | null {
  * anything. Recheck when a runtime is upgraded — these are shims filling in,
  * and they do get filled in properly over time.
  */
+/**
+ * Spaces that have held something at least once since this process started.
+ *
+ * Filtering on "empty right now" makes the row set move: a space appears the
+ * first time it is used and vanishes when it empties again, so the board
+ * reshuffles under the reader and — worse — a space returning to zero looks
+ * identical to one that never existed. Zero is information; absence is not.
+ *
+ * Which spaces are in play also depends on the V8 version and on what the code
+ * does, so it is not a list to hardcode. Once a space has been seen it stays,
+ * and its zero is reported.
+ */
+const seenSpaces = new Set<string>();
+
 function unsupportedHere(): string[] {
     switch (runtimeName()) {
         case "bun":
@@ -298,6 +312,9 @@ export function collect(): NodeMetrics {
     // Which V8 space holds the most — tells you *what kind* of memory is
     // growing, not just that it is.
     const spaces = getHeapSpaceStatistics();
+    for (const x of spaces) {
+        if (x.space_used_size > 0) seenSpaces.add(x.space_name);
+    }
     const biggest = spaces.reduce(
         (a, b) => (b.space_used_size > a.space_used_size ? b : a),
         spaces[0] ?? { space_name: "none", space_used_size: 0 },
@@ -338,7 +355,7 @@ export function collect(): NodeMetrics {
             spaces: unsupportedHere().includes("memory.largestSpace")
                 ? []
                 : spaces
-                .filter((x) => x.space_used_size > 0)
+                .filter((x) => seenSpaces.has(x.space_name))
                 .map((x) => ({
                     name: x.space_name,
                     usedMB: Number((x.space_used_size / MB).toFixed(2)),
