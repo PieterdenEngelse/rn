@@ -932,7 +932,11 @@ fn MonitorBoards(
             }
         }
 
-        div { class: "flex flex-wrap gap-4 items-start",
+        // items-stretch, not items-start: History holds two charts and its
+        // neighbour holds three columns of figures, so left to themselves the
+        // charts stay short beside a much taller panel. Matched heights give the
+        // curves the vertical room, which is where a sparkline's resolution is.
+        div { class: "flex flex-wrap gap-4 items-stretch",
             if let Some(h) = hist.as_ref().filter(|h| !h.tiers.is_empty()) {
                 {
                     let idx = window().min(h.tiers.len() - 1);
@@ -1040,12 +1044,14 @@ fn MonitorBoards(
                                 }
                             }
 
-                            div { class: "flex flex-wrap gap-4 items-stretch",
+                            div { class: "flex flex-wrap gap-4 items-stretch flex-1 min-h-0",
                                 Board { title: "Memory".to_string(),
                                     Sparkline {
                                         before_start: marker,
                                         runtime_change: switch.clone(),
                                         unit: "MB".to_string(),
+                                        fill_height: true,
+                                        height: 120,
                                         series: vec![
                                             Series {
                                                 label: "heap floor".to_string(),
@@ -1066,6 +1072,8 @@ fn MonitorBoards(
                                             before_start: marker,
                                             runtime_change: switch.clone(),
                                             unit: "ms".to_string(),
+                                            fill_height: true,
+                                            height: 120,
                                             series: vec![
                                                 Series {
                                                     label: "worst p99".to_string(),

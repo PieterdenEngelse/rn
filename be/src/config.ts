@@ -38,6 +38,24 @@ export const config = {
         process.env.RN_HISTORY_PATH ??
         `${process.env.HOME ?? "."}/.config/rn/history.json`,
 
-    /** Dev only: the dx serve origin. Unused in a packaged install. */
-    corsOrigin: process.env.RN_CORS_ORIGIN ?? "http://localhost:1790",
+    /**
+     * Dev only: the origins the dx dev server may be reached at. Unused in a
+     * packaged install, where the launcher serves both halves from one origin.
+     *
+     * A list rather than one string because http://localhost:1790 and
+     * http://127.0.0.1:1790 are the same server and two different origins to a
+     * browser. Both are reachable, both are things a person types, and allowing
+     * only one meant the app worked or refused to talk to itself depending on
+     * which spelling was in the address bar — with a failure that surfaces as
+     * "backend unreachable" while the backend is plainly running.
+     *
+     * Comma-separated in RN_CORS_ORIGIN, which replaces the list rather than
+     * extending it, so a packaged or proxied deployment can pin exactly one.
+     */
+    corsOrigins: (
+        process.env.RN_CORS_ORIGIN ?? "http://localhost:1790,http://127.0.0.1:1790"
+    )
+        .split(",")
+        .map((o) => o.trim())
+        .filter(Boolean),
 } as const;

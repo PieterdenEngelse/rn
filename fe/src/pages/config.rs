@@ -1,4 +1,6 @@
-use crate::api::{fetch_params, save_settings, ParamsResponse, RuntimeParam};
+use crate::api::{
+    diagnose_offline, fetch_params, save_settings, OfflineReason, ParamsResponse, RuntimeParam,
+};
 use crate::components::param::*;
 use crate::components::{InfoButton, Panel, ProcessPanel, RestartBanner, RuntimeBoard};
 use dioxus::prelude::*;
@@ -14,10 +16,39 @@ use std::collections::BTreeMap;
 pub fn Config() -> Element {
     // Bumping `reload` re-runs the fetch, so the banner recomputes from the
     // server after a save rather than guessing locally.
-    let reload = use_signal(|| 0u32);
+    let mut reload = use_signal(|| 0u32);
     let data = use_resource(move || {
         let _ = reload();
         fetch_params()
+    });
+
+    // Why the backend is away, when it is. Only meaningful while the fetch is
+    // failing; cleared as soon as one succeeds.
+    let mut offline = use_signal(|| Option::<OfflineReason>::None);
+    let failed = use_memo(move || matches!(&*data.read_unchecked(), Some(Err(_))));
+
+    // Keep trying, rather than giving up on the one fetch that happened to land
+    // in a restart.
+    //
+    // This page fetched once and stayed broken until reloaded, which is the
+    // wrong behaviour here in particular: restarting is how every setting on
+    // this page takes effect, the button that does it is on this page, and any
+    // restart not started by that button — the launcher recovering from a
+    // crash, a stop/start by hand — left the page permanently wrong about a
+    // backend that was already back. The Monitor pages poll and heal within a
+    // tick; this one now does too.
+    use_future(move || async move {
+        loop {
+            gloo_timers::future::TimeoutFuture::new(3_000).await;
+            if failed() {
+                // Establish which kind of away it is before retrying, so the
+                // message is right even if the retry fails again.
+                offline.set(Some(diagnose_offline().await));
+                reload += 1;
+            } else if offline().is_some() {
+                offline.set(None);
+            }
+        }
     });
 
     rsx! {
@@ -33,17 +64,42 @@ pub fn Config() -> Element {
                 },
                 Some(Err(err)) => rsx! {
                     Panel { title: "Runtime settings".to_string(),
-                        p { class: "text-red-400 font-medium text-sm", "Backend unreachable" }
-                        p { class: "text-gray-300 mt-1", "{err}" }
-                        p { class: "text-gray-400 mt-2 max-w-3xl",
-                            "Start it with "
-                            code { class: "text-gray-200", "./launcher/target/debug/rn" }
-                            " — that supervises the backend, so the restart button works."
-                        }
-                        p { class: "text-gray-400 mt-1 max-w-3xl",
-                            "Or "
-                            code { class: "text-gray-200", "cd be && npm run serve" }
-                            " to run it unsupervised (restarts must then be done by hand)."
+                        {
+                            let reason = offline();
+                            // "Start the backend" is the wrong instruction when
+                            // the backend is already running and the browser is
+                            // throwing its answers away, so the advice follows
+                            // the diagnosis rather than assuming the worst case.
+                            let not_started = !matches!(reason, Some(OfflineReason::Blocked));
+                            rsx! {
+                                p { class: "text-red-400 font-medium text-sm",
+                                    match reason {
+                                        Some(r) => r.headline(),
+                                        None => "Backend unreachable",
+                                    }
+                                }
+                                p { class: "text-gray-300 mt-1 max-w-3xl",
+                                    match reason {
+                                        Some(r) => r.detail().to_string(),
+                                        None => err.clone(),
+                                    }
+                                }
+                                if not_started {
+                                    p { class: "text-gray-400 mt-2 max-w-3xl",
+                                        "Start it with "
+                                        code { class: "text-gray-200", "./launcher/target/debug/rn" }
+                                        " — that supervises the backend, so the restart button works."
+                                    }
+                                    p { class: "text-gray-400 mt-1 max-w-3xl",
+                                        "Or "
+                                        code { class: "text-gray-200", "cd be && npm run serve" }
+                                        " to run it unsupervised (restarts must then be done by hand)."
+                                    }
+                                }
+                                p { class: "text-gray-400 mt-2 text-xs",
+                                    "Retrying every 3 seconds — this clears itself when the backend answers."
+                                }
+                            }
                         }
                     }
                 },

@@ -37,12 +37,10 @@ function send(res: ServerResponse, code: number, body: unknown): void {
     res.writeHead(code, {
         "content-type": "application/json; charset=utf-8",
         "content-length": Buffer.byteLength(json),
-        // The dev frontend runs on a different port (dx serve :1790), so the
-        // browser treats it as cross-origin. Dev-only convenience: in a packaged
-        // install the launcher serves both from one origin and this is unused.
-        "access-control-allow-origin": config.corsOrigin,
-        "access-control-allow-methods": "GET, PUT, OPTIONS",
-        "access-control-allow-headers": "content-type",
+        // CORS headers are not set here. They depend on the request's Origin,
+        // which this function does not have, and they are set once per request
+        // in the handler instead — writeHead merges what setHeader already put
+        // on the response.
     });
     res.end(json);
 }
@@ -76,6 +74,23 @@ export function createApp() {
     return createServer((req, res) => {
         const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
         const started = Date.now();
+
+        // The dev frontend runs on a different port (dx serve :1790), so the
+        // browser treats it as cross-origin. Dev-only convenience: in a
+        // packaged install the launcher serves both from one origin.
+        //
+        // The header carries exactly one origin — "*" is not an option once
+        // credentials or a narrow allowlist are wanted — so the request's own
+        // Origin is echoed when it is on the list, and the first entry stands
+        // in otherwise. Vary tells caches the answer depends on it.
+        const origin = req.headers.origin;
+        res.setHeader(
+            "access-control-allow-origin",
+            origin && config.corsOrigins.includes(origin) ? origin : config.corsOrigins[0]!,
+        );
+        res.setHeader("vary", "origin");
+        res.setHeader("access-control-allow-methods", "GET, PUT, OPTIONS");
+        res.setHeader("access-control-allow-headers", "content-type");
 
         const done = (code: number): void => {
             step("http", { method: req.method, path: url.pathname, code, ms: Date.now() - started });
