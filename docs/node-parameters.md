@@ -16,6 +16,7 @@ scales with installed RAM, so expect a different number elsewhere.
 | **Node version line** | `nodeVersion` (NODE_OPTIONS) | unset (system default) | — | on restart |
 | **Heap memory limit** | `--max-old-space-size` (NODE_OPTIONS) | unset (system default) | 64 … 32768 MB | on restart |
 | **libuv thread pool** | `UV_THREADPOOL_SIZE` | 4 | 1 … 1024 | on restart |
+| **New-space size (advanced)** | `--max-semi-space-size` (NODE_OPTIONS) | unset (system default) | 1 … 1024 MB | on restart |
 | **Bun low-memory mode** | `--smol` (NODE_OPTIONS) | off | — | on restart |
 | **Bun kill orphans** | `--no-orphans` (NODE_OPTIONS) | off | — | on restart |
 | **Bun no auto-install** | `--no-install` (NODE_OPTIONS) | off | — | on restart |
@@ -74,6 +75,22 @@ Default: unset (system default) · Takes effect: on restart · Settings key: `no
 **If it's wrong.** Too low and the job dies part-way through. Note it sets old space, not the total: setting 256 produced a 2240 MB → 448 MB total limit, not 256.
 
 Default: unset (system default) · Takes effect: on restart · Settings key: `maxOldSpaceSize`
+
+### New-space size (advanced) — `--max-semi-space-size`
+
+**What it does.** Sizes new_space, the region every object is born into. V8 keeps two halves of it and collects by copying whatever is still alive from one to the other — cheap, because the cost is proportional to what survives rather than to what was allocated. An object that survives a couple of those passes is promoted to old_space, where collection is much more expensive.
+
+So this does not set a memory limit. It sets how long an object gets to prove it is short-lived before being treated as long-lived.
+
+**Why you would change it.** Marked advanced because the direction of the effect is not obvious and depends on the workload. A larger new_space gives objects more chances to die young, which keeps them out of old_space and away from the expensive collector. A smaller one promotes sooner, which means fewer scavenges but more work for the collector that matters.
+
+Neither is right in general. It is worth touching only when the Collection board shows meaningful time spent collecting and the ordinary answers — allocating less, holding less — are exhausted.
+
+**If it's wrong.** Measure it rather than reason about it, and measure the thing you care about. Collection count is a trap: shrinking new_space can lower it simply because objects are promoted out instead of being scavenged repeatedly, which looks like an improvement while making the expensive collector's job harder.
+
+Time spent collecting, on the Collection board, is the figure to watch, read against uptime. If a change does not move it on your own workload, put it back to unset.
+
+Default: unset (system default) · Takes effect: on restart · Settings key: `maxSemiSpaceSize`
 
 ### Bun low-memory mode — `--smol`
 

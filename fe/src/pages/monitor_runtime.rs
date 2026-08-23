@@ -3,13 +3,13 @@ use crate::components::param::*;
 use crate::components::{GlossaryEntry, InfoButton, Panel, ProcessBoards, Series, Sparkline};
 use dioxus::prelude::*;
 
-/// Monitor → Node. What the runtime is actually doing.
+/// Monitor → Runtime. What the runtime is actually doing.
 ///
 /// Every board here is either something a user can act on, or the measured
 /// counterpart of a setting they can change under Config → Settings. A metric
 /// with neither connection is noise, and is left out.
 #[component]
-pub fn MonitorNode() -> Element {
+pub fn MonitorRuntime() -> Element {
     let mut metrics = use_signal(|| Option::<Result<NodeMetrics, String>>::None);
     let mut hist = use_signal(|| Option::<NodeHistory>::None);
     // The process readings shown beside Concurrency come from /api/status,
@@ -37,15 +37,18 @@ pub fn MonitorNode() -> Element {
     rsx! {
         div { class: "p-6 w-full space-y-4",
             match metrics() {
-                Some(Ok(m)) => rsx! { NodeBoards { m, hist: hist(), status: status(), paused } },
+                Some(Ok(m)) => rsx! { MonitorBoards { m, hist: hist(), status: status(), paused } },
+                // Named for the job rather than for a runtime: which one is
+                // running is read off the metrics, and these are the two states
+                // where there are no metrics to read it from.
                 Some(Err(e)) => rsx! {
-                    Panel { title: "Node".to_string(),
+                    Panel { title: "Runtime".to_string(),
                         p { class: "text-red-400", "Backend unreachable" }
                         p { class: "text-gray-300 mt-1", "{e}" }
                     }
                 },
                 None => rsx! {
-                    Panel { title: "Node".to_string(),
+                    Panel { title: "Runtime".to_string(),
                         p { class: "text-gray-400", "Sampling…" }
                     }
                 },
@@ -55,7 +58,7 @@ pub fn MonitorNode() -> Element {
 }
 
 #[component]
-fn NodeBoards(
+fn MonitorBoards(
     m: NodeMetrics,
     hist: Option<NodeHistory>,
     status: Option<StatusResponse>,
@@ -85,6 +88,32 @@ fn NodeBoards(
         .unwrap_or("node")
         .to_string();
 
+    // Which version keys are worth showing, which depends on what is running:
+    // `process.versions` carries every component of the runtime that produced
+    // it, and the components differ. Bun has no libuv and no V8; Deno has V8
+    // and a TypeScript compiler; only Node has all four of its own.
+    //
+    // `node` is listed last under Bun and Deno deliberately. Both set it to a
+    // compatibility claim — a Node version that exists nowhere on this machine
+    // — so it is shown as such rather than left to be read as the Node in use.
+    // Same trap, and same wording, as the Active runtime board on Config.
+    // Who is counting the heap. Every memory figure on this page is named the
+    // same under all three runtimes and produced by different machinery: V8
+    // under Node and Deno, a node:v8 compatibility shim over JavaScriptCore
+    // under Bun. Prose that says "V8" unconditionally is wrong on a third of
+    // the runtimes this app offers.
+    let heap_engine = match running.as_str() {
+        "bun" => "a node:v8 compatibility shim over JavaScriptCore",
+        _ => "V8",
+    };
+    let heap_engine_short = if running == "bun" { "JavaScriptCore" } else { "V8" };
+
+    let version_keys: &[&str] = match running.as_str() {
+        "bun" => &["bun", "webkit", "node"],
+        "deno" => &["deno", "v8", "typescript", "node"],
+        _ => &["node", "v8", "uv", "openssl"],
+    };
+
     rsx! {
         Panel {
             title: format!("{running} runtime"),
@@ -104,14 +133,22 @@ fn NodeBoards(
                         glossary: vec![
                             GlossaryEntry {
                                 term: "metrics".to_string(),
-                                body: concat!(
+                                // Interleaved rather than one `concat!` because the
+                                // source of the heap figures is not the same under
+                                // every runtime, and naming V8 unconditionally would
+                                // be a confident lie under Bun.
+                                body: [
+                                    concat!(
                                     "A metric is one named number describing the process — either ",
                                     "at an instant, like heap used right now, or across an interval, ",
                                     "like CPU share since the last poll. The boards on this page are ",
                                     "each a handful of them.\n\n",
 
                                     "They come from four places, none of which is a log or a file. ",
-                                    "V8 reports the heap: used, total, the limit it will not grow ",
+                                    ),
+                                    heap_engine,
+                                    concat!(
+                                    " reports the heap: used, total, the limit it will not grow ",
                                     "past, and which [[space]] holds the most. The operating system ",
                                     "reports RSS, the memory it has actually handed this process, ",
                                     "which is always larger than the heap because the runtime itself ",
@@ -120,19 +157,70 @@ fn NodeBoards(
                                     "how much of the time it is busy rather than waiting, and how ",
                                     "many handles and requests are still open.\n\n",
 
-                                    "History is deliberately shallow. The backend samples heap, ",
-                                    "RSS and loop delay every two seconds and keeps the last five ",
-                                    "minutes in memory — enough to show the shape of what just ",
-                                    "happened, and enough to survive reloading this page, since the ",
-                                    "window lives in the process rather than in the browser. ",
-                                    "Nothing beyond that: no database, no file on disk. Samples ",
-                                    "older than the window are dropped, and restarting rn starts the ",
-                                    "window empty.",
-                                ).to_string(),
+                                    "History is sampled in the backend rather than in this page: ",
+                                    "heap, RSS and loop delay every two seconds, the last five ",
+                                    "minutes of them in memory, and longer windows summarised ",
+                                    "into buckets. It is written to a file so that it survives a ",
+                                    "restart — restarting is how every setting on this app takes ",
+                                    "effect, and history that died with the process would vanish ",
+                                    "exactly when you restarted to fix the thing you were ",
+                                    "watching. No database; one file, and samples older than ",
+                                    "their window are dropped rather than kept.\n\n",
+
+                                    "Because it outlives the process, a chart can span a change ",
+                                    "of runtime. Each sample records which runtime measured it, ",
+                                    "and where that changes the plot carries an amber dashed rule ",
+                                    "naming what was running to its left. Read the two halves ",
+                                    "apart: heap used means V8's heap under Node and a ",
+                                    "compatibility shim over JavaScriptCore under Bun, so a step ",
+                                    "at the rule is a change of instrument rather than of ",
+                                    "behaviour. A rule labelled \"unknown\" is history from before ",
+                                    "rn recorded which runtime took it — it may be the same one, ",
+                                    "and there is no way to tell.\n\n",
+
+                                    "A figure the runtime does not measure is stored as nothing ",
+                                    "rather than as zero, and the line simply stops. That is why ",
+                                    "a loop-delay chart can end partway across: Deno accepts the ",
+                                    "histogram and never moves it, so under Deno there is no ",
+                                    "reading to store. A zero would have been indistinguishable ",
+                                    "from a loop that never blocked, and it would have stayed on ",
+                                    "disk saying so long after the runtime changed back.",
+                                    ),
+                                ].concat(),
                             },
                             GlossaryEntry {
                                 term: "space".to_string(),
-                                body: concat!(
+                                // Spaces are V8 vocabulary for V8 machinery. Bun
+                                // has neither, and the backend already suppresses
+                                // the tile that would report one — so the term has
+                                // to explain its own absence rather than describe
+                                // regions this runtime does not have.
+                                body: if running == "bun" {
+                                    concat!(
+                                    "Nothing on this runtime. A space is a region of the V8 heap, ",
+                                    "and Bun does not run V8 — it runs JavaScriptCore, which ",
+                                    "organises memory differently and does not divide it into ",
+                                    "anything called a space.\n\n",
+
+                                    "Bun answers the question anyway: ask it which spaces exist ",
+                                    "and it reports a single synthetic \"old_space\" holding the ",
+                                    "entire heap. That is a compatibility shim keeping code ",
+                                    "written for Node from crashing, not a measurement, so the ",
+                                    "tile that would report it is hidden rather than filled with ",
+                                    "a word that means nothing here.\n\n",
+
+                                    "What Bun can tell you instead is on the JavaScriptCore board ",
+                                    "further down: live objects, protected objects, and the gap ",
+                                    "between heap size and heap capacity. Counts of objects ",
+                                    "rather than regions of memory — a different way of asking ",
+                                    "the same question, not a translation of the V8 one.\n\n",
+
+                                    "This also changes the Heap memory limit setting. Its name, ",
+                                    "--max-old-space-size, is V8's; Bun accepts the flag for ",
+                                    "compatibility and there is no old space for it to cap.",
+                                    ).to_string()
+                                } else {
+                                    concat!(
                                     "V8 does not keep one pool of memory. It divides the heap into ",
                                     "regions called spaces, each with its own allocation rules and ",
                                     "its own collector — thirteen of them on this runtime, though ",
@@ -157,7 +245,8 @@ fn NodeBoards(
                                     "--max-old-space-size. It caps that one space and not the sum of ",
                                     "all of them, which is why asking for 256 MB produces a total ",
                                     "limit well above 256.",
-                                ).to_string(),
+                                    ).to_string()
+                                },
                             },
                             GlossaryEntry {
                                 term: "computes".to_string(),
@@ -212,23 +301,24 @@ fn NodeBoards(
                             div { class: "mb-2 flex flex-col flex-1 min-h-0",
                                 Sparkline {
                                         before_start: h.before_start_fraction(),
+                                        runtime_change: h.runtime_change(),
                                     series: vec![
                                         Series {
                                             label: "heap".to_string(),
                                             color: "#22c55e".to_string(),
-                                            points: h.samples.iter().map(|s| s.heap_used_mb).collect(),
+                                            points: h.samples.iter().map(|s| Some(s.heap_used_mb)).collect(),
                                         },
                                         Series {
                                             label: "rss".to_string(),
                                             color: "#60a5fa".to_string(),
-                                            points: h.samples.iter().map(|s| s.rss_mb).collect(),
+                                            points: h.samples.iter().map(|s| Some(s.rss_mb)).collect(),
                                         },
                                     ],
                                     unit: " MB".to_string(),
                                     fill_height: true,
                                     height: 44,
                                 }
-                                p { class: "text-[10px] text-gray-500",
+                                p { class: "text-[10px] text-gray-400",
                                     "last {window_minutes(h)} · heap limit {h.heap_limit_mb} MB"
                                 }
                             }
@@ -237,9 +327,14 @@ fn NodeBoards(
                                         Metric {
                         label: "heap used",
                         value: format!("{} MB ({}%)", m.memory.heap_used_mb, heap_pct),
-                        what: concat!(
+                        what: [
+                            concat!(
                             "Memory held by JavaScript objects that are still live, measured ",
-                            "against V8's ceiling for this process.\n\n",
+                            "against ",
+                            ),
+                            heap_engine_short,
+                            concat!(
+                            "'s ceiling for this process.\n\n",
 
                             "A live object is one the garbage collector can still reach. That ",
                             "is the whole definition: liveness is decided by reachability, not ",
@@ -301,7 +396,8 @@ fn NodeBoards(
                             "Worth separating from the Stack trace depth setting on the Config ",
                             "page, which sounds related and is not: that is how many frames get ",
                             "captured into an Error object, not how deep the stack may go.",
-                        ).to_string(),
+                            ),
+                        ].concat(),
                         why: "The measured counterpart of the Heap memory limit setting. Watch the percentage: a job that fails with 'heap out of memory' was pushing this to 100.".to_string(),
                         if_wrong: "Climbing steadily across runs and never falling back after a job ends means something is retained — a leak, not a limit that is too low.".to_string(),
                         glossary: vec![GlossaryEntry {
@@ -351,7 +447,7 @@ fn NodeBoards(
                     Metric {
                         label: "heap limit",
                         value: format!("{} MB", m.memory.heap_limit_mb),
-                        what: "The ceiling V8 will not grow past. Chosen from installed RAM unless the Heap memory limit setting overrides it.".to_string(),
+                        what: format!("The ceiling {heap_engine_short} will not grow past. Chosen from installed RAM unless the Heap memory limit setting overrides it."),
                         why: "It is what --max-old-space-size actually produced, which is worth checking: the flag sets old space, so the effective total lands higher than the number you typed.".to_string(),
                         if_wrong: "If this does not match what you set under Config → Settings, the setting is not reaching the process — check `rn --print-env`.".to_string(),
                     }
@@ -443,10 +539,15 @@ fn NodeBoards(
                         }
                     }),
                     chart: Some(rsx! {
-                        if let Some(h) = hist.as_ref().filter(|h| h.measures("loopP50Ms")) {
+                        // Drawn on whether the window holds readings, not on
+                        // whether this runtime takes them: switching to one that
+                        // does not measure delay must not erase the five minutes
+                        // Node measured before the restart.
+                        if let Some(h) = hist.as_ref().filter(|h| h.has_loop_delay()) {
                             div { class: "mb-2",
                                 Sparkline {
                                         before_start: h.before_start_fraction(),
+                                        runtime_change: h.runtime_change(),
                                     series: vec![
                                         Series {
                                             label: "p50".to_string(),
@@ -467,8 +568,15 @@ fn NodeBoards(
                                     unit: " ms".to_string(),
                                     height: 44,
                                 }
-                                p { class: "text-[10px] text-gray-500",
+                                p { class: "text-[10px] text-gray-400",
                                     "last {window_minutes(h)} · per-interval, not cumulative"
+                                }
+                                // The line stopping is the only visible sign
+                                // otherwise, and a stopped line reads as a bug.
+                                if !h.measures("loopP50Ms") {
+                                    p { class: "text-[10px] text-amber-400",
+                                        "{running} does not measure loop delay — the series ends where it took over"
+                                    }
                                 }
 
                                 if !h.loop_percentiles.is_empty() {
@@ -660,7 +768,8 @@ fn NodeBoards(
                 let tier = &h.tiers[idx];
                 let coverage = tier.coverage_pct();
                 let marker = h.tier_before_start_fraction(tier);
-                let measures_loop = h.measures("loopP99Ms");
+                let switch = h.tier_runtime_change(tier);
+                let measures_loop = h.tier_has_loop_delay(tier);
                 rsx! {
                     Panel {
                         title: "History".to_string(),
@@ -709,7 +818,28 @@ fn NodeBoards(
 
                                     "Gaps are not drawn. A missing bucket is skipped rather than ",
                                     "shown as a break, so two points beside each other may be ",
-                                    "minutes or months apart on the longer tiers.",
+                                    "minutes or months apart on the longer tiers.\n\n",
+
+                                    "An amber dashed rule means the runtime changed there, and ",
+                                    "the legend names the one that measured everything to its ",
+                                    "left. Unlike the process-start shading it is marked on every ",
+                                    "tier: restarts are frequent enough that on a year they would ",
+                                    "shade the whole chart, while a runtime switch is rare and ",
+                                    "still worth pointing at months later. Do not read a step at ",
+                                    "that rule as the runtime being heavier or lighter — the ",
+                                    "figures either side are counted by different machinery.\n\n",
+
+                                    "\"unknown\" to the left of the rule means buckets recorded ",
+                                    "before rn tagged them with a runtime. On the longer tiers ",
+                                    "that can be most of the window for a while; it moves left and ",
+                                    "leaves as tagged buckets replace it.\n\n",
+
+                                    "A break in a line is a stretch nothing measured, not a ",
+                                    "stretch that measured zero. The event-loop board appears ",
+                                    "whenever the window holds any delay reading at all, even if ",
+                                    "the runtime running now takes none — the readings taken ",
+                                    "before the switch are real and are not thrown away because ",
+                                    "of what came after them.",
                                 ).to_string(),
                             }
                         }),
@@ -732,17 +862,18 @@ fn NodeBoards(
                             Board { title: "Memory".to_string(),
                                 Sparkline {
                                     before_start: marker,
+                                    runtime_change: switch.clone(),
                                     unit: "MB".to_string(),
                                     series: vec![
                                         Series {
                                             label: "heap floor".to_string(),
                                             color: "#22c55e".to_string(),
-                                            points: tier.buckets.iter().map(|b| b.heap_floor_mb).collect(),
+                                            points: tier.buckets.iter().map(|b| Some(b.heap_floor_mb)).collect(),
                                         },
                                         Series {
                                             label: "rss peak".to_string(),
                                             color: "#60a5fa".to_string(),
-                                            points: tier.buckets.iter().map(|b| b.rss_peak_mb).collect(),
+                                            points: tier.buckets.iter().map(|b| Some(b.rss_peak_mb)).collect(),
                                         },
                                     ],
                                 }
@@ -751,6 +882,7 @@ fn NodeBoards(
                                 Board { title: "Event loop".to_string(),
                                     Sparkline {
                                         before_start: marker,
+                                        runtime_change: switch.clone(),
                                         unit: "ms".to_string(),
                                         series: vec![
                                             Series {
@@ -765,6 +897,14 @@ fn NodeBoards(
                                             },
                                         ],
                                     }
+                                    // Same caveat as the live window: the board
+                                    // is here because the buckets hold readings,
+                                    // not because this runtime is taking any.
+                                    if !h.measures("loopP99Ms") {
+                                        p { class: "text-[10px] text-amber-400 mt-1",
+                                            "{running} does not measure loop delay — the series ends where it took over"
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -773,13 +913,58 @@ fn NodeBoards(
             }
         }
 
-        // The machine, not the runtime: these read the same whichever
-        // runtime is running, so they do not belong in a tile named after one.
+        // What only this runtime answers. It sat under "All runtimes" beside
+        // the kernel counters, which read the same under all three — but a
+        // V8 collector count, JavaScriptCore's object tally and Deno's
+        // permission grants are each reported by exactly one runtime, and a
+        // panel claiming otherwise taught the wrong thing about all three.
         Panel {
-            title: "All runtimes".to_string(),
-            subtitle: Some("the machine rn is running on".to_string()),
+            title: format!("{running} specifics"),
+            subtitle: Some("what this runtime alone reports, and what it is built from".to_string()),
+            info: Some(rsx! {
+                InfoButton {
+                    title: format!("Why this panel changes with the runtime"),
+                    what: concat!(
+                        "Everything here is reported by one runtime and by no ",
+                        "other. Node exposes V8's collector, so it can say how ",
+                        "many collections have run. Bun runs JavaScriptCore, ",
+                        "which counts live objects rather than regions of ",
+                        "memory, and has no equivalent figure. Deno is the only ",
+                        "one that enforces permissions, so it is the only one ",
+                        "that can report them.\n\n",
+
+                        "The version rows are the same idea. `process.versions` ",
+                        "lists the components the running runtime is built ",
+                        "from, and those components differ: Bun has no libuv ",
+                        "and no V8, Deno carries a TypeScript compiler, only ",
+                        "Node has all four of its own.",
+                    ).to_string(),
+                    why: concat!(
+                        "Switching the runtime under Config → Settings changes ",
+                        "what this page can measure, not just what the numbers ",
+                        "say. Keeping the runtime-specific boards in a panel ",
+                        "named after the runtime makes that visible: boards ",
+                        "appear and disappear with the selection, which is the ",
+                        "honest picture of what you traded away.\n\n",
+
+                        "The panel below this one is the counterpart — kernel ",
+                        "and machine figures that read the same under all ",
+                        "three, and are comparable across a switch in a way ",
+                        "nothing here is.",
+                    ).to_string(),
+                    if_wrong: concat!(
+                        "An empty panel means the runtime reports none of ",
+                        "this, which is a real answer rather than a fault. ",
+                        "Do not compare a figure here against one you ",
+                        "remember from a different runtime — they are not the ",
+                        "same measurement under a shared name, and the History ",
+                        "charts rule the boundary for exactly that reason.",
+                    ).to_string(),
+                }
+            }),
 
             div { class: "flex flex-wrap gap-4 items-stretch",
+
                 // ── Collection (Node only) ────────────────────────────
                 if !not_counted("gc") {
                     Board {
@@ -883,6 +1068,61 @@ fn NodeBoards(
                     }
                 }
 
+                // ── What the runtime is built from ────────────────────
+                Board {
+                    title: "Versions".to_string(),
+                    info: Some(rsx! {
+                        InfoButton {
+                            title: "The runtime's own components".to_string(),
+                            what: format!("What {running} is assembled from, read from `process.versions` in the running process. The list is not the same under every runtime, so this board shows the components the one in front of you actually has rather than a fixed set of names."),
+                            why: "It is the first thing to quote in a bug report, and the only place a packaging mistake shows up: rn ships its own runtime and never uses one from the machine, so these are fixed when the app is built. A version you did not expect means the app found a runtime it was not supposed to.".to_string(),
+                            if_wrong: "Under Bun or Deno the `node (claimed)` row is a compatibility target, not a Node that exists here — see its own panel. Under Node, a version differing from be/.nvmrc means the bundled runtime and the development one have drifted, which is the classic works-on-my-machine.".to_string(),
+                        }
+                    }),
+                    for key in version_keys.iter().copied() {
+                        if let Some(v) = m.versions.get(key) {
+                            {
+                                let claimed = key == "node" && running != "node";
+                                rsx! {
+                                    Metric {
+                                        label: if claimed { "node (claimed)" } else { key },
+                                        value: if claimed {
+                                            format!("{v} — Node compatibility claimed by {running}")
+                                        } else {
+                                            v.clone()
+                                        },
+                                        what: if claimed {
+                                            format!("Not a Node that exists here. {running} implements enough of Node's API to run code written for it, and reports this number when asked which Node it is. No Node of this version is installed, bundled, or running.")
+                                        } else {
+                                            format!("Version of {key} inside the bundled runtime.")
+                                        },
+                                        why: if claimed {
+                                            format!("It tells you which Node API level {running} is aiming at, which is what decides whether a package written for Node works here. Read it as a compatibility target, never as the runtime in use — the runtime in use is named at the top of this page.")
+                                        } else {
+                                            "The runtime ships with rn, so these are fixed at packaging time rather than whatever the machine has. Worth quoting in a bug report.".to_string()
+                                        },
+                                        if_wrong: if claimed {
+                                            "If a package fails here but works under Node, this number is the first thing to quote: the claim is a target rather than a guarantee, and the gap between claimed and implemented is where those failures live.".to_string()
+                                        } else {
+                                            "A node version differing from be/.nvmrc means the bundled runtime and the development one have drifted.".to_string()
+                                        },
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // The machine, not the runtime: these read the same whichever
+        // runtime is running, so they do not belong in a tile named after one.
+        Panel {
+            title: "All runtimes".to_string(),
+            subtitle: Some("the machine rn is running on".to_string()),
+
+            div { class: "flex flex-wrap gap-4 items-stretch",
+
                 // ── Kernel counters ───────────────────────────────────
                 Board {
                     title: "Process".to_string(),
@@ -943,17 +1183,6 @@ fn NodeBoards(
                         why: "Explains why a process will not exit, and shows leaked handles: a count that only grows is a connection or timer never cleaned up.".to_string(),
                         if_wrong: "Steadily growing socket counts mean something is opening connections without closing them.".to_string(),
                     }
-                    }
-                    for key in ["node", "v8", "uv", "openssl"] {
-                        if let Some(v) = m.versions.get(key) {
-                            Metric {
-                                label: key,
-                                value: v.clone(),
-                                what: format!("Version of {key} inside the bundled runtime."),
-                                why: "The runtime ships with rn, so these are fixed at packaging time rather than whatever the machine has. Worth quoting in a bug report.".to_string(),
-                                if_wrong: "A node version differing from be/.nvmrc means the bundled runtime and the development one have drifted.".to_string(),
-                            }
-                        }
                     }
                 }
             }

@@ -20,6 +20,38 @@ const NS_TO_MS = 1e6;
 const LOOP_RESOLUTION_MS = 10;
 
 /**
+ * Which runtime is producing these numbers. Matches runtimeName() in
+ * node_metrics; kept local to avoid a cycle.
+ *
+ * It is stamped on every sample and bucket because history outlives the
+ * process that recorded it, and the runtime can change between one process and
+ * the next. Heap under Node is V8's heap; under Bun the same field comes from a
+ * compatibility shim over JavaScriptCore. Plotting them as one continuous line
+ * would claim a continuity of measurement that did not happen.
+ */
+const RUNTIME = ((): string => {
+    const v = process.versions as Record<string, string | undefined>;
+    if (v.bun) return "bun";
+    if (v.deno) return "deno";
+    return "node";
+})();
+
+/**
+ * Whether this runtime actually moves the event-loop delay histogram.
+ *
+ * Measured, not assumed — see tools/probe-runtime.cjs. Deno accepts
+ * monitorEventLoopDelay and never moves it: a deliberate 60ms block left the
+ * max at 0.01ms, so every reading it gives is a decoration.
+ *
+ * When it is false the delay fields are recorded as null rather than as the
+ * zero the histogram hands back. A stored zero is indistinguishable from a loop
+ * that genuinely never blocked, and it is permanent: it outlives the process
+ * that wrote it and sits in the same series as the real readings taken before
+ * the runtime was switched. Null is a gap the chart can draw as one.
+ */
+const LOOP_MEASURED = RUNTIME !== "deno";
+
+/**
  * Longer windows, as a chain of buckets rather than one long ring.
  *
  * Each tier keeps a fixed number of fixed-width buckets, so memory and file
@@ -63,13 +95,38 @@ export interface Bucket {
     t: number;
     heapFloorMB: number;
     rssPeakMB: number;
-    loopP99Ms: number;
-    loopMaxMs: number;
+    /** null when no sample in it came from a runtime that measures delay. */
+    loopP99Ms: number | null;
+    loopMaxMs: number | null;
     /** How many fine samples landed in it — 0 buckets are never stored. */
     n: number;
+    /**
+     * Which runtime produced it. Absent on buckets written before this was
+     * recorded, which the page reads as "unknown" rather than as a change.
+     *
+     * A bucket is at least a minute wide, so a restart that swaps the runtime
+     * mid-bucket leaves one bucket holding both. The last writer wins: the
+     * boundary the page draws can be off by a single bucket, which is a smaller
+     * lie than claiming the whole bucket belongs to the runtime that happened
+     * to open it.
+     */
+    rt?: string;
 }
 
 const tierData = new Map<string, Bucket[]>(TIERS.map((t) => [t.id, []]));
+
+/**
+ * The larger of two readings, either of which may be missing.
+ *
+ * A gap is not a zero and must not win a max against one: a bucket holding one
+ * real 40ms reading and one gap is a 40ms bucket, and a bucket holding only
+ * gaps stays a gap rather than collapsing to a confident zero.
+ */
+function maxOrNull(a: number | null, b: number | null): number | null {
+    if (a === null) return b;
+    if (b === null) return a;
+    return Math.max(a, b);
+}
 
 /** Fold one fine sample into every tier. */
 function record(x: Sample): void {
@@ -81,9 +138,10 @@ function record(x: Sample): void {
         if (last && last.t === start) {
             last.heapFloorMB = Math.min(last.heapFloorMB, x.heapUsedMB);
             last.rssPeakMB = Math.max(last.rssPeakMB, x.rssMB);
-            last.loopP99Ms = Math.max(last.loopP99Ms, x.loopP99Ms);
-            last.loopMaxMs = Math.max(last.loopMaxMs, x.loopMaxMs);
+            last.loopP99Ms = maxOrNull(last.loopP99Ms, x.loopP99Ms);
+            last.loopMaxMs = maxOrNull(last.loopMaxMs, x.loopMaxMs);
             last.n += 1;
+            last.rt = x.rt;
             continue;
         }
 
@@ -99,6 +157,7 @@ function record(x: Sample): void {
             loopP99Ms: x.loopP99Ms,
             loopMaxMs: x.loopMaxMs,
             n: 1,
+            rt: x.rt,
         });
         if (buckets.length > tier.capacity) {
             buckets.splice(0, buckets.length - tier.capacity);
@@ -112,10 +171,19 @@ export interface Sample {
     t: number;
     heapUsedMB: number;
     rssMB: number;
-    /** Event-loop delay during this interval only, in ms. */
-    loopP50Ms: number;
-    loopP99Ms: number;
-    loopMaxMs: number;
+    /**
+     * Event-loop delay during this interval only, in ms — null under a runtime
+     * that does not measure it. See LOOP_MEASURED for why not zero.
+     */
+    loopP50Ms: number | null;
+    loopP99Ms: number | null;
+    loopMaxMs: number | null;
+    /**
+     * Which runtime measured it. Absent on samples written before this existed;
+     * see RUNTIME above for why the same field means different things under
+     * different runtimes.
+     */
+    rt?: string;
 }
 
 /**
@@ -143,9 +211,10 @@ function take(): void {
         t: Date.now(),
         heapUsedMB: Number((mem.heapUsed / MB).toFixed(1)),
         rssMB: Number((mem.rss / MB).toFixed(1)),
-        loopP50Ms: delayMs(intervalDelay.percentile(50)),
-        loopP99Ms: delayMs(intervalDelay.percentile(99)),
-        loopMaxMs: delayMs(intervalDelay.max),
+        loopP50Ms: LOOP_MEASURED ? delayMs(intervalDelay.percentile(50)) : null,
+        loopP99Ms: LOOP_MEASURED ? delayMs(intervalDelay.percentile(99)) : null,
+        loopMaxMs: LOOP_MEASURED ? delayMs(intervalDelay.max) : null,
+        rt: RUNTIME,
     });
     intervalDelay.reset();
     if (samples.length > CAPACITY) {
@@ -234,10 +303,14 @@ export interface HistoryResponse {
     /** Lifetime distribution of loop delay — the shape, not the timeline. */
     loopPercentiles: { label: string; ms: number }[];
     /**
-     * Series this runtime does not actually measure. Same reasoning as the live
-     * tiles: a runtime that never reports loop delay records a zero every two
-     * seconds, and a chart of those zeros is a confident flat line claiming the
-     * loop never blocked. Absent beats wrong.
+     * Series the runtime running *now* does not measure.
+     *
+     * It no longer suppresses a chart, because it is a statement about the
+     * present and a window can be older than the present: samples taken under
+     * Node carry real delay readings whether or not Deno is the one answering
+     * this request. Those samples are drawn, the ones this runtime could not
+     * measure are gaps, and this list is what lets the page caption the gap
+     * with the reason instead of leaving a chart that simply stops.
      */
     unsupported: string[];
     /**
@@ -246,20 +319,22 @@ export interface HistoryResponse {
      */
     tiers: { id: string; label: string; bucketMs: number; capacity: number; buckets: Bucket[] }[];
     /**
-     * When this process started, epoch ms. History cannot predate it — the
-     * samples live in memory and a restart empties them — so the chart marks
-     * the boundary rather than letting an empty left half read as quiet.
+     * When this process started, epoch ms. Samples older than it were restored
+     * from disk and belong to an earlier run, so the chart rules the boundary
+     * rather than drawing one curve across a restart.
      */
     startedAt: number;
+    /**
+     * The runtime answering this request. Read against each entry's `rt`, it
+     * tells the page which stretch of the history was measured by something
+     * other than what is running now — the same restart that changes the
+     * runtime also changes what the heap and loop figures are counting.
+     */
+    runtime: string;
 }
 
-/** Matches runtimeName() in node_metrics; kept local to avoid a cycle. */
 function unsupportedSeries(): string[] {
-    const v = process.versions as Record<string, string | undefined>;
-    // Measured, not assumed — see tools/probe-runtime.cjs. Deno accepts the
-    // event-loop histogram and never moves it, so every delay series under it
-    // would be zero.
-    if (v.deno) return ["loopP50Ms", "loopP99Ms", "loopMaxMs"];
+    if (!LOOP_MEASURED) return ["loopP50Ms", "loopP99Ms", "loopMaxMs"];
     return [];
 }
 
@@ -281,6 +356,7 @@ export function history(): HistoryResponse {
             buckets: [...tierData.get(t.id)!],
         })),
         startedAt: STARTED_AT,
+        runtime: RUNTIME,
     };
 }
 

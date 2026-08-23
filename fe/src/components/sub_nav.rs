@@ -60,7 +60,7 @@ fn sections() -> Vec<Section> {
         Section {
             label: "Monitor",
             items: vec![
-                                SubNavItem { label: "Node", route: Route::MonitorNode {} },
+                                SubNavItem { label: "Runtime", route: Route::MonitorRuntime {} },
                 SubNavItem { label: "Jobs", route: Route::MonitorJobs {} },
             ],
         },

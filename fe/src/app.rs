@@ -1,7 +1,7 @@
 use crate::components::header::Header;
 use crate::components::SubNav;
 use crate::pages::{
-    Config, Home, MonitorJobs, MonitorNode, PageNotFound,
+    Config, Home, MonitorJobs, MonitorRuntime, PageNotFound,
 };
 use dioxus::prelude::*;
 use dioxus_router::{Outlet, Routable, Router};
@@ -12,8 +12,13 @@ pub enum Route {
     #[layout(Layout)]
         #[route("/")]
         Home {},
-        #[route("/monitor/node")]
-        MonitorNode {},
+        // Named for the job, not for one runtime: which runtime this page
+        // reports on is a setting under Config, and a URL saying "node"
+        // while the page says "bun runtime" is the app contradicting
+        // itself. The old path is kept as a redirect — it was linkable.
+        #[redirect("/monitor/node", || Route::MonitorRuntime {})]
+        #[route("/monitor/runtime")]
+        MonitorRuntime {},
         #[route("/monitor/jobs")]
         MonitorJobs {},
         #[route("/config")]

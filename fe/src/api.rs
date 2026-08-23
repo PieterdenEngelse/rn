@@ -447,9 +447,14 @@ pub struct HistorySample {
     pub t: f64,
     #[serde(rename = "heapUsedMB")] pub heap_used_mb: f64,
     #[serde(rename = "rssMB")] pub rss_mb: f64,
-    #[serde(rename = "loopP50Ms")] pub loop_p50_ms: f64,
-    #[serde(rename = "loopP99Ms")] pub loop_p99_ms: f64,
-    #[serde(rename = "loopMaxMs")] pub loop_max_ms: f64,
+    /// None when the runtime that took this sample does not measure loop
+    /// delay. A gap, not a zero — the distinction survives on disk, so a window
+    /// spanning a runtime switch keeps the readings that were real.
+    #[serde(default, rename = "loopP50Ms")] pub loop_p50_ms: Option<f64>,
+    #[serde(default, rename = "loopP99Ms")] pub loop_p99_ms: Option<f64>,
+    #[serde(default, rename = "loopMaxMs")] pub loop_max_ms: Option<f64>,
+    /// Runtime that measured it. None on samples stored before the tag existed.
+    #[serde(default)] pub rt: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -464,10 +469,14 @@ pub struct Bucket {
     pub t: f64,
     #[serde(rename = "heapFloorMB")] pub heap_floor_mb: f64,
     #[serde(rename = "rssPeakMB")] pub rss_peak_mb: f64,
-    #[serde(rename = "loopP99Ms")] pub loop_p99_ms: f64,
-    #[serde(rename = "loopMaxMs")] pub loop_max_ms: f64,
+    /// None when no sample in the bucket came from a runtime that measures it.
+    #[serde(default, rename = "loopP99Ms")] pub loop_p99_ms: Option<f64>,
+    #[serde(default, rename = "loopMaxMs")] pub loop_max_ms: Option<f64>,
     /// Fine samples that landed in it.
     pub n: u64,
+    /// Runtime that measured it — the last one to write into it, when a restart
+    /// swapped runtimes mid-bucket. None on buckets stored before the tag.
+    #[serde(default)] pub rt: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -515,13 +524,34 @@ pub struct NodeHistory {
     pub unsupported: Vec<String>,
     /// Epoch ms this process started.
     #[serde(default, rename = "startedAt")] pub started_at: f64,
+    /// The runtime answering right now, to read each entry's `rt` against.
+    #[serde(default)] pub runtime: String,
     /// The longer windows: hour, day, week, month, year.
     #[serde(default)] pub tiers: Vec<HistoryTier>,
 }
 
 impl NodeHistory {
+    /// Whether the runtime running *now* measures a series. It says nothing
+    /// about what the window already holds — see [`Self::has_loop_delay`].
     pub fn measures(&self, series: &str) -> bool {
         !self.unsupported.iter().any(|u| u == series)
+    }
+
+    /// Whether the fine window holds any event-loop reading at all.
+    ///
+    /// This is what decides whether the loop charts are drawn, rather than
+    /// [`Self::measures`]. The two answer different questions and the window
+    /// outlives the answer to the second: switch to Deno, which does not move
+    /// the delay histogram, and the last five minutes still hold the real
+    /// readings Node took before the restart. Hiding the chart because of what
+    /// is running now would throw away data that was measured properly.
+    pub fn has_loop_delay(&self) -> bool {
+        self.samples.iter().any(|s| s.loop_p99_ms.is_some())
+    }
+
+    /// The same question for a tier's buckets.
+    pub fn tier_has_loop_delay(&self, tier: &HistoryTier) -> bool {
+        tier.buckets.iter().any(|b| b.loop_p99_ms.is_some())
     }
 
     /// Where in the drawn series this process began, as a fraction of its
@@ -544,6 +574,62 @@ impl NodeHistory {
             // whole window as inherited rather than claiming it is current.
             None => 1.0,
         }
+    }
+
+    /// Where in the drawn series the runtime last changed, as a fraction of its
+    /// width, with the runtime that produced everything left of it.
+    ///
+    /// This is a different discontinuity from [`Self::before_start_fraction`],
+    /// and the more serious one. A restart draws the same measurements from a
+    /// new process; a runtime switch draws *different* measurements under the
+    /// same names — heap used is V8's heap under Node and a compatibility shim
+    /// over JavaScriptCore under Bun. The curve either side is not comparable,
+    /// so the boundary is ruled and named rather than drawn through.
+    ///
+    /// Located at the last entry the running runtime did not write, so a window
+    /// covering node → bun → node marks the whole stretch up to the return
+    /// rather than only the middle of it. Entries stored before the tag existed
+    /// count as foreign and are named "unknown", because they are.
+    pub fn runtime_change(&self) -> Option<(f64, String)> {
+        Self::foreign_boundary(self.samples.len(), &self.runtime, |i| {
+            self.samples[i].rt.as_deref()
+        })
+    }
+
+    /// The runtime boundary within a tier's buckets.
+    ///
+    /// Marked on every tier, unlike the process-start rule: a restart happens
+    /// often enough that on a long window it would shade everything, but a
+    /// runtime switch is rare and stays worth pointing at a year later.
+    pub fn tier_runtime_change(&self, tier: &HistoryTier) -> Option<(f64, String)> {
+        Self::foreign_boundary(tier.buckets.len(), &self.runtime, |i| {
+            tier.buckets[i].rt.as_deref()
+        })
+    }
+
+    /// Shared by both: scan from the right for the last entry the running
+    /// runtime did not write, and return where it sits plus what wrote it.
+    ///
+    /// An untagged entry counts as one of those, labelled "unknown" — history
+    /// written before the tag existed genuinely has no known origin, and it can
+    /// perfectly well have come from a different runtime. Skipping it would not
+    /// be neutral: an unbroken curve across it is itself a claim that the whole
+    /// window was measured the same way, which is the claim we cannot support.
+    /// Drawing the rule says only what is true, and it decays on its own as
+    /// tagged samples push it leftward out of the window.
+    fn foreign_boundary<'a>(
+        n: usize,
+        current: &str,
+        rt: impl Fn(usize) -> Option<&'a str>,
+    ) -> Option<(f64, String)> {
+        // An empty `current` means a backend too old to report one. It cannot
+        // tell us what is running, so it cannot tell us what is foreign either.
+        if n < 2 || current.is_empty() {
+            return None;
+        }
+        let i = (0..n).rev().find(|&i| rt(i) != Some(current))?;
+        let previous = rt(i).unwrap_or("unknown").to_string();
+        Some(((i as f64 / (n - 1) as f64).clamp(0.0, 1.0), previous))
     }
 
     /// The same boundary within a tier's buckets.

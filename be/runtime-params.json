@@ -146,6 +146,27 @@
       }
     },
     {
+      "id": "maxSemiSpaceSize",
+      "flag": "--max-semi-space-size",
+      "kind": "node-option",
+      "type": "int",
+      "default": null,
+      "unit": "MB",
+      "min": 1,
+      "max": 1024,
+      "appliesAt": "restart",
+      "appliesTo": [
+        "node"
+      ],
+      "category": "memory",
+      "label": "New-space size (advanced)",
+      "info": {
+        "what": "Sizes new_space, the region every object is born into. V8 keeps two halves of it and collects by copying whatever is still alive from one to the other — cheap, because the cost is proportional to what survives rather than to what was allocated. An object that survives a couple of those passes is promoted to old_space, where collection is much more expensive.\n\nSo this does not set a memory limit. It sets how long an object gets to prove it is short-lived before being treated as long-lived.",
+        "why": "Marked advanced because the direction of the effect is not obvious and depends on the workload. A larger new_space gives objects more chances to die young, which keeps them out of old_space and away from the expensive collector. A smaller one promotes sooner, which means fewer scavenges but more work for the collector that matters.\n\nNeither is right in general. It is worth touching only when the Collection board shows meaningful time spent collecting and the ordinary answers — allocating less, holding less — are exhausted.",
+        "ifWrong": "Measure it rather than reason about it, and measure the thing you care about. Collection count is a trap: shrinking new_space can lower it simply because objects are promoted out instead of being scavenged repeatedly, which looks like an improvement while making the expensive collector's job harder.\n\nTime spent collecting, on the Collection board, is the figure to watch, read against uptime. If a change does not move it on your own workload, put it back to unset."
+      }
+    },
+    {
       "id": "bunSmol",
       "flag": "--smol",
       "kind": "runtime-flag",
