@@ -1022,8 +1022,25 @@ fn MonitorBoards(
                                 what: concat!(
                                     "V8 does not keep one pool. Every space listed here has its ",
                                     "own allocation rules and its own collector, and the numbers ",
-                                    "are what each currently holds against what it has reserved ",
-                                    "from the operating system.\n\n",
+                                    "are what each currently holds, and how much memory V8 has ",
+                                    "committed from the operating system to hold it.\n\n",
+
+                                    "Those two numbers sit close together and that is not a ",
+                                    "warning. The second is not a ceiling — V8 commits a little ",
+                                    "more than it is using and grows as it goes, because ",
+                                    "committed memory counts against the process whether or not ",
+                                    "anything is in it. Measured here: old_space at 2.7MB used ",
+                                    "of 2.9MB committed grew to 157.6MB of 158.9MB, staying at ",
+                                    "roughly 97 per cent throughout, while the actual ceiling ",
+                                    "never moved. A space at 99 per cent is V8 being tidy, not a ",
+                                    "space about to overflow. large_object_space runs closest of ",
+                                    "all, because a large object gets a page sized to fit it and ",
+                                    "there is nothing spare by construction.\n\n",
+
+                                    "The number that does constrain anything is the heap limit, ",
+                                    "shown on the old_space row because that is the space it ",
+                                    "governs. Read old_space against that, not against its own ",
+                                    "committed figure.\n\n",
 
                                     "A space appears here once it has held something, and stays ",
                                     "afterwards even if it empties — a space that fell back to ",
@@ -1070,10 +1087,18 @@ fn MonitorBoards(
                         for sp in m.memory.spaces.iter() {
                             Metric {
                                 label: "{sp.name}",
-                                value: format!("{} MB of {} MB", sp.used_mb, sp.size_mb),
-                                what: format!("Live data in {}, against what it has reserved.", sp.name),
+                                // "committed", not "of": the second number is what V8
+                                // has taken from the operating system, not a ceiling.
+                                // Written as "X used, Y committed" so the pair cannot be
+                                // read as a fullness percentage, which it is not.
+                                value: if sp.name == "old_space" {
+                                    format!("{} MB used, {} MB committed — limit {} MB", sp.used_mb, sp.size_mb, m.memory.heap_limit_mb)
+                                } else {
+                                    format!("{} MB used, {} MB committed", sp.used_mb, sp.size_mb)
+                                },
+                                what: format!("Live data in {}, and the memory V8 has committed from the operating system to hold it.", sp.name),
                                 why: "Which space holds the memory says what kind of growth it is — retention, allocation pressure, or a few large objects.".to_string(),
-                                if_wrong: format!("Watch whether {} returns to a floor after a job ends. Growth that never falls back is retention rather than activity.", sp.name),
+                                if_wrong: format!("The two numbers sitting close together is normal and not a warning: V8 commits little more than it is using, because committed memory counts against the process whether or not anything is in it. Watch whether {} returns to a floor after a job ends — growth that never falls back is retention rather than activity.", sp.name),
                             }
                         }
                     }
