@@ -122,8 +122,11 @@ fn MonitorBoards(
 
     rsx! {
         Panel {
-            title: format!("{running} runtime"),
-            subtitle: Some("live, sampled every 2s".to_string()),
+            // Not "{running} runtime" any more: Process and Host are kernel and
+            // machine readings that say the same thing under any runtime. What
+            // these four boards share is that they measure consumption.
+            title: "Resources".to_string(),
+            subtitle: Some(format!("what {running} and the machine are using — sampled every 2s")),
             actions: Some(rsx! {
                 div { class: "flex items-center gap-3",
                     button {
@@ -1456,8 +1459,10 @@ fn MonitorBoards(
             // The machine, not the runtime: these read the same whichever
             // runtime is running, so they do not belong in a tile named after one.
             Panel {
-                title: "All runtimes".to_string(),
-                subtitle: Some("the machine rn is running on".to_string()),
+                // Not "All runtimes": a pid, a launcher, a job count and a
+                // listening address describe this process and no other.
+                title: "This process".to_string(),
+                subtitle: Some("how it is running, and what it is running".to_string()),
 
                 div { class: "flex flex-wrap gap-4 items-stretch",
 
