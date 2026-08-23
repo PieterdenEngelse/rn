@@ -863,44 +863,66 @@ fn MonitorBoards(
                 // ── Concurrency ───────────────────────────────────────
                 // Both figures are inert under Bun; same reasoning as the loop board.
                 if concurrency_board_useful {
-                Board { title: "Concurrency".to_string(),
-                    if !not_counted("concurrency.threadpoolSize") {
+                Board {
+                    title: "Process".to_string(),
+                    info: Some(rsx! {
+                        InfoButton {
+                            title: "What the kernel has counted".to_string(),
+                            what: "These come from the operating system rather than from the runtime, which is why they read the same under all three. They count what the process has actually done: the most memory it ever held, how many filesystem operations it has issued, and how often it was taken off the CPU.".to_string(),
+                            why: "They answer questions the runtime's own figures cannot. Heap used tells you what is live now; peak memory tells you the high-water mark someone else on this machine had to make room for. And a slow job with a large filesystem count is I/O-bound, which is the case the libuv thread pool setting exists for — nothing else on this page distinguishes that from being busy.".to_string(),
+                            if_wrong: "Filesystem counts are cumulative and never reset, so a large number on a long-running process means nothing by itself. Watch how fast it moves during a job, not where it sits.".to_string(),
+                        }
+                    }),
                     Metric {
-                        label: "threadpool",
-                        value: m.concurrency.threadpool_size.to_string(),
-                        what: "Threads libuv uses for file system, DNS, zlib and some crypto work.".to_string(),
-                        why: "The measured counterpart of the libuv thread pool setting. Read it with event-loop utilisation: low utilisation plus a slow file job means this is the bottleneck.".to_string(),
-                        if_wrong: "If it does not match what you set, the setting has not been applied — it needs a restart, and the banner on Config → Settings will say so.".to_string(),
-                    }
-                    }
-                    Metric {
-                        label: "cpu (user)",
-                        value: format!("{}%", m.cpu.user_pct),
-                        what: "CPU spent in your code since this page last sampled, as a share of one core.".to_string(),
-                        why: "Above 100 means more than a core's worth. With {m.cpu.cores} cores here, sustained values near {m.cpu.cores}00% mean the machine is the limit.".to_string(),
-                        if_wrong: "High user CPU with a growing event-loop delay is compute on the main thread — the case for a Rust component.".to_string(),
-                    }
-                    Metric {
-                        label: "cpu (system)",
-                        value: format!("{}%", m.cpu.system_pct),
-                        what: "CPU spent in kernel calls on this process's behalf — file and network I/O.".to_string(),
-                        why: "A high system share relative to user means the workload is I/O bound, not compute bound. Different fix entirely.".to_string(),
-                        if_wrong: "Unexpectedly high system time often means many small reads where fewer large ones would do.".to_string(),
+                        label: "peak memory",
+                        value: format!("{} MB", m.resources.max_rss_mb),
+                        what: "The most resident memory this process has ever held, from the kernel's own accounting.".to_string(),
+                        why: "Current RSS moves; this does not go down. It is the figure that matters when deciding whether this app and something else fit on the same machine.".to_string(),
+                        if_wrong: "A peak far above the current value means a burst that has since been released. It still had to fit at the time.".to_string(),
                     }
                     Metric {
-                        label: "load (1m)",
-                        value: format!("{} on {} cores", m.cpu.load1, m.cpu.cores),
-                        what: "Machine-wide run-queue average over the last minute — every process, not just rn.".to_string(),
-                        why: "Context for the numbers above: rn can look slow because the machine is busy with something else entirely.".to_string(),
-                        if_wrong: "Load persistently above the core count means everything on this machine is queueing.".to_string(),
+                        label: "filesystem ops",
+                        value: format!("{} read · {} write", m.resources.fs_read, m.resources.fs_write),
+                        what: "Filesystem operations the kernel has performed for this process, counted since it started.".to_string(),
+                        why: "The counterpart to the thread pool board: file work is what those threads exist to run. A job that is slow while CPU and the event loop are both quiet, with these climbing, is waiting on the disk and on thread-pool slots.".to_string(),
+                        if_wrong: "Zero on a process that has plainly read files means the reads were served from cache without reaching the filesystem layer — normal, and a reason to compare movement rather than totals.".to_string(),
+                    }
+                    Metric {
+                        label: "context switches",
+                        value: format!("{} voluntary · {} forced", m.resources.ctx_voluntary, m.resources.ctx_involuntary),
+                        what: "How often the process gave up the CPU to wait for something, versus how often the scheduler took it away.".to_string(),
+                        why: "Voluntary switches are the normal shape of an I/O-bound program waiting. Forced ones mean the machine had more work than cores, so the process was interrupted mid-run.".to_string(),
+                        if_wrong: "Forced switches rising sharply means contention with other processes rather than anything inside rn — check the load average beside this before changing a setting here.".to_string(),
                     }
                 }
 
-                // The same process readings the Status page shows, beside the
-                // concurrency numbers they explain: threads and jobs are the
-                // same story from two directions.
-                if let Some(st) = status.as_ref() {
-                    ProcessBoards { status: st.clone() }
+                // ── Host & versions ───────────────────────────────────
+                Board { title: "Host".to_string(),
+                    Metric {
+                        label: "free memory",
+                        value: format!("{} MB of {} MB", m.host.free_mem_mb.round(), m.host.total_mem_mb.round()),
+                        what: "Memory free on the machine as a whole.".to_string(),
+                        why: "The heap limit is only meaningful against this. A limit larger than free memory will be enforced by the operating system first, and less politely.".to_string(),
+                        if_wrong: "If free memory approaches zero the kernel may kill the process outright — that shows as a restart with no JavaScript error.".to_string(),
+                    }
+                    if !not_counted("concurrency.activeResources") {
+                    Metric {
+                        label: "active handles",
+                        value: if m.concurrency.active_resources.is_empty() {
+                            "none".to_string()
+                        } else {
+                            m.concurrency
+                                .active_resources
+                                .iter()
+                                .map(|(k, v)| format!("{k} ×{v}"))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        },
+                        what: "Open resources keeping the process alive — sockets, servers, timers.".to_string(),
+                        why: "Explains why a process will not exit, and shows leaked handles: a count that only grows is a connection or timer never cleaned up.".to_string(),
+                        if_wrong: "Steadily growing socket counts mean something is opening connections without closing them.".to_string(),
+                    }
+                    }
                 }
                 }
 
@@ -1440,66 +1462,44 @@ fn MonitorBoards(
                 div { class: "flex flex-wrap gap-4 items-stretch",
 
                     // ── Kernel counters ───────────────────────────────────
-                    Board {
-                        title: "Process".to_string(),
-                        info: Some(rsx! {
-                            InfoButton {
-                                title: "What the kernel has counted".to_string(),
-                                what: "These come from the operating system rather than from the runtime, which is why they read the same under all three. They count what the process has actually done: the most memory it ever held, how many filesystem operations it has issued, and how often it was taken off the CPU.".to_string(),
-                                why: "They answer questions the runtime's own figures cannot. Heap used tells you what is live now; peak memory tells you the high-water mark someone else on this machine had to make room for. And a slow job with a large filesystem count is I/O-bound, which is the case the libuv thread pool setting exists for — nothing else on this page distinguishes that from being busy.".to_string(),
-                                if_wrong: "Filesystem counts are cumulative and never reset, so a large number on a long-running process means nothing by itself. Watch how fast it moves during a job, not where it sits.".to_string(),
-                            }
-                        }),
+                    Board { title: "Concurrency".to_string(),
+                        if !not_counted("concurrency.threadpoolSize") {
                         Metric {
-                            label: "peak memory",
-                            value: format!("{} MB", m.resources.max_rss_mb),
-                            what: "The most resident memory this process has ever held, from the kernel's own accounting.".to_string(),
-                            why: "Current RSS moves; this does not go down. It is the figure that matters when deciding whether this app and something else fit on the same machine.".to_string(),
-                            if_wrong: "A peak far above the current value means a burst that has since been released. It still had to fit at the time.".to_string(),
+                            label: "threadpool",
+                            value: m.concurrency.threadpool_size.to_string(),
+                            what: "Threads libuv uses for file system, DNS, zlib and some crypto work.".to_string(),
+                            why: "The measured counterpart of the libuv thread pool setting. Read it with event-loop utilisation: low utilisation plus a slow file job means this is the bottleneck.".to_string(),
+                            if_wrong: "If it does not match what you set, the setting has not been applied — it needs a restart, and the banner on Config → Settings will say so.".to_string(),
+                        }
                         }
                         Metric {
-                            label: "filesystem ops",
-                            value: format!("{} read · {} write", m.resources.fs_read, m.resources.fs_write),
-                            what: "Filesystem operations the kernel has performed for this process, counted since it started.".to_string(),
-                            why: "The counterpart to the thread pool board: file work is what those threads exist to run. A job that is slow while CPU and the event loop are both quiet, with these climbing, is waiting on the disk and on thread-pool slots.".to_string(),
-                            if_wrong: "Zero on a process that has plainly read files means the reads were served from cache without reaching the filesystem layer — normal, and a reason to compare movement rather than totals.".to_string(),
+                            label: "cpu (user)",
+                            value: format!("{}%", m.cpu.user_pct),
+                            what: "CPU spent in your code since this page last sampled, as a share of one core.".to_string(),
+                            why: "Above 100 means more than a core's worth. With {m.cpu.cores} cores here, sustained values near {m.cpu.cores}00% mean the machine is the limit.".to_string(),
+                            if_wrong: "High user CPU with a growing event-loop delay is compute on the main thread — the case for a Rust component.".to_string(),
                         }
                         Metric {
-                            label: "context switches",
-                            value: format!("{} voluntary · {} forced", m.resources.ctx_voluntary, m.resources.ctx_involuntary),
-                            what: "How often the process gave up the CPU to wait for something, versus how often the scheduler took it away.".to_string(),
-                            why: "Voluntary switches are the normal shape of an I/O-bound program waiting. Forced ones mean the machine had more work than cores, so the process was interrupted mid-run.".to_string(),
-                            if_wrong: "Forced switches rising sharply means contention with other processes rather than anything inside rn — check the load average beside this before changing a setting here.".to_string(),
+                            label: "cpu (system)",
+                            value: format!("{}%", m.cpu.system_pct),
+                            what: "CPU spent in kernel calls on this process's behalf — file and network I/O.".to_string(),
+                            why: "A high system share relative to user means the workload is I/O bound, not compute bound. Different fix entirely.".to_string(),
+                            if_wrong: "Unexpectedly high system time often means many small reads where fewer large ones would do.".to_string(),
+                        }
+                        Metric {
+                            label: "load (1m)",
+                            value: format!("{} on {} cores", m.cpu.load1, m.cpu.cores),
+                            what: "Machine-wide run-queue average over the last minute — every process, not just rn.".to_string(),
+                            why: "Context for the numbers above: rn can look slow because the machine is busy with something else entirely.".to_string(),
+                            if_wrong: "Load persistently above the core count means everything on this machine is queueing.".to_string(),
                         }
                     }
 
-                    // ── Host & versions ───────────────────────────────────
-                    Board { title: "Host".to_string(),
-                        Metric {
-                            label: "free memory",
-                            value: format!("{} MB of {} MB", m.host.free_mem_mb.round(), m.host.total_mem_mb.round()),
-                            what: "Memory free on the machine as a whole.".to_string(),
-                            why: "The heap limit is only meaningful against this. A limit larger than free memory will be enforced by the operating system first, and less politely.".to_string(),
-                            if_wrong: "If free memory approaches zero the kernel may kill the process outright — that shows as a restart with no JavaScript error.".to_string(),
-                        }
-                        if !not_counted("concurrency.activeResources") {
-                        Metric {
-                            label: "active handles",
-                            value: if m.concurrency.active_resources.is_empty() {
-                                "none".to_string()
-                            } else {
-                                m.concurrency
-                                    .active_resources
-                                    .iter()
-                                    .map(|(k, v)| format!("{k} ×{v}"))
-                                    .collect::<Vec<_>>()
-                                    .join(", ")
-                            },
-                            what: "Open resources keeping the process alive — sockets, servers, timers.".to_string(),
-                            why: "Explains why a process will not exit, and shows leaked handles: a count that only grows is a connection or timer never cleaned up.".to_string(),
-                            if_wrong: "Steadily growing socket counts mean something is opening connections without closing them.".to_string(),
-                        }
-                        }
+                    // The same process readings the Status page shows, beside the
+                    // concurrency numbers they explain: threads and jobs are the
+                    // same story from two directions.
+                    if let Some(st) = status.as_ref() {
+                        ProcessBoards { status: st.clone() }
                     }
                 }
             }
