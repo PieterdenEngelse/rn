@@ -217,7 +217,15 @@ fn MonitorBoards(
 
                                     "This also changes the Heap memory limit setting. Its name, ",
                                     "--max-old-space-size, is V8's; Bun accepts the flag for ",
-                                    "compatibility and there is no old space for it to cap.",
+                                    "compatibility and there is no old space for it to cap.\n\n",
+
+                                    "Worth knowing if you ever check for yourself: asking the ",
+                                    "runtime its versions will not reveal any of this. Bun reports ",
+                                    "a V8 version and a Node version, because it is claiming an ",
+                                    "interface rather than describing itself. The giveaway is a ",
+                                    "webkit entry alongside them, which neither of the others has. ",
+                                    "Nothing here trusts those fields — the code asks whether a ",
+                                    "bun entry exists at all, which only Bun can answer.",
                                     ).to_string()
                                 } else {
                                     concat!(
@@ -225,6 +233,13 @@ fn MonitorBoards(
                                     "regions called spaces, each with its own allocation rules and ",
                                     "its own collector — thirteen of them on this runtime, though ",
                                     "only a few ever hold anything.\n\n",
+
+                                    "This board reads the same under Node and under Deno, and that ",
+                                    "is not a coincidence or an act of translation: both run V8, ",
+                                    "the engine from Chrome. Three runtimes, two engines. Bun is ",
+                                    "the odd one, running JavaScriptCore from Safari, which is why ",
+                                    "it gets a board of its own rather than this one filled in ",
+                                    "differently.\n\n",
 
                                     "Two carry the story. Every object is born in new_space, which ",
                                     "is small and swept constantly by a cheap copying pass; most ",
