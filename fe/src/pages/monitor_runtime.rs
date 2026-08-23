@@ -1542,7 +1542,11 @@ fn Board(
             div { class: "flex items-center gap-2 mb-3",
                 span { class: PARAM_BOARD_TITLE_CLASS, "{title}" }
                 if let Some(info) = info {
-                    {info}
+                    // Same right edge as the row buttons below it, which the
+                    // param-row rule pushes there. Sitting beside the title
+                    // instead put it in a column of its own, so a board with a
+                    // heading button had two columns of them.
+                    div { class: "ml-auto", {info} }
                 }
             }
             if let Some(chart) = chart {
