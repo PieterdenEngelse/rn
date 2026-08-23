@@ -231,11 +231,12 @@ that only behaves correctly in Chrome is not finished.
   cosmetic, never functional.** A dropdown that decorates a text field is fine:
   a browser that ignores the decoration still leaves a typable field. A control
   whose only affordance is browser-provided is not.
-- **Test in more than one engine before calling a UI change done.** A
-  screenshot proves the engine that took it and nothing else. `## Checking the
-  page` documents the Chromium command; Firefox is installed here too and
-  takes the second look with `firefox --headless --screenshot /tmp/p.png
-  --window-size=1400,2000 http://localhost:1790/...`.
+- **A screenshot proves the engine that took it and nothing else.** The
+  Chromium command in `## Checking the page` is the one that works here;
+  `firefox --headless --screenshot` is installed but produced no file in two
+  attempts (90s each, fresh profile included), so a second engine currently
+  means opening the page by hand. Where an engine has not been checked, say
+  so rather than implying it has.
 - The same applies to fonts, scrollbar styling and date/time inputs: assume the
   user's browser draws them its own way, and make sure the page still reads
   correctly when it does.

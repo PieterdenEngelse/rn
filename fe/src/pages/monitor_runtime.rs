@@ -317,6 +317,7 @@ fn MonitorBoards(
 
                 // ── Memory ────────────────────────────────────────────
                 Board { title: "Memory".to_string(),
+                    fill: true,
                     chart: Some(rsx! {
                         if let Some(h) = hist.as_ref() {
                             // Stretches so the plot can fill the board: h-full on the
@@ -1551,7 +1552,7 @@ fn Board(
                 // row, so a wrapping inner row just folds the fields back under
                 // the chart whenever the board is width-constrained — which
                 // looks exactly like the change not having happened.
-                div { class: "flex items-stretch gap-4",
+                div { class: if fill { "flex items-stretch gap-4 flex-1 min-h-0" } else { "flex items-stretch gap-4" },
                     div { class: "w-72 shrink-0 flex flex-col", {chart} }
                     div { class: PARAM_COLUMN_CLASS, {children} }
                 }
