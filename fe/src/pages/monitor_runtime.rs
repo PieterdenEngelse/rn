@@ -1009,6 +1009,70 @@ fn MonitorBoards(
                     }
                 }
 
+                // ── Heap spaces (V8 runtimes only) ────────────────────
+                // The counterpart to the JavaScriptCore board below: one board
+                // per engine, each reporting memory the way its engine actually
+                // divides it, rather than one board translating for both.
+                if !m.memory.spaces.is_empty() {
+                    Board {
+                        title: "Heap spaces".to_string(),
+                        info: Some(rsx! {
+                            InfoButton {
+                                title: "Where the heap actually is".to_string(),
+                                what: concat!(
+                                    "V8 does not keep one pool. Every space listed here has its ",
+                                    "own allocation rules and its own collector, and the numbers ",
+                                    "are what each currently holds against what it has reserved ",
+                                    "from the operating system. Spaces holding nothing are left ",
+                                    "out — V8 defines thirteen and a healthy process uses about ",
+                                    "five, so listing the empty ones would bury the few that ",
+                                    "move.\n\n",
+
+                                    "The used figure is live data. The reserved figure is what ",
+                                    "the space can grow into before asking for more, so the gap ",
+                                    "between them is headroom already paid for.",
+                                ).to_string(),
+                                why: concat!(
+                                    "Because which space is growing says what kind of problem you ",
+                                    "have, and the single heap-used figure cannot.\n\n",
+
+                                    "old_space growing and never falling back is a leak: it holds ",
+                                    "what survived collection, so anything still there is ",
+                                    "reachable from something. new_space growing means allocation ",
+                                    "pressure rather than retention — objects arriving faster ",
+                                    "than the copying collector clears them, which is what the ",
+                                    "new-space size setting addresses. large_object_space growing ",
+                                    "means a few very big things, typically buffers or long ",
+                                    "strings, which no heap setting will help with. code_space ",
+                                    "growing steadily means code is being compiled repeatedly, ",
+                                    "usually from building functions at run time.",
+                                ).to_string(),
+                                if_wrong: concat!(
+                                    "Read the movement, not the absolute values. Every space ",
+                                    "grows during warm-up and none of those numbers means ",
+                                    "anything on their own.\n\n",
+
+                                    "This board is absent under Bun, which runs JavaScriptCore ",
+                                    "and has no spaces — the JavaScriptCore board carries the ",
+                                    "equivalent there, counting live objects instead of regions. ",
+                                    "Bun will answer a question about spaces if asked, returning ",
+                                    "all thirteen V8 names with everything empty but a synthetic ",
+                                    "old_space; that is a compatibility shim and is not shown.",
+                                ).to_string(),
+                            }
+                        }),
+                        for sp in m.memory.spaces.iter() {
+                            Metric {
+                                label: "{sp.name}",
+                                value: format!("{} MB of {} MB", sp.used_mb, sp.size_mb),
+                                what: format!("Live data in {}, against what it has reserved.", sp.name),
+                                why: "Which space holds the memory says what kind of growth it is — retention, allocation pressure, or a few large objects.".to_string(),
+                                if_wrong: format!("Watch whether {} returns to a floor after a job ends. Growth that never falls back is retention rather than activity.", sp.name),
+                            }
+                        }
+                    }
+                }
+
                 // ── JavaScriptCore (Bun only) ─────────────────────────
                 if let Some(b) = m.bun.clone() {
                     Board {

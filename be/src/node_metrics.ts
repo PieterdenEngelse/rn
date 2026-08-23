@@ -82,6 +82,11 @@ export interface NodeMetrics {
         externalMB: number;
         arrayBuffersMB: number;
         largestSpace: { name: string; usedMB: number };
+        /**
+         * Every space holding anything, largest first. Empty under a runtime
+         * that has no spaces to report — see unsupported.
+         */
+        spaces: { name: string; usedMB: number; sizeMB: number }[];
     };
     eventLoop: {
         meanMs: number;
@@ -324,6 +329,22 @@ export function collect(): NodeMetrics {
             rssMB: round(mem.rss / MB),
             externalMB: round(mem.external / MB),
             arrayBuffersMB: round(mem.arrayBuffers / MB),
+            // Empty where the runtime has no spaces to report. Bun answers the
+            // question anyway — thirteen V8 names, twelve empty, one synthetic
+            // old_space holding everything — and that single entry is enough to
+            // make a board appear claiming to break down a heap it cannot see.
+            // Suppressed by the same list that hides largestSpace, so the two
+            // cannot disagree.
+            spaces: unsupportedHere().includes("memory.largestSpace")
+                ? []
+                : spaces
+                .filter((x) => x.space_used_size > 0)
+                .map((x) => ({
+                    name: x.space_name,
+                    usedMB: Number((x.space_used_size / MB).toFixed(2)),
+                    sizeMB: Number((x.space_size / MB).toFixed(2)),
+                }))
+                      .sort((a, b) => b.usedMB - a.usedMB),
             largestSpace: {
                 name: biggest.space_name,
                 usedMB: round(biggest.space_used_size / MB),

@@ -332,6 +332,14 @@ pub fn copy_to_clipboard(text: &str) {
     }
 }
 
+/// One V8 heap space that currently holds something.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct HeapSpace {
+    pub name: String,
+    #[serde(rename = "usedMB")] pub used_mb: f64,
+    #[serde(rename = "sizeMB")] pub size_mb: f64,
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct NodeMemory {
     #[serde(rename = "heapUsedMB")] pub heap_used_mb: f64,
@@ -341,6 +349,8 @@ pub struct NodeMemory {
     #[serde(rename = "rssMB")] pub rss_mb: f64,
     #[serde(rename = "externalMB")] pub external_mb: f64,
     #[serde(rename = "arrayBuffersMB")] pub array_buffers_mb: f64,
+    /// Every space holding anything, largest first. Empty where unsupported.
+    #[serde(default)] pub spaces: Vec<HeapSpace>,
     #[serde(rename = "largestSpace")] pub largest_space: LargestSpace,
 }
 
