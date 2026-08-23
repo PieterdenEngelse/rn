@@ -1046,6 +1046,7 @@ fn MonitorBoards(
 
                             div { class: "flex flex-wrap gap-4 items-stretch flex-1 min-h-0",
                                 Board { title: "Memory".to_string(),
+                                    fill: true,
                                     Sparkline {
                                         before_start: marker,
                                         runtime_change: switch.clone(),
@@ -1068,6 +1069,7 @@ fn MonitorBoards(
                                 }
                                 if measures_loop {
                                     Board { title: "Event loop".to_string(),
+                                    fill: true,
                                         Sparkline {
                                             before_start: marker,
                                             runtime_change: switch.clone(),
@@ -1528,10 +1530,15 @@ fn Board(
     #[props(default = None)] info: Option<Element>,
     /// A plot for this board, placed to the left of the fields.
     #[props(default = None)] chart: Option<Element>,
+    /// Take the full height of the row and give the leftover to the children.
+    /// A board holding one chart otherwise ends where its chart ends, so its
+    /// legend sits higher than the legend of a neighbour holding two — and the
+    /// two boards stop reading as one comparison.
+    #[props(default = false)] fill: bool,
     children: Element,
 ) -> Element {
     rsx! {
-        div { class: PARAM_BOARD_CLASS,
+        div { class: if fill { "{PARAM_BOARD_CLASS} h-full flex flex-col" } else { "{PARAM_BOARD_CLASS}" },
             div { class: "flex items-center gap-2 mb-3",
                 span { class: PARAM_BOARD_TITLE_CLASS, "{title}" }
                 if let Some(info) = info {
@@ -1550,6 +1557,8 @@ fn Board(
                     div { class: "w-72 shrink-0 flex flex-col", {chart} }
                     div { class: PARAM_COLUMN_CLASS, {children} }
                 }
+            } else if fill {
+                div { class: "{PARAM_COLUMN_CLASS} flex-1 min-h-0", {children} }
             } else {
                 div { class: PARAM_COLUMN_CLASS, {children} }
             }
