@@ -16,10 +16,15 @@ pub fn Panel(
     /// button lines up with a column of them further down the panel; without
     /// it the button lands wherever the title and subtitle happen to end.
     #[props(default = String::new())] header_class: String,
+    /// Extra classes for the panel's own box — how it sits in the layout
+    /// around it, not what is inside it. A panel stacked in the page column
+    /// needs none; one placed beside another has to say how the two share the
+    /// row, and only the page laying them out knows that.
+    #[props(default = String::new())] class: String,
     children: Element,
 ) -> Element {
     rsx! {
-        div { class: "bg-gray-800 border border-gray-700 rounded-lg p-4 shadow",
+        div { class: "bg-gray-800 border border-gray-700 rounded-lg p-4 shadow {class}",
             if let Some(title) = title {
                 div { class: "flex items-center justify-between mb-3",
                     div { class: "flex items-center gap-3 {header_class}",

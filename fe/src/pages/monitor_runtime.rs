@@ -1,6 +1,6 @@
 use crate::api::{fetch_node_history, fetch_node_metrics, fetch_status, StatusResponse, NodeHistory, NodeMetrics};
 use crate::components::param::*;
-use crate::components::{GlossaryEntry, InfoButton, Panel, ProcessBoards, Series, Sparkline};
+use crate::components::{runtime_name, GlossaryEntry, InfoButton, Panel, ProcessBoards, Series, Sparkline};
 use dioxus::prelude::*;
 
 /// Monitor → Runtime. What the runtime is actually doing.
@@ -934,6 +934,431 @@ fn MonitorBoards(
             }
         }
 
+        // Side by side, not stacked. The two panels are a pair: one holds
+        // what only this runtime can report, the other what holds true of
+        // the process whichever runtime is in it. Read together they say
+        // which half of a reading is the runtime's doing and which is not,
+        // and stacked they were a screen apart.
+        //
+        // No flex-wrap. The two panels' natural widths add up to more than a
+        // line, so wrapping put them straight back on top of each other —
+        // which looks exactly like the change not having happened. Held on one
+        // line they shrink instead, and the board rows inside each panel do
+        // the wrapping, which is what they already do on a narrow window.
+        div { class: "flex gap-4 items-stretch",
+            // What only this runtime answers. It sat under "All runtimes" beside
+            // the kernel counters, which read the same under all three — but a
+            // V8 collector count, JavaScriptCore's object tally and Deno's
+            // permission grants are each reported by exactly one runtime, and a
+            // panel claiming otherwise taught the wrong thing about all three.
+            Panel {
+                // flex-auto, not flex-1: `flex: 1 1 0%` would split the row
+                // evenly and squeeze the wider panel's boards into wrapping
+                // while the narrower one sat half empty. `flex: 1 1 auto`
+                // starts from what each actually needs and shares out only the
+                // leftover.
+                class: "flex-auto min-w-0".to_string(),
+                // Capitalised at the display boundary: `running` stays the
+                // settings id everything else matches on.
+                title: format!("{} specifics", runtime_name(&running)),
+                subtitle: Some("what this runtime alone reports, and what it is built from".to_string()),
+                info: Some(rsx! {
+                    InfoButton {
+                        title: format!("Why this panel changes with the runtime"),
+                        what: concat!(
+                            "Everything here is reported by one runtime and by no ",
+                            "other. Node exposes V8's collector, so it can say how ",
+                            "many collections have run. Bun runs JavaScriptCore, ",
+                            "which counts live objects rather than regions of ",
+                            "memory, and has no equivalent figure. Deno is the only ",
+                            "one that enforces permissions, so it is the only one ",
+                            "that can report them.\n\n",
+
+                            "The version rows are the same idea. `process.versions` ",
+                            "lists the components the running runtime is built ",
+                            "from, and those components differ: Bun has no libuv ",
+                            "and no V8, Deno carries a TypeScript compiler, only ",
+                            "Node has all four of its own.",
+                        ).to_string(),
+                        why: concat!(
+                            "Switching the runtime under Config → Settings changes ",
+                            "what this page can measure, not just what the numbers ",
+                            "say. Keeping the runtime-specific boards in a panel ",
+                            "named after the runtime makes that visible: boards ",
+                            "appear and disappear with the selection, which is the ",
+                            "honest picture of what you traded away.\n\n",
+
+                            "The panel beside this one is the counterpart — ",
+                            "kernel and machine figures that read the same under ",
+                            "all three, and are comparable across a switch in a ",
+                            "way nothing here is.",
+                        ).to_string(),
+                        if_wrong: concat!(
+                            "An empty panel means the runtime reports none of ",
+                            "this, which is a real answer rather than a fault. ",
+                            "Do not compare a figure here against one you ",
+                            "remember from a different runtime — they are not the ",
+                            "same measurement under a shared name, and the History ",
+                            "charts rule the boundary for exactly that reason.",
+                        ).to_string(),
+                    }
+                }),
+
+                div { class: "flex flex-wrap gap-4 items-stretch",
+
+                    // ── Collection (Node only) ────────────────────────────
+                    if !not_counted("gc") {
+                        Board {
+                            title: "Collection".to_string(),
+                            // Fixed, not w-fit: "time collecting" is a running
+                            // total that crosses 10, 100, 1000 ms and drops its
+                            // decimal whenever it lands on a whole number, so a
+                            // content-sized board changed width between polls.
+                            // 12rem holds the widest reading this board can show.
+                            width: "w-48 shrink-0".to_string(),
+                            info: Some(rsx! {
+                                InfoButton {
+                                    title: "Garbage collection".to_string(),
+                                    what: "How many collections have run since this process started, and how long they have taken in total. Cumulative rather than per-poll, because collections are bursty: a two-second rate would read zero most of the time and spike occasionally, which says less than a total does.".to_string(),
+                                    why: "Collection is the other way the loop stalls. Event-loop delay tells you something held a turn; this tells you whether the runtime itself was the something. A process spending seconds in collection is one allocating far more than it needs to, and the fix is in the code rather than in a setting.".to_string(),
+                                    if_wrong: "Divide the total by the count for an average pause. Averages in single-digit milliseconds are ordinary. Tens of milliseconds means a large live heap being walked repeatedly, which is the case a lower heap memory limit makes worse rather than better.".to_string(),
+                                }
+                            }),
+                            Metric {
+                                label: "collections",
+                                value: format!("{}", m.gc.count),
+                                what: "Total collections since the process started.".to_string(),
+                                why: "On its own it says little; read against uptime it says how hard the allocator is working.".to_string(),
+                                if_wrong: "A count climbing quickly on an idle process means something is allocating in a loop with nothing to show for it.".to_string(),
+                            }
+                            Metric {
+                                label: "time collecting",
+                                // Always one decimal. The backend rounds to one
+                                // (`toFixed(1)`) and then sends a JSON number, so a
+                                // total of exactly 19.0 arrives as `19` and the
+                                // field loses a character — the width wobble the
+                                // fixed board above also guards against, fixed here
+                                // at its source so the digits stop moving too.
+                                value: format!("{:.1} ms total", m.gc.total_ms),
+                                what: "Time spent in collection since start, added up.".to_string(),
+                                why: "This is time the loop was not running your code. Against uptime it is the share of the process's life spent tidying rather than working.".to_string(),
+                                if_wrong: "Growing as a fraction of uptime is the signal. A big total on a long-running process can be perfectly healthy.".to_string(),
+                            }
+                        }
+                    }
+
+                    // ── Heap spaces (V8 runtimes only) ────────────────────
+                    // The counterpart to the JavaScriptCore board below: one board
+                    // per engine, each reporting memory the way its engine actually
+                    // divides it, rather than one board translating for both.
+                    if !m.memory.spaces.is_empty() {
+                        Board {
+                            title: "Heap spaces".to_string(),
+                            info: Some(rsx! {
+                                InfoButton {
+                                    title: "Where the heap actually is".to_string(),
+                                    what: concat!(
+                                        "V8 does not keep one pool. Every space listed here has its ",
+                                        "own allocation rules and its own collector, and the numbers ",
+                                        "are what each currently holds, and how much memory V8 has ",
+                                        "committed from the operating system to hold it.\n\n",
+
+                                        "Those two numbers sit close together and that is not a ",
+                                        "warning. The second is not a ceiling — V8 commits a little ",
+                                        "more than it is using and grows as it goes, because ",
+                                        "committed memory counts against the process whether or not ",
+                                        "anything is in it. Measured here: old_space at 2.7MB used ",
+                                        "of 2.9MB committed grew to 157.6MB of 158.9MB, staying at ",
+                                        "roughly 97 per cent throughout, while the actual ceiling ",
+                                        "never moved. A space at 99 per cent is V8 being tidy, not a ",
+                                        "space about to overflow. large_object_space runs closest of ",
+                                        "all, because a large object gets a page sized to fit it and ",
+                                        "there is nothing spare by construction.\n\n",
+
+                                        "The number that does constrain anything is the heap limit, ",
+                                        "shown on the old_space row because that is the space it ",
+                                        "governs. Read old_space against that, not against its own ",
+                                        "committed figure.\n\n",
+
+                                        "A space appears here once it has held something, and stays ",
+                                        "afterwards even if it empties — a space that fell back to ",
+                                        "zero is worth seeing, and one that vanished from the list ",
+                                        "would be indistinguishable from one that never existed. ",
+                                        "Spaces that have never been used are left out entirely: V8 ",
+                                        "defines more than are ever in play, and which are in play ",
+                                        "depends on the version and on what the code does, so this ",
+                                        "list is observed rather than fixed.\n\n",
+
+                                        "The used figure is live data. The reserved figure is what ",
+                                        "the space can grow into before asking for more, so the gap ",
+                                        "between them is headroom already paid for.",
+                                    ).to_string(),
+                                    why: concat!(
+                                        "Because which space is growing says what kind of problem you ",
+                                        "have, and the single heap-used figure cannot.\n\n",
+
+                                        "old_space growing and never falling back is a leak: it holds ",
+                                        "what survived collection, so anything still there is ",
+                                        "reachable from something. new_space growing means allocation ",
+                                        "pressure rather than retention — objects arriving faster ",
+                                        "than the copying collector clears them, which is what the ",
+                                        "new-space size setting addresses. large_object_space growing ",
+                                        "means a few very big things, typically buffers or long ",
+                                        "strings, which no heap setting will help with. code_space ",
+                                        "growing steadily means code is being compiled repeatedly, ",
+                                        "usually from building functions at run time.",
+                                    ).to_string(),
+                                    if_wrong: concat!(
+                                        "Read the movement, not the absolute values. Every space ",
+                                        "grows during warm-up and none of those numbers means ",
+                                        "anything on their own.\n\n",
+
+                                        "Only one of these can reach a ceiling. new_space filling ",
+                                        "just triggers a collection and carries on; code_space and ",
+                                        "trusted_space grow as needed. old_space reaching the heap ",
+                                        "limit ends the process: V8 prints \"Reached heap limit - ",
+                                        "JavaScript heap out of memory\" and aborts with exit 134. ",
+                                        "It is not an exception — a try/catch around the allocation ",
+                                        "never runs — so no error handler and no rejection policy ",
+                                        "can intercept it. The launcher restarts rn afterwards, and ",
+                                        "gives up if it keeps happening rather than thrashing.\n\n",
+
+                                        "What to do depends on which it is, and this board answers ",
+                                        "that. If the old_space floor climbs across runs and never ",
+                                        "falls back after a job ends, that is retention: raising the ",
+                                        "limit buys time and crashes later at a larger number. Reach ",
+                                        "for the Heap snapshot signal setting instead — it dumps a ",
+                                        "snapshot you can open in Chrome DevTools to see what is ",
+                                        "holding the memory, and it has to be taken while the ",
+                                        "process is still alive.\n\n",
+
+                                        "If the floor is flat and one job simply needs more, the ",
+                                        "Heap memory limit is the right lever. Check free memory on ",
+                                        "the Host board first: a limit above what the machine has ",
+                                        "only moves the failure from V8 to the operating system's ",
+                                        "own killer, which gives you no message at all. And it sets ",
+                                        "old space rather than the total, so the real ceiling lands ",
+                                        "higher than the number you type.\n\n",
+
+                                        "If large_object_space is what grows, no limit helps. That ",
+                                        "is a few very big buffers or strings, and the answer is to ",
+                                        "stream the work rather than hold it.\n\n",
+
+                                        "Under Bun none of this applies: it has no such cap, and ",
+                                        "its low-memory mode is a pressure dial rather than a ",
+                                        "ceiling, so the machine's own memory is the only limit. ",
+                                        "Under Deno the Heap memory limit works exactly as it does ",
+                                        "here, from the V8 tile on the Config page.\n\n",
+
+                                        "This board is absent under Bun, which runs JavaScriptCore ",
+                                        "and has no spaces — the JavaScriptCore board carries the ",
+                                        "equivalent there, counting live objects instead of regions. ",
+                                        "Bun will answer a question about spaces if asked, returning ",
+                                        "the full list of V8 names with everything empty but a ",
+                                        "synthetic ",
+                                        "old_space; that is a compatibility shim and is not shown.",
+                                    ).to_string(),
+                                }
+                            }),
+                            Metric {
+                                label: "ceiling",
+                                value: format!("{} MB", m.memory.heap_limit_mb),
+                                what: "The heap limit: the only figure on this board that is a limit rather than a reading, and the one old_space is measured against.".to_string(),
+                                why: "The committed number beside each space is not a ceiling — V8 grows it as it goes. This is the number that ends the process when old_space reaches it.".to_string(),
+                                if_wrong: "Set by the Heap memory limit setting, or chosen from installed RAM when that is unset. Raising it above the machine's free memory only moves the failure to the operating system, which reports nothing.".to_string(),
+                            }
+                            for sp in m.memory.spaces.iter() {
+                                Metric {
+                                    label: "{sp.name}",
+                                    // "committed", not "of": the second number is what V8
+                                    // has taken from the operating system, not a ceiling.
+                                    // Written as "X used, Y committed" so the pair cannot be
+                                    // read as a fullness percentage, which it is not.
+                                    value: format!("{} MB used, {} MB committed", sp.used_mb, sp.size_mb),
+                                    what: format!("Live data in {}, and the memory V8 has committed from the operating system to hold it.", sp.name),
+                                    why: "Which space holds the memory says what kind of growth it is — retention, allocation pressure, or a few large objects.".to_string(),
+                                    if_wrong: format!("The two numbers sitting close together is normal and not a warning: V8 commits little more than it is using, because committed memory counts against the process whether or not anything is in it. Watch whether {} returns to a floor after a job ends — growth that never falls back is retention rather than activity.", sp.name),
+                                }
+                            }
+                        }
+                    }
+
+                    // ── JavaScriptCore (Bun only) ─────────────────────────
+                    if let Some(b) = m.bun.clone() {
+                        Board {
+                            title: "JavaScriptCore".to_string(),
+                            info: Some(rsx! {
+                                InfoButton {
+                                    title: "JavaScriptCore's own accounting".to_string(),
+                                    what: "Bun does not run V8, so the heap figures above come from a compatibility shim and the V8 space breakdown has nothing behind it. These come from bun:jsc instead, and are what JavaScriptCore actually counts: live objects rather than regions of memory.".to_string(),
+                                    why: "It is a different way of seeing the same question. V8 tells you which kind of memory is growing; JSC tells you how many objects are alive and how many are pinned. A leak shows up here as a count that climbs and never falls back.".to_string(),
+                                    if_wrong: "These have no Node equivalent, so there is nothing to compare them against across runtimes. Read them against themselves over time rather than against the Node numbers you are used to.".to_string(),
+                                }
+                            }),
+                            Metric {
+                                label: "live objects",
+                                value: format!("{}", b.object_count),
+                                what: "How many objects JavaScriptCore currently has alive.".to_string(),
+                                why: "The most direct leak signal Bun offers. Memory can look flat while an object count climbs, if the objects are small.".to_string(),
+                                if_wrong: "Rising steadily across runs that should be idempotent means something is retained. Falling back after each job is healthy, whatever the absolute number.".to_string(),
+                            }
+                            Metric {
+                                label: "protected objects",
+                                value: format!("{}", b.protected_object_count),
+                                what: "Objects the runtime has pinned so the collector cannot reclaim them, usually because native code holds a reference.".to_string(),
+                                why: "It should be small and roughly constant. Protection is what native bindings use to keep a value alive across a call.".to_string(),
+                                if_wrong: "A protected count that grows is a leak the collector cannot fix by itself — the reference is held outside the heap, so no amount of collection releases it.".to_string(),
+                            }
+                            Metric {
+                                label: "heap size",
+                                value: format!("{} MB of {} MB", b.heap_size_mb, b.heap_capacity_mb),
+                                what: "JSC's live heap against the capacity it has reserved for it.".to_string(),
+                                why: "The gap is headroom already paid for: the runtime can allocate into it without asking the operating system for more.".to_string(),
+                                if_wrong: "Size approaching capacity means the next allocation grows the heap, which is when Bun's low-memory mode changes behaviour.".to_string(),
+                            }
+                            Metric {
+                                label: "allocator",
+                                value: format!("{} MB now, {} MB peak", b.alloc_current_mb, b.alloc_peak_mb),
+                                what: "mimalloc, the allocator underneath JSC — what the operating system has actually handed this process, and the most it ever held.".to_string(),
+                                why: "The peak is the number that matters on a shared machine: it is the high-water mark someone else had to make room for, even if the current figure is small now.".to_string(),
+                                if_wrong: "A peak far above the current value means a burst allocated heavily and gave it back. Repeated bursts are worth finding even though the steady state looks fine.".to_string(),
+                            }
+                        }
+                    }
+
+                    // ── Permissions (Deno only) ───────────────────────────
+                    if let Some(d) = m.deno.clone() {
+                        Board {
+                            title: "Permissions".to_string(),
+                            info: Some(rsx! {
+                                InfoButton {
+                                    title: "What this process is allowed to do".to_string(),
+                                    what: "Deno denies everything by default and the launcher grants exactly what the app needs. This board reports what was actually granted, read from the running process rather than from the command line that started it.\n\nprompt means not granted: nothing has been allowed, and an attempt would be refused rather than queued for approval, since nothing here is interactive.".to_string(),
+                                    why: "It is the only runtime that can answer this at all, and it is the reason to run under Deno. A dependency that quietly tries to reach the network is stopped by the runtime rather than trusted not to try, and this is where you confirm the boundary is where you think it is.".to_string(),
+                                    if_wrong: "net reading prompt while the app plainly serves requests is expected: the grant is scoped to one address, so the blanket question has no single answer. The bind address row below is the one that matters.".to_string(),
+                                }
+                            }),
+                            Metric {
+                                label: "bind address",
+                                value: if d.bind_address_allowed { "granted".to_string() } else { "NOT granted".to_string() },
+                                what: "Whether this process may listen on its own API address, asked about that exact host and port rather than about the network in general.".to_string(),
+                                why: "A scoped --allow-net answers prompt to the blanket question, so this is the row that tells you the server can actually serve. It is also the check that fails if the launcher and the backend disagree about the bind address.".to_string(),
+                                if_wrong: "Not granted while the app is running means you are reading a stale page — the process could not have started.".to_string(),
+                            }
+                            for (name, state) in d.permissions.iter() {
+                                Metric {
+                                    label: "{name}",
+                                    value: "{state}",
+                                    what: format!("The {name} permission, as the running process reports it."),
+                                    why: "Granted means the runtime will allow it without asking. Anything else means an attempt is refused — which for automation is the point, not a limitation.".to_string(),
+                                    if_wrong: format!("A job failing with a permission error naming {name} is this row saying no. Widen the grant deliberately, or do not do the thing."),
+                                }
+                            }
+                        }
+                    }
+
+                    // ── What the runtime is built from ────────────────────
+                    Board {
+                        title: "Versions".to_string(),
+                        info: Some(rsx! {
+                            InfoButton {
+                                title: "The runtime's own components".to_string(),
+                                what: format!("What {running} is assembled from, read from `process.versions` in the running process. The list is not the same under every runtime, so this board shows the components the one in front of you actually has rather than a fixed set of names."),
+                                why: "It is the first thing to quote in a bug report, and the only place a packaging mistake shows up: rn ships its own runtime and never uses one from the machine, so these are fixed when the app is built. A version you did not expect means the app found a runtime it was not supposed to.".to_string(),
+                                if_wrong: "Under Bun or Deno the `node (claimed)` row is a compatibility target, not a Node that exists here — see its own panel. Under Node, a version differing from be/.nvmrc means the bundled runtime and the development one have drifted, which is the classic works-on-my-machine.".to_string(),
+                            }
+                        }),
+                        for key in version_keys.iter().copied() {
+                            if let Some(v) = m.versions.get(key) {
+                                {
+                                    let claimed = key == "node" && running != "node";
+                                    rsx! {
+                                        Metric {
+                                            label: if claimed { "node (claimed)" } else { key },
+                                            value: if claimed {
+                                                format!("{v} — Node compatibility claimed by {running}")
+                                            } else {
+                                                v.clone()
+                                            },
+                                            what: if claimed {
+                                                format!("Not a Node that exists here. {running} implements enough of Node's API to run code written for it, and reports this number when asked which Node it is. No Node of this version is installed, bundled, or running.")
+                                            } else {
+                                                format!("Version of {key} inside the bundled runtime.")
+                                            },
+                                            why: if claimed {
+                                                format!("It tells you which Node API level {running} is aiming at, which is what decides whether a package written for Node works here. Read it as a compatibility target, never as the runtime in use — the runtime in use is named at the top of this page.")
+                                            } else {
+                                                "The runtime ships with rn, so these are fixed at packaging time rather than whatever the machine has. Worth quoting in a bug report.".to_string()
+                                            },
+                                            if_wrong: if claimed {
+                                                "If a package fails here but works under Node, this number is the first thing to quote: the claim is a target rather than a guarantee, and the gap between claimed and implemented is where those failures live.".to_string()
+                                            } else {
+                                                "A node version differing from be/.nvmrc means the bundled runtime and the development one have drifted.".to_string()
+                                            },
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // The machine, not the runtime: these read the same whichever
+            // runtime is running, so they do not belong in a tile named after one.
+            Panel {
+                class: "flex-auto min-w-0".to_string(),
+                // Not "All runtimes": a pid, a launcher, a job count and a
+                // listening address describe this process and no other.
+                title: "This process".to_string(),
+                subtitle: Some("how it is running, and what it is running".to_string()),
+
+                div { class: "flex flex-wrap gap-4 items-stretch",
+
+                    // ── Kernel counters ───────────────────────────────────
+                    Board { title: "Concurrency".to_string(),
+                        if !not_counted("concurrency.threadpoolSize") {
+                        Metric {
+                            label: "threadpool",
+                            value: m.concurrency.threadpool_size.to_string(),
+                            what: "Threads libuv uses for file system, DNS, zlib and some crypto work.".to_string(),
+                            why: "The measured counterpart of the libuv thread pool setting. Read it with event-loop utilisation: low utilisation plus a slow file job means this is the bottleneck.".to_string(),
+                            if_wrong: "If it does not match what you set, the setting has not been applied — it needs a restart, and the banner on Config → Settings will say so.".to_string(),
+                        }
+                        }
+                        Metric {
+                            label: "cpu (user)",
+                            value: format!("{}%", m.cpu.user_pct),
+                            what: "CPU spent in your code since this page last sampled, as a share of one core.".to_string(),
+                            why: "Above 100 means more than a core's worth. With {m.cpu.cores} cores here, sustained values near {m.cpu.cores}00% mean the machine is the limit.".to_string(),
+                            if_wrong: "High user CPU with a growing event-loop delay is compute on the main thread — the case for a Rust component.".to_string(),
+                        }
+                        Metric {
+                            label: "cpu (system)",
+                            value: format!("{}%", m.cpu.system_pct),
+                            what: "CPU spent in kernel calls on this process's behalf — file and network I/O.".to_string(),
+                            why: "A high system share relative to user means the workload is I/O bound, not compute bound. Different fix entirely.".to_string(),
+                            if_wrong: "Unexpectedly high system time often means many small reads where fewer large ones would do.".to_string(),
+                        }
+                        Metric {
+                            label: "load (1m)",
+                            value: format!("{} on {} cores", m.cpu.load1, m.cpu.cores),
+                            what: "Machine-wide run-queue average over the last minute — every process, not just rn.".to_string(),
+                            why: "Context for the numbers above: rn can look slow because the machine is busy with something else entirely.".to_string(),
+                            if_wrong: "Load persistently above the core count means everything on this machine is queueing.".to_string(),
+                        }
+                    }
+
+                    // The same process readings the Status page shows, beside the
+                    // concurrency numbers they explain: threads and jobs are the
+                    // same story from two directions.
+                    if let Some(st) = status.as_ref() {
+                        ProcessBoards { status: st.clone() }
+                    }
+                }
+            }
+        }
+
         if let Some(h) = hist.as_ref().filter(|h| !h.tiers.is_empty()) {
             {
                 let idx = window().min(h.tiers.len() - 1);
@@ -1124,397 +1549,6 @@ fn MonitorBoards(
                 }
             }
         }
-
-        // What only this runtime answers. It sat under "All runtimes" beside
-        // the kernel counters, which read the same under all three — but a
-        // V8 collector count, JavaScriptCore's object tally and Deno's
-        // permission grants are each reported by exactly one runtime, and a
-        // panel claiming otherwise taught the wrong thing about all three.
-        Panel {
-            title: format!("{running} specifics"),
-            subtitle: Some("what this runtime alone reports, and what it is built from".to_string()),
-            info: Some(rsx! {
-                InfoButton {
-                    title: format!("Why this panel changes with the runtime"),
-                    what: concat!(
-                        "Everything here is reported by one runtime and by no ",
-                        "other. Node exposes V8's collector, so it can say how ",
-                        "many collections have run. Bun runs JavaScriptCore, ",
-                        "which counts live objects rather than regions of ",
-                        "memory, and has no equivalent figure. Deno is the only ",
-                        "one that enforces permissions, so it is the only one ",
-                        "that can report them.\n\n",
-
-                        "The version rows are the same idea. `process.versions` ",
-                        "lists the components the running runtime is built ",
-                        "from, and those components differ: Bun has no libuv ",
-                        "and no V8, Deno carries a TypeScript compiler, only ",
-                        "Node has all four of its own.",
-                    ).to_string(),
-                    why: concat!(
-                        "Switching the runtime under Config → Settings changes ",
-                        "what this page can measure, not just what the numbers ",
-                        "say. Keeping the runtime-specific boards in a panel ",
-                        "named after the runtime makes that visible: boards ",
-                        "appear and disappear with the selection, which is the ",
-                        "honest picture of what you traded away.\n\n",
-
-                        "The panel below this one is the counterpart — kernel ",
-                        "and machine figures that read the same under all ",
-                        "three, and are comparable across a switch in a way ",
-                        "nothing here is.",
-                    ).to_string(),
-                    if_wrong: concat!(
-                        "An empty panel means the runtime reports none of ",
-                        "this, which is a real answer rather than a fault. ",
-                        "Do not compare a figure here against one you ",
-                        "remember from a different runtime — they are not the ",
-                        "same measurement under a shared name, and the History ",
-                        "charts rule the boundary for exactly that reason.",
-                    ).to_string(),
-                }
-            }),
-
-            div { class: "flex flex-wrap gap-4 items-stretch",
-
-                // ── Collection (Node only) ────────────────────────────
-                if !not_counted("gc") {
-                    Board {
-                        title: "Collection".to_string(),
-                        info: Some(rsx! {
-                            InfoButton {
-                                title: "Garbage collection".to_string(),
-                                what: "How many collections have run since this process started, and how long they have taken in total. Cumulative rather than per-poll, because collections are bursty: a two-second rate would read zero most of the time and spike occasionally, which says less than a total does.".to_string(),
-                                why: "Collection is the other way the loop stalls. Event-loop delay tells you something held a turn; this tells you whether the runtime itself was the something. A process spending seconds in collection is one allocating far more than it needs to, and the fix is in the code rather than in a setting.".to_string(),
-                                if_wrong: "Divide the total by the count for an average pause. Averages in single-digit milliseconds are ordinary. Tens of milliseconds means a large live heap being walked repeatedly, which is the case a lower heap memory limit makes worse rather than better.".to_string(),
-                            }
-                        }),
-                        Metric {
-                            label: "collections",
-                            value: format!("{}", m.gc.count),
-                            what: "Total collections since the process started.".to_string(),
-                            why: "On its own it says little; read against uptime it says how hard the allocator is working.".to_string(),
-                            if_wrong: "A count climbing quickly on an idle process means something is allocating in a loop with nothing to show for it.".to_string(),
-                        }
-                        Metric {
-                            label: "time collecting",
-                            value: format!("{} ms total", m.gc.total_ms),
-                            what: "Time spent in collection since start, added up.".to_string(),
-                            why: "This is time the loop was not running your code. Against uptime it is the share of the process's life spent tidying rather than working.".to_string(),
-                            if_wrong: "Growing as a fraction of uptime is the signal. A big total on a long-running process can be perfectly healthy.".to_string(),
-                        }
-                    }
-                }
-
-                // ── Heap spaces (V8 runtimes only) ────────────────────
-                // The counterpart to the JavaScriptCore board below: one board
-                // per engine, each reporting memory the way its engine actually
-                // divides it, rather than one board translating for both.
-                if !m.memory.spaces.is_empty() {
-                    Board {
-                        title: "Heap spaces".to_string(),
-                        info: Some(rsx! {
-                            InfoButton {
-                                title: "Where the heap actually is".to_string(),
-                                what: concat!(
-                                    "V8 does not keep one pool. Every space listed here has its ",
-                                    "own allocation rules and its own collector, and the numbers ",
-                                    "are what each currently holds, and how much memory V8 has ",
-                                    "committed from the operating system to hold it.\n\n",
-
-                                    "Those two numbers sit close together and that is not a ",
-                                    "warning. The second is not a ceiling — V8 commits a little ",
-                                    "more than it is using and grows as it goes, because ",
-                                    "committed memory counts against the process whether or not ",
-                                    "anything is in it. Measured here: old_space at 2.7MB used ",
-                                    "of 2.9MB committed grew to 157.6MB of 158.9MB, staying at ",
-                                    "roughly 97 per cent throughout, while the actual ceiling ",
-                                    "never moved. A space at 99 per cent is V8 being tidy, not a ",
-                                    "space about to overflow. large_object_space runs closest of ",
-                                    "all, because a large object gets a page sized to fit it and ",
-                                    "there is nothing spare by construction.\n\n",
-
-                                    "The number that does constrain anything is the heap limit, ",
-                                    "shown on the old_space row because that is the space it ",
-                                    "governs. Read old_space against that, not against its own ",
-                                    "committed figure.\n\n",
-
-                                    "A space appears here once it has held something, and stays ",
-                                    "afterwards even if it empties — a space that fell back to ",
-                                    "zero is worth seeing, and one that vanished from the list ",
-                                    "would be indistinguishable from one that never existed. ",
-                                    "Spaces that have never been used are left out entirely: V8 ",
-                                    "defines more than are ever in play, and which are in play ",
-                                    "depends on the version and on what the code does, so this ",
-                                    "list is observed rather than fixed.\n\n",
-
-                                    "The used figure is live data. The reserved figure is what ",
-                                    "the space can grow into before asking for more, so the gap ",
-                                    "between them is headroom already paid for.",
-                                ).to_string(),
-                                why: concat!(
-                                    "Because which space is growing says what kind of problem you ",
-                                    "have, and the single heap-used figure cannot.\n\n",
-
-                                    "old_space growing and never falling back is a leak: it holds ",
-                                    "what survived collection, so anything still there is ",
-                                    "reachable from something. new_space growing means allocation ",
-                                    "pressure rather than retention — objects arriving faster ",
-                                    "than the copying collector clears them, which is what the ",
-                                    "new-space size setting addresses. large_object_space growing ",
-                                    "means a few very big things, typically buffers or long ",
-                                    "strings, which no heap setting will help with. code_space ",
-                                    "growing steadily means code is being compiled repeatedly, ",
-                                    "usually from building functions at run time.",
-                                ).to_string(),
-                                if_wrong: concat!(
-                                    "Read the movement, not the absolute values. Every space ",
-                                    "grows during warm-up and none of those numbers means ",
-                                    "anything on their own.\n\n",
-
-                                    "Only one of these can reach a ceiling. new_space filling ",
-                                    "just triggers a collection and carries on; code_space and ",
-                                    "trusted_space grow as needed. old_space reaching the heap ",
-                                    "limit ends the process: V8 prints \"Reached heap limit - ",
-                                    "JavaScript heap out of memory\" and aborts with exit 134. ",
-                                    "It is not an exception — a try/catch around the allocation ",
-                                    "never runs — so no error handler and no rejection policy ",
-                                    "can intercept it. The launcher restarts rn afterwards, and ",
-                                    "gives up if it keeps happening rather than thrashing.\n\n",
-
-                                    "What to do depends on which it is, and this board answers ",
-                                    "that. If the old_space floor climbs across runs and never ",
-                                    "falls back after a job ends, that is retention: raising the ",
-                                    "limit buys time and crashes later at a larger number. Reach ",
-                                    "for the Heap snapshot signal setting instead — it dumps a ",
-                                    "snapshot you can open in Chrome DevTools to see what is ",
-                                    "holding the memory, and it has to be taken while the ",
-                                    "process is still alive.\n\n",
-
-                                    "If the floor is flat and one job simply needs more, the ",
-                                    "Heap memory limit is the right lever. Check free memory on ",
-                                    "the Host board first: a limit above what the machine has ",
-                                    "only moves the failure from V8 to the operating system's ",
-                                    "own killer, which gives you no message at all. And it sets ",
-                                    "old space rather than the total, so the real ceiling lands ",
-                                    "higher than the number you type.\n\n",
-
-                                    "If large_object_space is what grows, no limit helps. That ",
-                                    "is a few very big buffers or strings, and the answer is to ",
-                                    "stream the work rather than hold it.\n\n",
-
-                                    "Under Bun none of this applies: it has no such cap, and ",
-                                    "its low-memory mode is a pressure dial rather than a ",
-                                    "ceiling, so the machine's own memory is the only limit. ",
-                                    "Under Deno the Heap memory limit works exactly as it does ",
-                                    "here, from the V8 tile on the Config page.\n\n",
-
-                                    "This board is absent under Bun, which runs JavaScriptCore ",
-                                    "and has no spaces — the JavaScriptCore board carries the ",
-                                    "equivalent there, counting live objects instead of regions. ",
-                                    "Bun will answer a question about spaces if asked, returning ",
-                                    "the full list of V8 names with everything empty but a ",
-                                    "synthetic ",
-                                    "old_space; that is a compatibility shim and is not shown.",
-                                ).to_string(),
-                            }
-                        }),
-                        Metric {
-                            label: "ceiling",
-                            value: format!("{} MB", m.memory.heap_limit_mb),
-                            what: "The heap limit: the only figure on this board that is a limit rather than a reading, and the one old_space is measured against.".to_string(),
-                            why: "The committed number beside each space is not a ceiling — V8 grows it as it goes. This is the number that ends the process when old_space reaches it.".to_string(),
-                            if_wrong: "Set by the Heap memory limit setting, or chosen from installed RAM when that is unset. Raising it above the machine's free memory only moves the failure to the operating system, which reports nothing.".to_string(),
-                        }
-                        for sp in m.memory.spaces.iter() {
-                            Metric {
-                                label: "{sp.name}",
-                                // "committed", not "of": the second number is what V8
-                                // has taken from the operating system, not a ceiling.
-                                // Written as "X used, Y committed" so the pair cannot be
-                                // read as a fullness percentage, which it is not.
-                                value: format!("{} MB used, {} MB committed", sp.used_mb, sp.size_mb),
-                                what: format!("Live data in {}, and the memory V8 has committed from the operating system to hold it.", sp.name),
-                                why: "Which space holds the memory says what kind of growth it is — retention, allocation pressure, or a few large objects.".to_string(),
-                                if_wrong: format!("The two numbers sitting close together is normal and not a warning: V8 commits little more than it is using, because committed memory counts against the process whether or not anything is in it. Watch whether {} returns to a floor after a job ends — growth that never falls back is retention rather than activity.", sp.name),
-                            }
-                        }
-                    }
-                }
-
-                // ── JavaScriptCore (Bun only) ─────────────────────────
-                if let Some(b) = m.bun.clone() {
-                    Board {
-                        title: "JavaScriptCore".to_string(),
-                        info: Some(rsx! {
-                            InfoButton {
-                                title: "JavaScriptCore's own accounting".to_string(),
-                                what: "Bun does not run V8, so the heap figures above come from a compatibility shim and the V8 space breakdown has nothing behind it. These come from bun:jsc instead, and are what JavaScriptCore actually counts: live objects rather than regions of memory.".to_string(),
-                                why: "It is a different way of seeing the same question. V8 tells you which kind of memory is growing; JSC tells you how many objects are alive and how many are pinned. A leak shows up here as a count that climbs and never falls back.".to_string(),
-                                if_wrong: "These have no Node equivalent, so there is nothing to compare them against across runtimes. Read them against themselves over time rather than against the Node numbers you are used to.".to_string(),
-                            }
-                        }),
-                        Metric {
-                            label: "live objects",
-                            value: format!("{}", b.object_count),
-                            what: "How many objects JavaScriptCore currently has alive.".to_string(),
-                            why: "The most direct leak signal Bun offers. Memory can look flat while an object count climbs, if the objects are small.".to_string(),
-                            if_wrong: "Rising steadily across runs that should be idempotent means something is retained. Falling back after each job is healthy, whatever the absolute number.".to_string(),
-                        }
-                        Metric {
-                            label: "protected objects",
-                            value: format!("{}", b.protected_object_count),
-                            what: "Objects the runtime has pinned so the collector cannot reclaim them, usually because native code holds a reference.".to_string(),
-                            why: "It should be small and roughly constant. Protection is what native bindings use to keep a value alive across a call.".to_string(),
-                            if_wrong: "A protected count that grows is a leak the collector cannot fix by itself — the reference is held outside the heap, so no amount of collection releases it.".to_string(),
-                        }
-                        Metric {
-                            label: "heap size",
-                            value: format!("{} MB of {} MB", b.heap_size_mb, b.heap_capacity_mb),
-                            what: "JSC's live heap against the capacity it has reserved for it.".to_string(),
-                            why: "The gap is headroom already paid for: the runtime can allocate into it without asking the operating system for more.".to_string(),
-                            if_wrong: "Size approaching capacity means the next allocation grows the heap, which is when Bun's low-memory mode changes behaviour.".to_string(),
-                        }
-                        Metric {
-                            label: "allocator",
-                            value: format!("{} MB now, {} MB peak", b.alloc_current_mb, b.alloc_peak_mb),
-                            what: "mimalloc, the allocator underneath JSC — what the operating system has actually handed this process, and the most it ever held.".to_string(),
-                            why: "The peak is the number that matters on a shared machine: it is the high-water mark someone else had to make room for, even if the current figure is small now.".to_string(),
-                            if_wrong: "A peak far above the current value means a burst allocated heavily and gave it back. Repeated bursts are worth finding even though the steady state looks fine.".to_string(),
-                        }
-                    }
-                }
-
-                // ── Permissions (Deno only) ───────────────────────────
-                if let Some(d) = m.deno.clone() {
-                    Board {
-                        title: "Permissions".to_string(),
-                        info: Some(rsx! {
-                            InfoButton {
-                                title: "What this process is allowed to do".to_string(),
-                                what: "Deno denies everything by default and the launcher grants exactly what the app needs. This board reports what was actually granted, read from the running process rather than from the command line that started it.\n\nprompt means not granted: nothing has been allowed, and an attempt would be refused rather than queued for approval, since nothing here is interactive.".to_string(),
-                                why: "It is the only runtime that can answer this at all, and it is the reason to run under Deno. A dependency that quietly tries to reach the network is stopped by the runtime rather than trusted not to try, and this is where you confirm the boundary is where you think it is.".to_string(),
-                                if_wrong: "net reading prompt while the app plainly serves requests is expected: the grant is scoped to one address, so the blanket question has no single answer. The bind address row below is the one that matters.".to_string(),
-                            }
-                        }),
-                        Metric {
-                            label: "bind address",
-                            value: if d.bind_address_allowed { "granted".to_string() } else { "NOT granted".to_string() },
-                            what: "Whether this process may listen on its own API address, asked about that exact host and port rather than about the network in general.".to_string(),
-                            why: "A scoped --allow-net answers prompt to the blanket question, so this is the row that tells you the server can actually serve. It is also the check that fails if the launcher and the backend disagree about the bind address.".to_string(),
-                            if_wrong: "Not granted while the app is running means you are reading a stale page — the process could not have started.".to_string(),
-                        }
-                        for (name, state) in d.permissions.iter() {
-                            Metric {
-                                label: "{name}",
-                                value: "{state}",
-                                what: format!("The {name} permission, as the running process reports it."),
-                                why: "Granted means the runtime will allow it without asking. Anything else means an attempt is refused — which for automation is the point, not a limitation.".to_string(),
-                                if_wrong: format!("A job failing with a permission error naming {name} is this row saying no. Widen the grant deliberately, or do not do the thing."),
-                            }
-                        }
-                    }
-                }
-
-                // ── What the runtime is built from ────────────────────
-                Board {
-                    title: "Versions".to_string(),
-                    info: Some(rsx! {
-                        InfoButton {
-                            title: "The runtime's own components".to_string(),
-                            what: format!("What {running} is assembled from, read from `process.versions` in the running process. The list is not the same under every runtime, so this board shows the components the one in front of you actually has rather than a fixed set of names."),
-                            why: "It is the first thing to quote in a bug report, and the only place a packaging mistake shows up: rn ships its own runtime and never uses one from the machine, so these are fixed when the app is built. A version you did not expect means the app found a runtime it was not supposed to.".to_string(),
-                            if_wrong: "Under Bun or Deno the `node (claimed)` row is a compatibility target, not a Node that exists here — see its own panel. Under Node, a version differing from be/.nvmrc means the bundled runtime and the development one have drifted, which is the classic works-on-my-machine.".to_string(),
-                        }
-                    }),
-                    for key in version_keys.iter().copied() {
-                        if let Some(v) = m.versions.get(key) {
-                            {
-                                let claimed = key == "node" && running != "node";
-                                rsx! {
-                                    Metric {
-                                        label: if claimed { "node (claimed)" } else { key },
-                                        value: if claimed {
-                                            format!("{v} — Node compatibility claimed by {running}")
-                                        } else {
-                                            v.clone()
-                                        },
-                                        what: if claimed {
-                                            format!("Not a Node that exists here. {running} implements enough of Node's API to run code written for it, and reports this number when asked which Node it is. No Node of this version is installed, bundled, or running.")
-                                        } else {
-                                            format!("Version of {key} inside the bundled runtime.")
-                                        },
-                                        why: if claimed {
-                                            format!("It tells you which Node API level {running} is aiming at, which is what decides whether a package written for Node works here. Read it as a compatibility target, never as the runtime in use — the runtime in use is named at the top of this page.")
-                                        } else {
-                                            "The runtime ships with rn, so these are fixed at packaging time rather than whatever the machine has. Worth quoting in a bug report.".to_string()
-                                        },
-                                        if_wrong: if claimed {
-                                            "If a package fails here but works under Node, this number is the first thing to quote: the claim is a target rather than a guarantee, and the gap between claimed and implemented is where those failures live.".to_string()
-                                        } else {
-                                            "A node version differing from be/.nvmrc means the bundled runtime and the development one have drifted.".to_string()
-                                        },
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // The machine, not the runtime: these read the same whichever
-        // runtime is running, so they do not belong in a tile named after one.
-        Panel {
-            // Not "All runtimes": a pid, a launcher, a job count and a
-            // listening address describe this process and no other.
-            title: "This process".to_string(),
-            subtitle: Some("how it is running, and what it is running".to_string()),
-
-            div { class: "flex flex-wrap gap-4 items-stretch",
-
-                // ── Kernel counters ───────────────────────────────────
-                Board { title: "Concurrency".to_string(),
-                    if !not_counted("concurrency.threadpoolSize") {
-                    Metric {
-                        label: "threadpool",
-                        value: m.concurrency.threadpool_size.to_string(),
-                        what: "Threads libuv uses for file system, DNS, zlib and some crypto work.".to_string(),
-                        why: "The measured counterpart of the libuv thread pool setting. Read it with event-loop utilisation: low utilisation plus a slow file job means this is the bottleneck.".to_string(),
-                        if_wrong: "If it does not match what you set, the setting has not been applied — it needs a restart, and the banner on Config → Settings will say so.".to_string(),
-                    }
-                    }
-                    Metric {
-                        label: "cpu (user)",
-                        value: format!("{}%", m.cpu.user_pct),
-                        what: "CPU spent in your code since this page last sampled, as a share of one core.".to_string(),
-                        why: "Above 100 means more than a core's worth. With {m.cpu.cores} cores here, sustained values near {m.cpu.cores}00% mean the machine is the limit.".to_string(),
-                        if_wrong: "High user CPU with a growing event-loop delay is compute on the main thread — the case for a Rust component.".to_string(),
-                    }
-                    Metric {
-                        label: "cpu (system)",
-                        value: format!("{}%", m.cpu.system_pct),
-                        what: "CPU spent in kernel calls on this process's behalf — file and network I/O.".to_string(),
-                        why: "A high system share relative to user means the workload is I/O bound, not compute bound. Different fix entirely.".to_string(),
-                        if_wrong: "Unexpectedly high system time often means many small reads where fewer large ones would do.".to_string(),
-                    }
-                    Metric {
-                        label: "load (1m)",
-                        value: format!("{} on {} cores", m.cpu.load1, m.cpu.cores),
-                        what: "Machine-wide run-queue average over the last minute — every process, not just rn.".to_string(),
-                        why: "Context for the numbers above: rn can look slow because the machine is busy with something else entirely.".to_string(),
-                        if_wrong: "Load persistently above the core count means everything on this machine is queueing.".to_string(),
-                    }
-                }
-
-                // The same process readings the Status page shows, beside the
-                // concurrency numbers they explain: threads and jobs are the
-                // same story from two directions.
-                if let Some(st) = status.as_ref() {
-                    ProcessBoards { status: st.clone() }
-                }
-            }
-        }
     }
 }
 
@@ -1531,6 +1565,13 @@ fn Board(
     /// legend sits higher than the legend of a neighbour holding two — and the
     /// two boards stop reading as one comparison.
     #[props(default = false)] fill: bool,
+    /// The board's width, as a Tailwind class. The default lets content decide
+    /// it, which is right for a board whose readings are a stable length. A
+    /// board whose value gains and loses a decimal place is not that: it
+    /// resizes on every poll, taking its info-button column and the boards
+    /// beside it with it. Such a board names a width that fits its widest
+    /// reading, and adds `shrink-0` so the wrapping row honours it.
+    #[props(default = "w-fit".to_string())] width: String,
     children: Element,
 ) -> Element {
     rsx! {
@@ -1538,7 +1579,7 @@ fn Board(
         // the tallest, and an explicit height overrides that stretch — worse, it
         // is a percentage of a row whose own height is auto, so it collapses back
         // to content height and the board never grows at all.
-        div { class: if fill { "{PARAM_BOARD_CLASS} flex flex-col" } else { "{PARAM_BOARD_CLASS}" },
+        div { class: if fill { "{PARAM_BOARD_BASE_CLASS} {width} flex flex-col" } else { "{PARAM_BOARD_BASE_CLASS} {width}" },
             div { class: "flex items-center gap-2 mb-3",
                 span { class: PARAM_BOARD_TITLE_CLASS, "{title}" }
                 if let Some(info) = info {

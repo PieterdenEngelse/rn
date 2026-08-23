@@ -17,7 +17,7 @@ pub use status_light::StatusLight;
 pub use restart_banner::RestartBanner;
 pub mod param;
 pub mod runtime_board;
-pub use runtime_board::RuntimeBoard;
+pub use runtime_board::{runtime_name, RuntimeBoard};
 pub use panel::Panel;
 pub use info::{GlossaryEntry, InfoButton};
 pub use header::Header;

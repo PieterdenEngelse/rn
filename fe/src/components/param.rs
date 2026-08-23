@@ -25,6 +25,13 @@ pub const PARAM_SELECT_CLASS: &str = "select select-xs bg-gray-700 text-gray-200
 /// A board grouping related parameters, per the hardware page.
 pub const PARAM_BOARD_CLASS: &str = "rounded border border-gray-600 p-4 w-fit";
 
+/// The same board with no width of its own, for the boards that name one. Kept
+/// as a separate literal rather than composed from the line above, because
+/// `w-fit` and an explicit width are both width utilities: which one wins is
+/// decided by their order in the generated stylesheet, not by the order they
+/// appear in the class attribute, so a board must carry exactly one.
+pub const PARAM_BOARD_BASE_CLASS: &str = "rounded border border-gray-600 p-4";
+
 /// The same board at a fixed width. `w-fit` lets content decide where the
 /// info-button column lands, which is fine when a board stands alone — but the
 /// Active runtime board sits directly under the Runtime panel's own info

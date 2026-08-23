@@ -23,6 +23,18 @@ fn field(effective: &serde_json::Value, key: &str) -> String {
         .unwrap_or_else(|| "not reported".to_string())
 }
 
+/// Runtime names reach the UI as their settings id — `node`, `bun`, `deno` —
+/// because that is what the wire and settings.json agree on. They are product
+/// names on screen, so the leading letter is capitalised here, at the display
+/// boundary, rather than by changing the value everything else keys on.
+pub fn runtime_name(value: &str) -> String {
+    let mut chars = value.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
+}
+
 #[component]
 pub fn RuntimeBoard(effective: serde_json::Value) -> Element {
     let version = field(&effective, "nodeVersion");
@@ -37,13 +49,13 @@ pub fn RuntimeBoard(effective: serde_json::Value) -> Element {
     let version_display = if js_runtime == "node" {
         version.clone()
     } else {
-        format!("{version} — Node compatibility claimed by {js_runtime}")
+        format!("{version} — Node compatibility claimed by {}", runtime_name(&js_runtime))
     };
     let requested = effective
         .get("runtimeRequested")
         .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
+        .map(runtime_name)
+        .unwrap_or_default();
     // Set only when the launcher could not honour the selection. Its presence
     // is the whole signal — an ignored setting must never sit on screen looking
     // as though it took effect.
