@@ -49,6 +49,9 @@ pub struct RuntimeParam {
     /// Runtimes this parameter does anything on. None means all of them.
     #[serde(default, rename = "appliesTo")]
     pub applies_to: Option<Vec<String>>,
+    /// "v8" when the flag belongs to the engine rather than to a runtime.
+    #[serde(default)]
+    pub engine: Option<String>,
     #[serde(rename = "appliesAt")]
     pub applies_at: String,
     pub category: String,

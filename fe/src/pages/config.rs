@@ -122,14 +122,26 @@ fn ParamBoards(resp: ParamsResponse, reload: Signal<u32>) -> Element {
 
     // Settings split by who owns them. A parameter naming runtimes belongs to
     // those runtimes; one naming none belongs to all of them.
-    let owned_by_running = |p: &RuntimeParam| -> bool {
+    let applies_here = |p: &RuntimeParam| -> bool {
         p.applies_to.as_ref().is_some_and(|l| l.iter().any(|r| r == &selected))
     };
+    // A V8 flag is not the selected runtime's setting. It belongs to the engine
+    // underneath it, is shared with every other runtime on that engine, and
+    // stores one value between them — so it gets its own tile rather than
+    // appearing in two runtime tiles as though it were two settings.
+    let is_engine = |p: &RuntimeParam| p.engine.as_deref() == Some("v8");
+    let owned_by_running = move |p: &RuntimeParam| applies_here(p) && !is_engine(p);
+    let owned_by_engine = move |p: &RuntimeParam| applies_here(p) && is_engine(p);
     let is_universal = |p: &RuntimeParam| -> bool { p.applies_to.is_none() };
 
     let runtime_tuning: Vec<String> = tuning
         .iter()
         .filter(|c| params.iter().any(|p| &p.category == *c && owned_by_running(p)))
+        .cloned()
+        .collect();
+    let engine_tuning: Vec<String> = tuning
+        .iter()
+        .filter(|c| params.iter().any(|p| &p.category == *c && owned_by_engine(p)))
         .cloned()
         .collect();
     let shared_tuning: Vec<String> = tuning
@@ -253,6 +265,76 @@ fn ParamBoards(resp: ParamsResponse, reload: Signal<u32>) -> Element {
                             let rows: Vec<RuntimeParam> = params
                                 .iter()
                                 .filter(|p| p.category == category && owned_by_running(p))
+                                .cloned()
+                                .collect();
+                            rsx! {
+                                CategoryBoard {
+                                    title: category_title(&category).to_string(),
+                                    rows,
+                                    draft,
+                                    effective: resp.effective.clone(),
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if !engine_tuning.is_empty() {
+            Panel {
+                title: "V8".to_string(),
+                subtitle: Some("shared by every runtime on this engine".to_string()),
+                info: Some(rsx! {
+                    InfoButton {
+                        title: "Why these are not under the runtime".to_string(),
+                        what: concat!(
+                            "These are V8's flags, not the runtime's. Node and Deno both ",
+                            "run V8 — the engine from Chrome — so both accept them and ",
+                            "both mean exactly the same thing by them. Bun runs ",
+                            "JavaScriptCore and has none of the machinery they address, ",
+                            "which is why this tile is absent while Bun is selected.\n\n",
+
+                            "There is one stored value per setting, shared between the ",
+                            "runtimes that use it. Set the heap limit while Node is ",
+                            "selected, switch to Deno, and it is already set — not copied ",
+                            "across, but the same value read twice.",
+                        ).to_string(),
+                        why: concat!(
+                            "They had been sitting in the runtime tiles, which read as ",
+                            "though each runtime had its own copy. Two tiles showing one ",
+                            "value is how someone changes a setting for Deno and does not ",
+                            "realise they changed it for Node.\n\n",
+
+                            "The delivery does differ, and that part is genuinely per ",
+                            "runtime: Node accepts V8 flags inside NODE_OPTIONS, while ",
+                            "Deno ignores NODE_OPTIONS entirely and needs them folded into ",
+                            "--v8-flags. The launcher handles that. The value you set here ",
+                            "is the same either way.",
+                        ).to_string(),
+                        if_wrong: concat!(
+                            "If a change here appears to do nothing, check which runtime is ",
+                            "actually running on the Active runtime board rather than which ",
+                            "is selected — these apply at startup, so a saved value waits ",
+                            "for the next restart.\n\n",
+
+                            "Under Bun they do nothing at all and are not shown. That is not ",
+                            "a limitation to work around: there is no old_space or new_space ",
+                            "in JavaScriptCore for them to size.",
+                        ).to_string(),
+                    }
+                }),
+
+                p { class: "text-gray-400 mb-3 max-w-3xl",
+                    "Engine settings, not {selected} settings. One value, shared with every runtime that runs V8 — delivered differently to each, which the launcher takes care of."
+                }
+
+                div { class: "flex flex-wrap gap-4 items-stretch",
+                    for category in engine_tuning {
+                        {
+                            let rows: Vec<RuntimeParam> = params
+                                .iter()
+                                .filter(|p| p.category == category && owned_by_engine(p))
                                 .cloned()
                                 .collect();
                             rsx! {
