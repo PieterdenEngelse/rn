@@ -275,6 +275,31 @@ Detail, measured sizes, and the build checklist: `docs/packaging.md`.
 - **Confirmation threshold**: Don't ask for confirmation on small or single-file edits — only ask before major or multi-file changes.
 - **No speculative pre-builds**: Don't run `cargo build` just to check for errors after making changes.
 
+## Checking the page
+
+Look at it. `chromium --headless=new --no-sandbox --disable-gpu --hide-scrollbars
+--window-size=1400,2000 --virtual-time-budget=30000 --screenshot=/tmp/p.png
+http://localhost:1790/...` writes a PNG that can be read directly, and the user's
+own screenshots can be pulled from the clipboard with `xclip -selection clipboard
+-t image/png -o > /tmp/p.png`.
+
+Do this for anything visual rather than inferring the page from API payloads. A
+route rename, a value wrapping mid-number, a panel heading that contradicts its
+contents — none of those show up in the data, and all of them have shipped here
+because the data looked right.
+
+**Do not judge freshness by the wasm timestamp.** Dioxus hot-reloads changes
+inside `rsx!` by patching the running app, so edits to board contents, panel
+titles and info text never rebuild the wasm and never move that file's mtime. A
+stationary timestamp means the change was patchable, not that the watcher is
+dead. Adding or removing elements can fall outside patching and does trigger a
+rebuild.
+
+If a screenshot really is stale, force one rebuild by touching a file outside
+`rsx!`. Never start a second `dx serve` to get one — it writes into the same
+target directory as the user's, and has already produced a mismatched js/wasm
+pair that rendered a blank page.
+
 ## The dev servers are the user's
 
 The frontend dev server on **:1790** belongs to the user, who runs it in their
