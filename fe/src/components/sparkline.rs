@@ -100,7 +100,12 @@ pub fn Sparkline(
 
     rsx! {
         div {
-            class: if fill_height { "flex flex-col gap-1 h-full" } else { "flex flex-col gap-1" },
+            // flex-1 as well as h-full: h-full is a percentage and resolves only
+            // if every ancestor has a definite height, which leaves the plot at
+            // its content height and the board with slack under it. flex-1 asks
+            // the parent column for the leftover directly, which is what the
+            // board actually has to give.
+            class: if fill_height { "flex flex-col gap-1 h-full flex-1 min-h-0" } else { "flex flex-col gap-1" },
             svg {
                 class: if fill_height { "flex-1 min-h-0" } else { "" },
                 width: "100%",
