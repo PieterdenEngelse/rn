@@ -499,6 +499,7 @@ fn MonitorBoards(
                 if loop_board_useful {
                 Board {
                     title: "Event loop".to_string(),
+                    fill: true,
                     info: Some(rsx! {
                         InfoButton {
                             title: "The event loop".to_string(),
@@ -1554,7 +1555,12 @@ fn Board(
                 // looks exactly like the change not having happened.
                 div { class: if fill { "flex items-stretch gap-4 flex-1 min-h-0" } else { "flex items-stretch gap-4" },
                     div { class: "w-72 shrink-0 flex flex-col", {chart} }
-                    div { class: PARAM_COLUMN_CLASS, {children} }
+                    // justify-between when filling: the fields otherwise stack
+                    // from the top and stop wherever they run out, so the column
+                    // ends partway up the plot beside it. Spread, the last field
+                    // finishes level with the last row on the left — on the event
+                    // loop board, the reading for max.
+                    div { class: if fill { "{PARAM_COLUMN_CLASS} justify-between" } else { "{PARAM_COLUMN_CLASS}" }, {children} }
                 }
             } else if fill {
                 div { class: "{PARAM_COLUMN_CLASS} flex-1 min-h-0", {children} }
