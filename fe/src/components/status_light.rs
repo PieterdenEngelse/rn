@@ -72,6 +72,116 @@ impl Health {
             Health::Healthy => "Running, idle, and every saved setting is in effect.",
         }
     }
+
+    /// The mechanism behind the colour, for the reader who clicked it.
+    ///
+    /// A one-line summary tells you which state you are in; this says how the
+    /// light decided that and what it is actually watching. A colour nobody can
+    /// explain is decoration, and a caption is not an explanation.
+    fn detail(self) -> &'static str {
+        match self {
+            Health::Checking => concat!(
+                "The first poll has not come back yet. It is the state the light is born ",
+                "in, and on a working system it lasts a fraction of a second — the request ",
+                "goes out when the header mounts, before any timer runs.\n\n",
+
+                "It pulses so it cannot be mistaken for a steady colour. A light sitting ",
+                "still while it means \"I do not know yet\" reads as an answer.",
+            ),
+            Health::Offline => concat!(
+                "Nothing answered. This is the only check that does not depend on the ",
+                "backend cooperating, which makes it the one colour that cannot be wrong ",
+                "about its own subject: if the fetch fails, the fetch failed.\n\n",
+
+                "When it happens the page asks a second, narrower question with CORS ",
+                "enforcement switched off. That separates two failures the browser reports ",
+                "identically: a refused connection means nothing is holding the port, while ",
+                "a response the browser discarded means the backend is up and its allowed ",
+                "origin is wrong. Those lead to opposite fixes, so the details box names ",
+                "which one it was.",
+            ),
+            Health::Pending => concat!(
+                "Settings you saved are not in effect in the running process. The backend ",
+                "works this out by comparing what the settings file resolves to against ",
+                "what the process actually got at launch — not by remembering that you ",
+                "pressed save.\n\n",
+
+                "That is why it survives a page reload, and why it clears itself once a ",
+                "restart has genuinely applied the change rather than once a restart has ",
+                "been requested. It cannot claim a restart is needed when it isn't, and it ",
+                "cannot forget one that is.\n\n",
+
+                "It outranks running jobs deliberately: a busy process with stale settings ",
+                "still needs the restart, and busy is the state that ends on its own.",
+            ),
+            Health::Busy => concat!(
+                "One or more automations are running right now. The count comes from the ",
+                "backend's own registry of in-flight work, so it is what the process is ",
+                "doing rather than what it has scheduled.\n\n",
+
+                "It says nothing about whether that work is going well. A job failing and ",
+                "a job succeeding are both pink, and both end in green.",
+            ),
+            Health::Unsupervised => concat!(
+                "The process is up and answering, but no launcher is supervising it — it ",
+                "was started by hand rather than through the rn binary.\n\n",
+
+                "The consequence is narrow and specific: it cannot restart itself. An ",
+                "unsupervised backend asked to restart would exit into nothing, with no ",
+                "parent to bring it back, so it refuses rather than doing that. Every ",
+                "setting that takes effect only on restart is therefore stuck.\n\n",
+
+                "It is the lowest-severity colour that is not green, because everything ",
+                "else works normally.",
+            ),
+            Health::Healthy => concat!(
+                "Every check passed. The backend answered inside the poll, no jobs are in ",
+                "flight, a launcher is supervising the process, and the settings file ",
+                "matches what the running process actually has.\n\n",
+
+                "It is deliberately narrow. Green means up, idle, supervised, and running ",
+                "what you saved — it does not mean your automations are succeeding. Twenty ",
+                "failing jobs finish just as quietly as twenty successful ones, and the ",
+                "light returns to green either way.",
+            ),
+        }
+    }
+
+    /// What to do about it. "Nothing" is a legitimate answer and is said plainly
+    /// rather than left as an absence.
+    fn action(self) -> &'static str {
+        match self {
+            Health::Checking => concat!(
+                "Wait a moment. If it stays purple for more than a few seconds the request ",
+                "is hanging rather than failing — something is holding the connection open ",
+                "without answering, which is a different problem from the backend being down.",
+            ),
+            Health::Offline => concat!(
+                "Click the light and read the reason line in the details box. A refused ",
+                "connection means start the backend. A discarded response means the backend ",
+                "is already running and its allowed origin is what needs fixing.",
+            ),
+            Health::Pending => concat!(
+                "Restart the backend, from the banner on Config → Settings. Nearly every ",
+                "setting is read once when the process starts, so nothing short of a ",
+                "restart will apply them.",
+            ),
+            Health::Busy => concat!(
+                "Nothing, unless it is stuck. Monitor → Jobs shows what is running and for ",
+                "how long. A restart requested now waits for the work to finish unless you ",
+                "ask for it immediately.",
+            ),
+            Health::Unsupervised => concat!(
+                "Nothing, if you started it yourself and meant to. If you expected the ",
+                "supervised backend, stop this one and start it through the launcher — the ",
+                "restart button and every restart-only setting start working again.",
+            ),
+            Health::Healthy => concat!(
+                "Nothing. If something is wrong while this is green, the light is not where ",
+                "it will show — Monitor → Jobs is.",
+            ),
+        }
+    }
 }
 
 /// The header status light. Polls, shows one colour, and explains itself on
@@ -81,6 +191,10 @@ pub fn StatusLight() -> Element {
     let mut status = use_signal(|| Option::<StatusResponse>::None);
     let mut health = use_signal(|| Health::Checking);
     let mut show_details = use_signal(|| false);
+    // Which colour the swatch row is explaining. None means "whichever one is
+    // live", so the modal opens describing the light that was just clicked and
+    // keeps following it until the reader asks about a different one.
+    let mut colour_shown = use_signal(|| Option::<Health>::None);
     // Only meaningful while Offline; kept so the modal can say which kind.
     let mut offline_reason = use_signal(|| Option::<OfflineReason>::None);
 
@@ -111,16 +225,107 @@ pub fn StatusLight() -> Element {
     rsx! {
         div { class: "flex items-center gap-1 flex-shrink-0",
             div {
-                class: "w-4 h-4 rounded-full border-2 border-gray-900 {bg_class} {extra} cursor-pointer hover:ring-2 hover:ring-white hover:ring-opacity-50 transition-all",
+                class: "w-4 h-4 rounded-full border-2 border-gray-900 {bg_class} {extra} cursor-pointer hover:ring-2 hover:ring-white/50 transition-all",
                 style: "background-color: {hex};",
                 title: "Status: {current.label()} — click for details",
                 onclick: move |_| show_details.set(true),
             }
-            // The light's own modal reports the current state; this one explains
-            // how that state is decided, which the modal cannot say without
-            // repeating itself in six places.
+            // Two panels, split by question. The light's own modal reports the
+            // state right now — pid, uptime, what is pending. This one explains
+            // how that state is decided, and carries the colour legend, because
+            // the colours are what has to be learned rather than watched.
             InfoButton {
                 title: "What the status light checks".to_string(),
+                // The lights themselves, in the panel that explains them. The
+                // colours are the whole interface of this control, and a page of
+                // prose about them with no way to see them side by side asks the
+                // reader to hold six colours in their head while reading.
+                extra: Some(rsx! {
+                    // Every colour on one row, at twice the size of the light in
+                    // the header. Six explanations stacked as text made the reader
+                    // match paragraphs to dots; at this size the colours are the
+                    // index, and only the one being asked about is spelled out.
+                    div {
+                        h4 { class: "text-sm font-semibold text-gray-300 mb-2", "What the colours mean" }
+                        p { class: "text-gray-400 text-xs mb-3", "Click a light to read it." }
+
+                        div { class: "flex flex-wrap gap-4",
+                            for h in [Health::Healthy, Health::Busy, Health::Pending, Health::Unsupervised, Health::Offline, Health::Checking] {
+                                {
+                                    let (cls, hx, pulse) = h.color();
+                                    let is_shown = colour_shown().unwrap_or(current) == h;
+                                    let is_live = current == h;
+                                    // Built here rather than as a conditional
+                                    // attribute so the colour class is certain to
+                                    // survive into the markup; the inline style
+                                    // carries the same colour either way.
+                                    // w-8 is twice the header light's w-4.
+                                    let ring = if is_shown {
+                                        "ring-2 ring-white"
+                                    } else {
+                                        "hover:ring-2 hover:ring-white/50"
+                                    };
+                                    let dot = format!("w-8 h-8 rounded-full shrink-0 transition-all {cls} {pulse} {ring}");
+                                    let label_class = if is_shown {
+                                        "text-[10px] text-center text-gray-200"
+                                    } else {
+                                        "text-[10px] text-center text-gray-400"
+                                    };
+                                    rsx! {
+                                        button {
+                                            class: "flex flex-col items-center gap-1 w-20 bg-transparent border-0 p-0 cursor-pointer",
+                                            title: "{h.label()}",
+                                            onclick: move |_| colour_shown.set(Some(h)),
+                                            div {
+                                                class: "{dot}",
+                                                style: "background-color: {hx};",
+                                            }
+                                            span {
+                                                class: "{label_class}",
+                                                "{h.label()}"
+                                            }
+                                            // Which of the six is on right now. Without
+                                            // it the row is a legend the live state has
+                                            // dropped out of.
+                                            if is_live {
+                                                span { class: "text-[10px] text-gray-400", "now" }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        {
+                            let shown = colour_shown().unwrap_or(current);
+                            let (_, hx, pulse) = shown.color();
+                            rsx! {
+                                div { class: "mt-3 rounded border border-gray-700 bg-gray-800 p-4 space-y-3",
+                                    div { class: "flex items-center gap-2",
+                                        div {
+                                            class: "w-4 h-4 rounded-full shrink-0 {pulse}",
+                                            style: "background-color: {hx};",
+                                        }
+                                        p { class: "text-gray-100 font-medium", "{shown.label()}" }
+                                    }
+                                    p { class: "text-gray-200", "{shown.summary()}" }
+                                    div {
+                                        h5 { class: "text-xs font-semibold text-gray-300", "How the light decides this" }
+                                        p { class: "mt-1 text-gray-200 leading-relaxed whitespace-pre-line max-w-3xl",
+                                            "{shown.detail()}"
+                                        }
+                                    }
+                                    div {
+                                        h5 { class: "text-xs font-semibold text-gray-300", "What to do" }
+                                        p { class: "mt-1 text-gray-200 leading-relaxed whitespace-pre-line max-w-3xl",
+                                            "{shown.action()}"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }),
                 what: concat!(
                     "Every 5 seconds it asks the backend one question — GET /api/status — ",
                     "and reads four things out of the answer. It is a poll, not a ",
@@ -233,28 +438,6 @@ pub fn StatusLight() -> Element {
                         }
                     }
 
-                    div { class: "pt-2 border-t border-gray-700",
-                        h4 { class: "text-sm font-semibold text-gray-300 mb-2", "What the colours mean" }
-                        div { class: "space-y-1",
-                            for h in [Health::Healthy, Health::Busy, Health::Pending, Health::Unsupervised, Health::Offline, Health::Checking] {
-                                {
-                                    let (cls, hx, _) = h.color();
-                                    rsx! {
-                                        div { class: "flex items-start gap-2",
-                                            div {
-                                                class: "w-3 h-3 rounded-full mt-1 shrink-0 {cls}",
-                                                style: "background-color: {hx};",
-                                            }
-                                            div {
-                                                span { class: "text-gray-200 font-medium", "{h.label()}" }
-                                                span { class: "text-gray-400", " — {h.summary()}" }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
                 }
             }
         }

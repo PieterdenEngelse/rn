@@ -118,6 +118,12 @@ pub fn InfoButton(
     /// Terms this panel links to with `[[term]]`.
     #[props(default = vec![])]
     glossary: Vec<GlossaryEntry>,
+    /// Content that cannot be prose, rendered under the title and above the
+    /// three sections — a legend, a diagram, a small control the explanation
+    /// refers to. The panel fills the window, so there is room for it, and a
+    /// thing the reader can point at beats a paragraph describing it.
+    #[props(default = None)]
+    extra: Option<Element>,
 ) -> Element {
     let mut open = use_signal(|| false);
     // A trail, not a single term: entries link to each other, and "back"
@@ -153,6 +159,10 @@ pub fn InfoButton(
                             onclick: move |_| open.set(false),
                             "×"
                         }
+                    }
+
+                    if let Some(extra) = extra.clone() {
+                        {extra}
                     }
 
                     div {
