@@ -347,7 +347,7 @@ export function collect(): NodeMetrics {
             externalMB: round(mem.external / MB),
             arrayBuffersMB: round(mem.arrayBuffers / MB),
             // Empty where the runtime has no spaces to report. Bun answers the
-            // question anyway — thirteen V8 names, twelve empty, one synthetic
+            // question anyway — the full list of V8 names, all empty but one synthetic
             // old_space holding everything — and that single entry is enough to
             // make a board appear claiming to break down a heap it cannot see.
             // Suppressed by the same list that hides largestSpace, so the two

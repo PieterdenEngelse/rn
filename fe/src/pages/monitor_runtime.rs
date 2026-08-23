@@ -231,8 +231,8 @@ fn MonitorBoards(
                                     concat!(
                                     "V8 does not keep one pool of memory. It divides the heap into ",
                                     "regions called spaces, each with its own allocation rules and ",
-                                    "its own collector — thirteen of them on this runtime, though ",
-                                    "only a few ever hold anything.\n\n",
+                                    "its own collector — more of them than are ever in play, ",
+                                    "since only a few ever hold anything.\n\n",
 
                                     "This board reads the same under Node and under Deno, and that ",
                                     "is not a coincidence or an act of translation: both run V8, ",
@@ -1116,7 +1116,8 @@ fn MonitorBoards(
                                     "and has no spaces — the JavaScriptCore board carries the ",
                                     "equivalent there, counting live objects instead of regions. ",
                                     "Bun will answer a question about spaces if asked, returning ",
-                                    "all thirteen V8 names with everything empty but a synthetic ",
+                                    "the full list of V8 names with everything empty but a ",
+                                    "synthetic ",
                                     "old_space; that is a compatibility shim and is not shown.",
                                 ).to_string(),
                             }
