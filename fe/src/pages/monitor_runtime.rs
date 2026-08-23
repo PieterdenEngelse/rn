@@ -1532,7 +1532,11 @@ fn Board(
     children: Element,
 ) -> Element {
     rsx! {
-        div { class: if fill { "{PARAM_BOARD_CLASS} h-full flex flex-col" } else { "{PARAM_BOARD_CLASS}" },
+        // flex flex-col, but no h-full. The row already stretches its items to
+        // the tallest, and an explicit height overrides that stretch — worse, it
+        // is a percentage of a row whose own height is auto, so it collapses back
+        // to content height and the board never grows at all.
+        div { class: if fill { "{PARAM_BOARD_CLASS} flex flex-col" } else { "{PARAM_BOARD_CLASS}" },
             div { class: "flex items-center gap-2 mb-3",
                 span { class: PARAM_BOARD_TITLE_CLASS, "{title}" }
                 if let Some(info) = info {
