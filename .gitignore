@@ -1,0 +1,16 @@
+# Repo root only. fe/, be/, launcher/ and scripts/ carry their own — this
+# file covers what lands at the top level, which until now nothing did.
+
+# A stray `npm install` or `pnpm install` run from the root rather than from
+# be/ or fe/. 273 MB the first time it happened, and nothing here needs it:
+# the backend's dependencies live in be/, the Tailwind build's in fe/.
+node_modules/
+
+# Screenshots taken while checking a page — see "Checking the page" in
+# CLAUDE.md. They accumulate fast and are working files, not documentation.
+# Anything worth keeping belongs in docs/ under a name that says what it shows.
+scr-*.png
+
+# LibreOffice writes these beside an open document and removes them on close.
+# One was committed by accident, which is what it takes to notice them.
+.~lock.*#
