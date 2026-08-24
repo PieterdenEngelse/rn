@@ -4,7 +4,7 @@
  * GET  /api/health    liveness
  * GET  /api/params    the parameter registry + live values + saved settings
  * PUT  /api/settings  save settings (validated); reports what needs a restart
- * GET  /api/jobs      what is running, the catalogue, and what is scheduled
+ * GET  /api/jobs      the catalogue, what is running, scheduled, and what ran
  * POST /api/jobs/:id  run one job now
  */
 
@@ -31,7 +31,7 @@ import { display as displayPath } from "./paths.ts";
 const EXIT_RESTART = 75;
 import { step } from "./log.ts";
 import * as running from "./running.ts";
-import { JOBS, jobById, runJob, scheduler } from "./jobs/index.ts";
+import { JOBS, jobById, runJob, scheduler, history as jobHistory } from "./jobs/index.ts";
 import { collect as collectNodeMetrics, lifetimeDelay } from "./node_metrics.ts";
 import { withDistribution } from "./node_history.ts";
 
@@ -190,6 +190,19 @@ export function createApp() {
                 // catch up on missed slots, which is only defensible if the
                 // next slot is visible.
                 scheduled: scheduler.status(),
+                // The last run of each job, and a short log of everything.
+                // `outcome` is derived here rather than stored, so an older
+                // record cannot carry a verdict by a rule that has since
+                // changed — see be/src/jobs/history.ts.
+                lastRuns: JOBS.map((j) => {
+                    const run = jobHistory.lastFor(j.id);
+                    return run === undefined
+                        ? null
+                        : { ...run, outcome: jobHistory.outcome(run) };
+                }).filter((r) => r !== null),
+                recent: jobHistory
+                    .list(25)
+                    .map((run) => ({ ...run, outcome: jobHistory.outcome(run) })),
             });
             return done(200);
         }

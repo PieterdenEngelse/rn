@@ -1,4 +1,4 @@
-import { test, beforeEach, afterEach } from "node:test";
+import { test, beforeEach, afterEach, after } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, writeFile, utimes, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -6,12 +6,32 @@ import { join } from "node:path";
 import { runJob } from "../src/jobs/run.ts";
 import { JOBS, jobById } from "../src/jobs/index.ts";
 import * as scheduler from "../src/jobs/scheduler.ts";
+import * as history from "../src/jobs/history.ts";
 import { isArtifact, pruneProfiles } from "../src/jobs/prune-profiles.ts";
 import type { Job } from "../src/jobs/types.ts";
 import * as running from "../src/running.ts";
 import { config } from "../src/config.ts";
 
-beforeEach(() => running.reset());
+const realRunsPath = config.jobRunsPath;
+
+function setRunsPath(p: string): void {
+    (config as unknown as { jobRunsPath: string }).jobRunsPath = p;
+}
+
+// Redirected for every test, not per test that happens to think about it.
+// runJob() records unconditionally, so any test that runs a job writes a file
+// — and the default path is the user's real ~/.config/rn/job-runs.json.
+// Setting it here means a new test cannot forget.
+setRunsPath(join(tmpdir(), `rn-test-runs-${process.pid}.json`));
+
+beforeEach(() => {
+    running.reset();
+    history.reset();
+});
+
+after(async () => {
+    await rm(config.jobRunsPath, { force: true });
+});
 
 // ---- the runner ---------------------------------------------------------
 
@@ -369,4 +389,80 @@ test("describe renders a schedule a person can read", () => {
     assert.equal(scheduler.describe({ kind: "dailyAt", hour: 3, minute: 0 }), "daily at 03:00");
     assert.equal(scheduler.describe({ kind: "everyMinutes", minutes: 15 }), "every 15 minutes");
     assert.equal(scheduler.describe({ kind: "everyMinutes", minutes: 1 }), "every minute");
+});
+
+
+// ---- run history --------------------------------------------------------
+
+test("the runner records every run, without the job doing anything", async () => {
+    await runJob(probe());
+    const runs = history.list();
+    assert.equal(runs.length, 1);
+    assert.equal(runs[0]?.jobId, "probe");
+    assert.equal(runs[0]?.trigger, "manual", "the default when nobody says otherwise");
+    assert.ok(typeof runs[0]?.ms === "number");
+});
+
+test("a failed run is recorded, not just logged", async () => {
+    const job = probe({
+        async run() {
+            throw new Error("boom");
+        },
+    });
+    await assert.rejects(runJob(job));
+    // The 3am case: the terminal nobody watched is not the record.
+    const [run] = history.list();
+    assert.equal(run?.error, "boom");
+    assert.equal(history.outcome(run!), "failed");
+});
+
+test("a scheduled run is recorded as scheduled", async () => {
+    const job: Job = {
+        id: "sched-probe",
+        label: "Sched probe",
+        info: { what: "w", why: "y", ifWrong: "i" },
+        schedule: { kind: "everyMinutes", minutes: 60 },
+        async run() {
+            return { summary: {}, changed: false };
+        },
+    };
+    scheduler.start([job], new Date(Date.now() - 61 * 60_000));
+    await scheduler.tick();
+    scheduler.stop();
+
+    assert.equal(history.list()[0]?.trigger, "schedule");
+});
+
+test("outcome separates a skip from a run that changed nothing", () => {
+    const base = {
+        jobId: "x", startedAt: 0, ms: 1, trigger: "manual" as const,
+        dryRun: false, summary: {},
+    };
+    // Both changed nothing; only one of them has a reason worth reading.
+    assert.equal(history.outcome({ ...base, changed: false }), "unchanged");
+    assert.equal(history.outcome({ ...base, changed: false, skipped: "why" }), "skipped");
+    assert.equal(history.outcome({ ...base, changed: true }), "changed");
+    // A failure outranks everything, including a skip reason.
+    assert.equal(
+        history.outcome({ ...base, changed: false, skipped: "why", error: "boom" }),
+        "failed",
+    );
+});
+
+test("lastFor picks the newest run of that job, ignoring others", async () => {
+    await runJob(probe({ id: "a" }));
+    await runJob(probe({ id: "b" }));
+    await runJob(probe({ id: "a" }));
+    const last = history.lastFor("a");
+    assert.equal(last?.jobId, "a");
+    assert.equal(history.list()[0]?.jobId, "a", "list is newest first");
+    assert.equal(history.lastFor("never-ran"), undefined);
+});
+
+test("a run survives a restart", async () => {
+    await runJob(probe());
+    // A fresh module instance loads from disk, which is what a restarted
+    // process does. The query string defeats the module cache.
+    const fresh = await import(`../src/jobs/history.ts?reload=${Date.now()}`);
+    assert.equal(fresh.list().length, 1, "the record outlived the process");
 });

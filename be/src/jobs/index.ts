@@ -22,4 +22,5 @@ export function jobById(id: string): Job | undefined {
 
 export { runJob } from "./run.ts";
 export * as scheduler from "./scheduler.ts";
+export * as history from "./history.ts";
 export type { Job, JobContext, JobInfo, JobResult, Schedule } from "./types.ts";

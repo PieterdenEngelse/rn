@@ -1,4 +1,6 @@
-use crate::api::{fetch_jobs, run_job, CatalogueJob, JobRunResult, JobsResponse, ScheduledJob};
+use crate::api::{
+    fetch_jobs, run_job, CatalogueJob, JobRun, JobRunResult, JobsResponse, ScheduledJob,
+};
 use crate::components::param::PARAM_INPUT_ROW_CLASS;
 use crate::components::{InfoButton, Panel};
 use dioxus::prelude::*;
@@ -25,7 +27,12 @@ pub fn MonitorJobs() -> Element {
                         Panel {
                             title: "In flight".to_string(),
                             subtitle: Some("work a restart will wait for".to_string()),
-                            RunningList { jobs: j }
+                            RunningList { jobs: j.clone() }
+                        }
+                        Panel {
+                            title: "Recent runs".to_string(),
+                            subtitle: Some("including the ones nobody was watching".to_string()),
+                            RecentRuns { runs: j.recent.clone() }
                         }
                     }
                 }
@@ -45,14 +52,42 @@ pub fn MonitorJobs() -> Element {
     }
 }
 
+const DRY_RUN_WHAT: &str =
+    "A global safety switch, read once at startup from DRY_RUN in be/.env. The backend hands \
+     its value to every job, and a job honours it by doing all of its work except the part \
+     that writes — the scan, the comparison and the decision all still happen, so what it \
+     reports is what an armed run would actually do.";
+
+const DRY_RUN_WHY: &str =
+    "This is an automation tool: the failure mode is doing something irreversible to a user's \
+     files because a path or a filter was wrong. Defaulting to on means a misconfigured job \
+     produces a report instead of damage, and you arm it only once you have read that report.";
+
+const DRY_RUN_IF_WRONG: &str =
+    "Left on, every job reports what it would have done and nothing ever actually happens — \
+     which looks exactly like a broken automation if you are not expecting it. Turned off \
+     before you have read a dry run, the first thing you learn about a bad filter is what it \
+     deleted.";
+
 /// Says why every run is reporting "changed nothing" before the user decides
 /// the job is broken.
 #[component]
 fn DryRunBanner() -> Element {
     rsx! {
-        div { class: "rounded border border-gray-600 bg-gray-800 p-4 flex items-start gap-3",
-            div { class: "flex-1",
-                p { class: "text-gray-200 font-medium", "Dry run is on" }
+        // Sized to match Panel, which puts text-xs on its children — this
+        // banner sits outside one, so it has to say so itself or it renders at
+        // the browser default and towers over every panel on the page.
+        div { class: "rounded border border-gray-600 bg-gray-800 p-4 text-xs",
+            div { class: "flex items-center gap-2",
+                h3 { class: "text-sm font-semibold text-gray-200", "Dry run is on" }
+                InfoButton {
+                    title: "Dry run".to_string(),
+                    what: DRY_RUN_WHAT.to_string(),
+                    why: DRY_RUN_WHY.to_string(),
+                    if_wrong: DRY_RUN_IF_WRONG.to_string(),
+                }
+            }
+            div {
                 p { class: "text-gray-300 mt-1 max-w-3xl",
                     "Jobs will do all of their reading and deciding, report exactly what they "
                     "would change, and change nothing. This is the default, and it stays on "
@@ -62,25 +97,6 @@ fn DryRunBanner() -> Element {
                     code { class: "text-gray-200", "be/.env" }
                     " and restart."
                 }
-            }
-            InfoButton {
-                title: "Dry run".to_string(),
-                what: "A global safety switch, read once at startup from DRY_RUN in be/.env. \
-                       The backend hands its value to every job, and a job honours it by doing \
-                       all of its work except the part that writes — the scan, the comparison \
-                       and the decision all still happen, so what it reports is what an armed \
-                       run would actually do."
-                    .to_string(),
-                why: "This is an automation tool: the failure mode is doing something \
-                      irreversible to a user's files because a path or a filter was wrong. \
-                      Defaulting to on means a misconfigured job produces a report instead of \
-                      damage, and you arm it only once you have read that report."
-                    .to_string(),
-                if_wrong: "Left on, every job reports what it would have done and nothing ever \
-                           actually happens — which looks exactly like a broken automation if \
-                           you are not expecting it. Turned off before you have read a dry run, \
-                           the first thing you learn about a bad filter is what it deleted."
-                    .to_string(),
             }
         }
     }
@@ -108,6 +124,7 @@ fn Catalogue(jobs: JobsResponse, on_ran: EventHandler<()>) -> Element {
                     job: job.clone(),
                     running: jobs.running.iter().any(|r| r.name == job.id),
                     scheduled: jobs.scheduled.iter().find(|s| s.id == job.id).cloned(),
+                    last: jobs.last_runs.iter().find(|r| r.job_id == job.id).cloned(),
                     on_ran,
                 }
             }
@@ -120,6 +137,7 @@ fn JobRow(
     job: CatalogueJob,
     running: bool,
     scheduled: Option<ScheduledJob>,
+    last: Option<JobRun>,
     on_ran: EventHandler<()>,
 ) -> Element {
     let mut outcome: Signal<Option<Result<JobRunResult, String>>> = use_signal(|| None);
@@ -169,6 +187,19 @@ fn JobRow(
                         why: job.info.why.clone(),
                         if_wrong: job.info.if_wrong.clone(),
                     }
+                }
+            }
+
+            if outcome.read().is_none() {
+                if let Some(run) = last.as_ref() {
+                    div { class: "mt-2 text-xs flex items-center gap-2",
+                        OutcomeBadge { outcome: run.outcome.clone() }
+                        span { class: "text-gray-300",
+                            "last run {ago(run.started_at)}, {run.trigger}, {run.ms as i64}ms"
+                        }
+                    }
+                } else {
+                    p { class: "mt-2 text-xs text-gray-400", "never run" }
                 }
             }
 
@@ -279,4 +310,73 @@ fn relative(epoch_ms: f64) -> String {
         let (d, rh) = (h / 24, h % 24);
         if rh == 0 { format!("in {d}d") } else { format!("in {d}d {rh}h") }
     }
+}
+
+/// The four outcomes, coloured.
+///
+/// "skipped" is deliberately not red: a job that declined to run because there
+/// was nothing to do, or because DRY_RUN is on, has worked correctly. Colouring
+/// it as a problem would train the reader to ignore the colour.
+#[component]
+fn OutcomeBadge(outcome: String) -> Element {
+    let (text, class) = match outcome.as_str() {
+        "changed" => ("changed", "text-green-400"),
+        "unchanged" => ("unchanged", "text-gray-300"),
+        "skipped" => ("skipped", "text-gray-300"),
+        "failed" => ("failed", "text-red-400"),
+        other => (other, "text-gray-300"),
+    };
+    rsx! { span { class: "{class} font-medium", "{text}" } }
+}
+
+#[component]
+fn RecentRuns(runs: Vec<JobRun>) -> Element {
+    if runs.is_empty() {
+        return rsx! {
+            p { class: "text-gray-400", "Nothing has run yet." }
+            p { class: "text-gray-300 mt-1 max-w-3xl",
+                "Every run is recorded here — including one the scheduler starts at 03:00 "
+                "with nobody watching, and including one that failed. The record survives a "
+                "restart."
+            }
+        };
+    }
+
+    rsx! {
+        div { class: "rounded border border-gray-600 overflow-hidden",
+            for (i, run) in runs.iter().enumerate() {
+                div {
+                    class: if i % 2 == 1 { "flex items-center gap-3 px-3 py-2 bg-gray-800" } else { "flex items-center gap-3 px-3 py-2 bg-gray-700" },
+                    span { class: "text-gray-400 text-xs w-24 shrink-0", "{ago(run.started_at)}" }
+                    code { class: "text-gray-200 text-xs w-48 shrink-0", "{run.job_id}" }
+                    span { class: "text-gray-400 text-xs w-20 shrink-0", "{run.trigger}" }
+                    span { class: "text-xs w-24 shrink-0", OutcomeBadge { outcome: run.outcome.clone() } }
+                    span { class: "text-gray-400 text-xs w-16 shrink-0", "{run.ms as i64}ms" }
+                    span { class: "text-gray-300 text-xs flex-1 truncate",
+                        if let Some(e) = run.error.as_ref() {
+                            "{e}"
+                        } else if let Some(sk) = run.skipped.as_ref() {
+                            "{sk}"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// "4m ago", from an epoch-millisecond instant in the past.
+fn ago(epoch_ms: f64) -> String {
+    let mins = ((js_sys::Date::now() - epoch_ms) / 60_000.0).floor() as i64;
+    if mins < 1 {
+        return "just now".to_string();
+    }
+    if mins < 60 {
+        return format!("{mins}m ago");
+    }
+    let h = mins / 60;
+    if h < 24 {
+        return format!("{h}h ago");
+    }
+    format!("{}d ago", h / 24)
 }

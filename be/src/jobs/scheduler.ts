@@ -125,7 +125,7 @@ export async function tick(now = new Date()): Promise<void> {
 
         step("schedule-fired", { id: entry.job.id, nextRunAt: entry.nextRunAt });
         try {
-            await runJob(entry.job);
+            await runJob(entry.job, "schedule");
         } catch {
             // runJob already logged it with a duration. Swallowed here on
             // purpose: one failing job must not stop the loop from advancing

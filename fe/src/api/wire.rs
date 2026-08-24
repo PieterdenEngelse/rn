@@ -150,6 +150,30 @@ pub struct ScheduledJob {
     pub next_run_at: f64,
 }
 
+/// One completed run, as recorded in be/src/jobs/history.ts.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct JobRun {
+    #[serde(rename = "jobId")]
+    pub job_id: String,
+    #[serde(rename = "startedAt")]
+    pub started_at: f64,
+    pub ms: f64,
+    /// "manual" or "schedule" — which door the run came through.
+    pub trigger: String,
+    #[serde(rename = "dryRun")]
+    pub dry_run: bool,
+    pub changed: bool,
+    #[serde(default)]
+    pub skipped: Option<String>,
+    #[serde(default)]
+    pub error: Option<String>,
+    #[serde(default)]
+    pub summary: std::collections::BTreeMap<String, serde_json::Value>,
+    /// "changed" | "unchanged" | "skipped" | "failed". Derived by the backend
+    /// from the fields above rather than stored, so it cannot go stale.
+    pub outcome: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct JobsResponse {
     pub running: Vec<RunningJob>,
@@ -166,6 +190,12 @@ pub struct JobsResponse {
     /// What fires on its own. Empty against a backend without a scheduler.
     #[serde(default)]
     pub scheduled: Vec<ScheduledJob>,
+    /// The most recent run of each job that has ever run.
+    #[serde(default, rename = "lastRuns")]
+    pub last_runs: Vec<JobRun>,
+    /// The last 25 runs across all jobs, newest first.
+    #[serde(default)]
+    pub recent: Vec<JobRun>,
 }
 
 /// What one run reported. Mirrors JobResult in be/src/jobs/types.ts.

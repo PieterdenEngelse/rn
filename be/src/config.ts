@@ -39,6 +39,16 @@ export const config = {
         `${process.env.HOME ?? "."}/.config/rn/history.json`,
 
     /**
+     * Where each job run is recorded. Beside the settings and the metric
+     * history, and for the same reason: the install tree is replaced wholesale
+     * on upgrade, and a record of what ran that an upgrade erases is not a
+     * record.
+     */
+    jobRunsPath:
+        process.env.RN_JOB_RUNS_PATH ??
+        `${process.env.HOME ?? "."}/.config/rn/job-runs.json`,
+
+    /**
      * Where V8 drops its profiling artifacts, and how long they are kept.
      *
      * `--cpu-prof`, `--heap-prof` and `--prof` write into the *current working

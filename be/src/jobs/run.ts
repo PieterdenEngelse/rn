@@ -8,16 +8,17 @@
  * through one function makes "untracked job" unrepresentable, the same way
  * NodeCommand makes "unsealed spawn" unrepresentable on the Rust side.
  *
- * It is also the single place that knows about DRY_RUN, timing, and failure
- * logging, so no job has to remember any of the three.
+ * It is also the single place that knows about DRY_RUN, timing, failure
+ * logging and the run record, so no job has to remember any of the four.
  */
 
 import { config } from "../config.ts";
 import { step } from "../log.ts";
 import { track } from "../running.ts";
+import { record, type Trigger } from "./history.ts";
 import type { Job, JobContext, JobResult } from "./types.ts";
 
-export async function runJob(job: Job): Promise<JobResult> {
+export async function runJob(job: Job, trigger: Trigger = "manual"): Promise<JobResult> {
     return track(job.id, async () => {
         const started = Date.now();
         const ctx: JobContext = {
@@ -37,16 +38,39 @@ export async function runJob(job: Job): Promise<JobResult> {
                 ...(result.skipped === undefined ? {} : { skipped: result.skipped }),
                 ...result.summary,
             });
+            record({
+                jobId: job.id,
+                startedAt: started,
+                ms: Date.now() - started,
+                trigger,
+                dryRun: ctx.dryRun,
+                changed: result.changed,
+                ...(result.skipped === undefined ? {} : { skipped: result.skipped }),
+                summary: result.summary,
+            });
             return result;
         } catch (err) {
             // Logged here rather than left to the caller: a job that fails at
             // 3am under the scheduler has no caller watching, and the duration
             // is worth as much as the message when working out what happened.
+            const message = err instanceof Error ? err.message : String(err);
             step("job-failed", {
                 id: job.id,
                 ms: Date.now() - started,
                 dryRun: ctx.dryRun,
-                error: err instanceof Error ? err.message : String(err),
+                error: message,
+            });
+            // Recorded as well as logged: a failure at 3am is exactly the run
+            // whose trace must outlive the terminal nobody was watching.
+            record({
+                jobId: job.id,
+                startedAt: started,
+                ms: Date.now() - started,
+                trigger,
+                dryRun: ctx.dryRun,
+                changed: false,
+                error: message,
+                summary: {},
             });
             throw err;
         }
