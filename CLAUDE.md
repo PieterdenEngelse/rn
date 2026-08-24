@@ -1,7 +1,7 @@
 # rn
 
-`be/` is the backend (not scaffolded yet), `fe/` is the Dioxus web frontend, and
-`shared/` holds the wire types both ends agree on (not scaffolded yet). The
+`be/` is the Node backend, `fe/` is the Dioxus web frontend, and `shared/` is
+the Rust crate holding the wire types both ends agree on. The
 frontend was seeded from the RERAG frontend
 (https://github.com/PieterdenEngelse/RERAG, `frontend/fro`). The styling rules
 below apply here without exception.
@@ -44,7 +44,20 @@ happens to read it first. One definition turns that into a build failure instead
   Deserialize)]`, both ends agreeing by construction rather than by review.
 - **Node consumes generated TypeScript, never hand-written types.** `shared/`
   emits `be/src/generated/wire.ts` and `be` imports from there. Node stays the
-  driver — it just doesn't get to invent the shapes.
+  driver — it just doesn't get to invent the shapes. Regenerate with
+  `cd be && npm run types:build`, and note that `be/test/generated.test.ts`
+  fails if the committed file is stale.
+- **Currently covers the jobs surface only.** The ~29 monitor and config types
+  in `fe/src/api/wire.rs` are still hand-written on both ends and are the next
+  to move. Anything added to the jobs surface goes in `shared/`.
+- **`fe` takes it with `default-features = false`**, which switches off the
+  `typescript` feature so `ts-rs` never reaches the wasm bundle. Check with
+  `cargo tree --target wasm32-unknown-unknown -i ts-rs` — it should find
+  nothing.
+- **`fe` cannot `impl` a shared type.** The orphan rule applies once a type is
+  defined in another crate, so behaviour that hangs off a wire type is a free
+  function or an extension trait in `fe` — see `api/history.rs` and
+  `trigger_label` in `pages/monitor_jobs.rs`.
 - **The Rust definition is the source of truth.** Changing a wire type means
   editing `shared/src/`, regenerating, and committing both in the same change.
   Hand-editing the generated file is a bug, exactly like hand-editing
@@ -106,8 +119,9 @@ The exception is a button that belongs to a board or panel *header*, or sits
 inline next to a control — those are deliberately beside their subject, not in a
 column, and are left alone.
 
-**Style recipe** (to live in `fe/src/components/info.rs` once the first one is
-built — not scaffolded yet):
+**Style recipe** (lives in `fe/src/components/info.rs`; `InfoButton` takes
+`title`, `what`, `why`, `if_wrong`, and renders a job's `JobInfo` and a runtime
+parameter's `ParamInfo` alike, since both carry that same shape):
 
 ```rust
 // Button wrapper
@@ -294,7 +308,7 @@ Detail, measured sizes, and the build checklist: `docs/packaging.md`.
 - Routes live in the `Route` enum in `fe/src/app.rs`; every route sits under `#[layout(Layout)]` so it gets the header
 - **Node/Rust boundary**: a Rust component is invoked from Node over a documented interface (CLI args + JSON on stdout, or a small local HTTP service). Document that interface next to the component; no undocumented FFI. The payload types for that interface live in `shared/` — see Shared wire types
 - **Info buttons**: adding a control, a stat, or an automation step means adding its info panel in the same change — not a follow-up task
-- **Generated files are never hand-edited**: `docs/node-parameters.md` and `be/runtime-params.json` come from `be/src/runtime-params.ts` via `npm run params:build`; `be/src/generated/wire.ts` comes from `shared/src/` via `cargo run --bin gen-types`. Add a user-facing runtime setting by adding a registry entry — a test enforces that it carries its info-panel text
+- **Generated files are never hand-edited**: `docs/node-parameters.md` and `be/runtime-params.json` come from `be/src/runtime-params.ts` via `npm run params:build`; `be/src/generated/wire.ts` comes from `shared/src/` via `npm run types:build` (a test fails if it is stale). Add a user-facing runtime setting by adding a registry entry — a test enforces that it carries its info-panel text
 - **Spawning processes**: absolute paths and an explicitly constructed environment, every time — see Runtime Rules above
 
 ## Collaboration Style

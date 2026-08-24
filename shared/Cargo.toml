@@ -1,0 +1,28 @@
+[package]
+name = "shared"
+version = "0.1.0"
+authors = ["pde"]
+edition = "2021"
+
+# Every value that crosses a process boundary is defined here once. Rust
+# consumers depend on this crate directly; Node consumes the TypeScript this
+# crate emits. See "Shared wire types" in CLAUDE.md.
+#
+# Types only. No I/O, no business logic, no tokio, no dioxus — `fe` compiles
+# this to wasm, so anything heavy lands in the browser bundle.
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+# Job summaries are number-or-string per key, which is a JSON value and not
+# worth inventing a Rust enum for.
+serde_json = "1.0"
+# Only for emitting TypeScript. Optional so `fe` can switch it off — see the
+# `typescript` feature below.
+ts-rs = { version = "12", features = ["serde-json-impl"], optional = true }
+
+[features]
+# On by default so `cargo run --bin gen-types` works with no flags, as
+# documented in CLAUDE.md. `fe` takes this crate with default-features = false,
+# so the wasm bundle never sees ts-rs.
+default = ["typescript"]
+typescript = ["dep:ts-rs"]

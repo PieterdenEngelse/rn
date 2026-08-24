@@ -40,59 +40,19 @@ export interface JobContext {
 }
 
 /**
- * What a job hands back.
+ * The shapes that cross a boundary come from the shared crate, not from here.
  *
- * Deliberately has nowhere to put the word "done". log.ts already argues the
- * rule — "a line that says 'done' cannot become an explanation;
- * {files: 412, ms: 240} can" — and this type is that rule made structural.
+ * `JobResult`, `JobInfo` and `Schedule` are all sent to the frontend, so they
+ * are defined once in `shared/src/jobs.rs` and regenerated into
+ * `be/src/generated/wire.ts`. Re-exported rather than merely imported, so a
+ * job file keeps importing everything it needs from one place.
+ *
+ * `Job` and `JobContext` below stay local: they carry `run()` and a `step()`
+ * callback, which are behaviour and cannot cross a process boundary at all.
  */
-export interface JobResult {
-    /** Counts, sizes, paths. Rendered directly into the job's info panel. */
-    summary: Record<string, number | string>;
-
-    /**
-     * Whether anything actually changed. False under dry run, and false when
-     * the job ran properly and found nothing to do — two different things that
-     * look identical from outside, which is why `skipped` exists as well.
-     */
-    changed: boolean;
-
-    /**
-     * Why nothing happened, when nothing did. Absent when the job acted.
-     *
-     * "Why an automation was skipped" is called out in CLAUDE.md as a thing
-     * worth surfacing: a job that quietly does nothing is indistinguishable
-     * from a job that is broken.
-     */
-    skipped?: string;
-}
-
-/** Prose for the job's info panel. Same shape as ParamInfo in runtime-params. */
-export interface JobInfo {
-    /** What it does — the mechanism, not the label. */
-    what: string;
-    /** Why it matters, and what a sensible configuration looks like. */
-    why: string;
-    /** What visibly goes wrong when it is misconfigured or never run. */
-    ifWrong: string;
-}
-
-/**
- * When a job runs on its own.
- *
- * Two forms rather than cron. Cron would mean shipping a parser — this project
- * has no runtime dependencies and a hand-rolled one is a liability — and five
- * fields of punctuation is a poor way to state something a person has to be
- * able to read off a page and trust.
- *
- * `dailyAt` is interpreted in the configured time zone, and does not need to do
- * anything to achieve that: `timezone` is an `env`-kind parameter carrying TZ,
- * so the launcher puts it in this process's environment and Node's local-time
- * arithmetic already resolves there — DST transitions included.
- */
-export type Schedule =
-    | { kind: "everyMinutes"; minutes: number }
-    | { kind: "dailyAt"; hour: number; minute: number };
+export type { JobResult, JobInfo, Schedule } from "../generated/wire.ts";
+import type { JobInfo, Schedule } from "../generated/wire.ts";
+import type { JobResult } from "../generated/wire.ts";
 
 export interface Job {
     /** Stable identifier. Appears in the URL, in logs, and in the registry. */

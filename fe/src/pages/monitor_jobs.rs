@@ -1,6 +1,6 @@
 use crate::api::{
     fetch_job_errors, fetch_job_source, fetch_jobs, run_job, CatalogueJob, JobErrors, JobRun,
-    JobRunResult, JobSource, JobsResponse, ScheduledJob,
+    JobRunResult, JobSource, JobsResponse, Outcome, ScheduledJob, Trigger,
 };
 use crate::components::param::PARAM_INPUT_ROW_CLASS;
 use crate::components::{InfoButton, Panel};
@@ -241,7 +241,7 @@ fn JobRow(
                     div { class: "mt-2 text-xs flex items-center gap-2",
                         OutcomeBadge { outcome: run.outcome.clone() }
                         span { class: "text-gray-300",
-                            "last run {ago(run.started_at)}, {run.trigger}, {run.ms as i64}ms"
+                            "last run {ago(run.started_at)}, {trigger_label(&run.trigger)}, {run.ms as i64}ms"
                         }
                     }
                 } else {
@@ -272,7 +272,7 @@ fn JobRow(
             }
 
             match &*outcome.read() {
-                Some(Ok(r)) => rsx! { Outcome { result: r.clone() } },
+                Some(Ok(r)) => rsx! { RunSummary { result: r.clone() } },
                 Some(Err(e)) => rsx! {
                     p { class: "text-red-400 mt-3", "The run failed" }
                     p { class: "text-gray-300 mt-1", "{e}" }
@@ -283,14 +283,15 @@ fn JobRow(
     }
 }
 
-/// What the run actually did, in facts.
+/// What the run actually did, in facts. Named for the summary it renders —
+/// `Outcome` is the shared enum for how a run ended, which is a different thing.
 ///
 /// The summary is rendered as a table rather than a sentence because that is
 /// the shape the backend produces — `log.ts` requires jobs to report counts,
 /// durations and paths rather than prose, and flattening those back into a
 /// sentence here would throw away the reason for the rule.
 #[component]
-fn Outcome(result: JobRunResult) -> Element {
+fn RunSummary(result: JobRunResult) -> Element {
     rsx! {
         div { class: "mt-3 pt-3 border-t border-gray-600",
             p {
@@ -386,15 +387,30 @@ fn relative(epoch_ms: f64) -> String {
 /// was nothing to do, or because DRY_RUN is on, has worked correctly. Colouring
 /// it as a problem would train the reader to ignore the colour.
 #[component]
-fn OutcomeBadge(outcome: String) -> Element {
-    let (text, class) = match outcome.as_str() {
-        "changed" => ("changed", "text-green-400"),
-        "unchanged" => ("unchanged", "text-gray-300"),
-        "skipped" => ("skipped", "text-gray-300"),
-        "failed" => ("failed", "text-red-400"),
-        other => (other, "text-gray-300"),
+fn OutcomeBadge(outcome: Option<Outcome>) -> Element {
+    // An Option because the stored record has no outcome — it is derived when
+    // served. A run without one is a record we should not be rendering, so it
+    // says so rather than showing a confident blank.
+    let (text, class) = match outcome {
+        Some(Outcome::Changed) => ("changed", "text-green-400"),
+        Some(Outcome::Unchanged) => ("unchanged", "text-gray-300"),
+        Some(Outcome::Skipped) => ("skipped", "text-gray-300"),
+        Some(Outcome::Failed) => ("failed", "text-red-400"),
+        None => ("unreported", "text-gray-400"),
     };
     rsx! { span { class: "{class} font-medium", "{text}" } }
+}
+
+/// How a run was started, for display.
+///
+/// A free function rather than a method: `Trigger` is defined in the `shared`
+/// crate, and Rust's orphan rule stops `fe` writing an `impl` for a type it
+/// does not own. The same reason `api::history` uses extension traits.
+fn trigger_label(t: &Trigger) -> &'static str {
+    match t {
+        Trigger::Manual => "manual",
+        Trigger::Schedule => "schedule",
+    }
 }
 
 #[component]
@@ -417,7 +433,7 @@ fn RecentRuns(runs: Vec<JobRun>) -> Element {
                     class: if i % 2 == 1 { "flex items-center gap-3 px-3 py-2 bg-gray-800" } else { "flex items-center gap-3 px-3 py-2 bg-gray-700" },
                     span { class: "text-gray-400 text-xs w-24 shrink-0", "{ago(run.started_at)}" }
                     code { class: "text-gray-200 text-xs w-48 shrink-0", "{run.job_id}" }
-                    span { class: "text-gray-400 text-xs w-20 shrink-0", "{run.trigger}" }
+                    span { class: "text-gray-400 text-xs w-20 shrink-0", "{trigger_label(&run.trigger)}" }
                     span { class: "text-xs w-24 shrink-0", OutcomeBadge { outcome: run.outcome.clone() } }
                     span { class: "text-gray-400 text-xs w-16 shrink-0", "{run.ms as i64}ms" }
                     span { class: "text-gray-300 text-xs flex-1 truncate",
@@ -508,7 +524,7 @@ fn ErrorLog(errors: JobErrors) -> Element {
                     div {
                         class: if i % 2 == 1 { "flex items-start gap-3 px-3 py-2 bg-gray-800" } else { "flex items-start gap-3 px-3 py-2 bg-gray-700" },
                         span { class: "text-gray-400 w-24 shrink-0", "{ago(run.started_at)}" }
-                        span { class: "text-gray-400 w-20 shrink-0", "{run.trigger}" }
+                        span { class: "text-gray-400 w-20 shrink-0", "{trigger_label(&run.trigger)}" }
                         span { class: "text-gray-400 w-16 shrink-0", "{run.ms as i64}ms" }
                         // The message wraps rather than truncating: a truncated
                         // error is no error.

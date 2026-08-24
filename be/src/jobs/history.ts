@@ -17,30 +17,15 @@ import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { config } from "../config.ts";
 
-/** How the run was started. */
-export type Trigger = "manual" | "schedule";
-
 /**
- * One completed run.
- *
- * Stores the raw result rather than a verdict: `outcome()` derives one, so the
- * two can never disagree, and a stored verdict computed by an older version
- * cannot outlive the rule that produced it.
+ * `JobRun`, `Trigger` and `Outcome` are sent to the frontend, so they are
+ * defined once in `shared/src/jobs.rs` and regenerated into
+ * `be/src/generated/wire.ts`. Only the rule for deriving an outcome lives here
+ * — that is behaviour, and it is deliberately not stored.
  */
-export interface JobRun {
-    jobId: string;
-    startedAt: number;
-    ms: number;
-    trigger: Trigger;
-    /** Whether the run was disarmed. A dry run is not a failed run. */
-    dryRun: boolean;
-    changed: boolean;
-    skipped?: string;
-    error?: string;
-    summary: Record<string, number | string>;
-}
+export type { JobRun, Trigger, Outcome } from "../generated/wire.ts";
+import type { JobRun, Outcome } from "../generated/wire.ts";
 
-export type Outcome = "changed" | "unchanged" | "skipped" | "failed";
 
 /**
  * The four states a reader cares about, in priority order.

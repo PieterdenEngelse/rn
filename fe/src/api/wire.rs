@@ -9,6 +9,15 @@
 
 use serde::Deserialize;
 
+// The jobs surface is defined once, in the `shared` crate, and regenerated into
+// be/src/generated/wire.ts for the Node side. Re-exported here so the rest of
+// `fe` keeps importing from `crate::api`, and so the boundary is legible: what
+// remains below is still hand-written on both ends, and is the next to move.
+pub use shared::{
+    CatalogueJob, JobErrors, JobInfo, JobRun, JobRunResult, JobSource, JobsResponse,
+    Outcome, RunningJob, Schedule, ScheduledJob, Trigger,
+};
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct ParamInfo {
     pub what: String,
@@ -106,144 +115,6 @@ pub struct SaveResponse {
 pub struct SaveError {
     pub id: String,
     pub message: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct RunningJob {
-    pub id: String,
-    pub name: String,
-    #[serde(rename = "startedAt")]
-    pub started_at: f64,
-}
-
-/// Prose for a job's info panel.
-///
-/// Deliberately the same shape as [`ParamInfo`] — the backend mirrors it in
-/// `be/src/jobs/types.ts` so one `InfoButton` renders both. Kept as its own
-/// type rather than aliased so the two can diverge without a rename.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct JobInfo {
-    pub what: String,
-    pub why: String,
-    #[serde(rename = "ifWrong")]
-    pub if_wrong: String,
-}
-
-/// One job that exists, whether or not it is running.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct CatalogueJob {
-    pub id: String,
-    pub label: String,
-    pub info: JobInfo,
-    /// Display path of the file defining this job, e.g. `~/rn/be/src/jobs/x.ts`.
-    /// Display form only — the absolute path stays on the backend, and the
-    /// source endpoint takes an id rather than a path.
-    #[serde(default)]
-    pub source: String,
-    /// Wall-clock ceiling for one run, in milliseconds — already resolved to
-    /// the effective value, so the page never needs to know the default.
-    #[serde(default, rename = "timeoutMs")]
-    pub timeout_ms: f64,
-}
-
-/// One job's recorded failures.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct JobErrors {
-    pub id: String,
-    /// Newest first. Kept in their own bounded list on the backend, so a run of
-    /// successes cannot evict them — see be/src/jobs/history.ts.
-    #[serde(default)]
-    pub failures: Vec<JobRun>,
-    /// Runs of this job still on record. Read the failure count against it:
-    /// three failures means something different out of five runs than out of
-    /// five hundred. Retained, not lifetime — the run list is capped.
-    #[serde(default, rename = "runsRetained")]
-    pub runs_retained: u32,
-    #[serde(default, rename = "failuresRetained")]
-    pub failures_retained: u32,
-}
-
-/// A job's own source, as read from disk.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct JobSource {
-    pub id: String,
-    pub path: String,
-    pub content: String,
-}
-
-/// One scheduled job and when it next fires.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct ScheduledJob {
-    pub id: String,
-    /// Already in human form — "daily at 03:00". The backend renders it so the
-    /// two ends cannot disagree about what a schedule means.
-    pub schedule: String,
-    /// Epoch ms. The scheduler does not catch up on slots missed while rn was
-    /// down, so this is the only place a skipped run becomes visible.
-    #[serde(rename = "nextRunAt")]
-    pub next_run_at: f64,
-}
-
-/// One completed run, as recorded in be/src/jobs/history.ts.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct JobRun {
-    #[serde(rename = "jobId")]
-    pub job_id: String,
-    #[serde(rename = "startedAt")]
-    pub started_at: f64,
-    pub ms: f64,
-    /// "manual" or "schedule" — which door the run came through.
-    pub trigger: String,
-    #[serde(rename = "dryRun")]
-    pub dry_run: bool,
-    pub changed: bool,
-    #[serde(default)]
-    pub skipped: Option<String>,
-    #[serde(default)]
-    pub error: Option<String>,
-    #[serde(default)]
-    pub summary: std::collections::BTreeMap<String, serde_json::Value>,
-    /// "changed" | "unchanged" | "skipped" | "failed". Derived by the backend
-    /// from the fields above rather than stored, so it cannot go stale.
-    pub outcome: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct JobsResponse {
-    pub running: Vec<RunningJob>,
-    #[serde(default, rename = "restartPending")]
-    pub restart_pending: bool,
-    /// Every job that exists. Empty against a backend too old to send it.
-    #[serde(default)]
-    pub catalogue: Vec<CatalogueJob>,
-    /// Whether the backend is disarmed. Drives the banner on the Jobs page:
-    /// a run that changes nothing is the expected outcome while this is true,
-    /// and saying so beats letting the user read "skipped" as a failure.
-    #[serde(default, rename = "dryRun")]
-    pub dry_run: bool,
-    /// What fires on its own. Empty against a backend without a scheduler.
-    #[serde(default)]
-    pub scheduled: Vec<ScheduledJob>,
-    /// The most recent run of each job that has ever run.
-    #[serde(default, rename = "lastRuns")]
-    pub last_runs: Vec<JobRun>,
-    /// The last 25 runs across all jobs, newest first.
-    #[serde(default)]
-    pub recent: Vec<JobRun>,
-}
-
-/// What one run reported. Mirrors JobResult in be/src/jobs/types.ts.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct JobRunResult {
-    pub id: String,
-    /// Counts, sizes and paths — numbers or strings, so the value stays
-    /// `serde_json::Value` rather than forcing every job into one shape.
-    #[serde(default)]
-    pub summary: std::collections::BTreeMap<String, serde_json::Value>,
-    pub changed: bool,
-    /// Why nothing happened, when nothing did.
-    #[serde(default)]
-    pub skipped: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]

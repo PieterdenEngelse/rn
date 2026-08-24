@@ -5,6 +5,10 @@ authors = ["pde"]
 edition = "2021"
 
 [dependencies]
+# The wire types, defined once. default-features = false switches off the
+# `typescript` feature so ts-rs never reaches the wasm bundle — this crate is
+# compiled to wasm and anything pulled in here ships to the browser.
+shared = { path = "../shared", default-features = false }
 dioxus = { version = "=0.7.9", features = ["web"] }
 manganis = "0.7"
 dioxus-router = { version = "=0.7.9" }

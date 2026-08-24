@@ -15,7 +15,8 @@
     "start:sealed:win": "runtime\\bin\\node.exe --env-file-if-exists=.env src/main.ts",
     "params:build": "node tools/gen-params.ts",
     "serve": "node --env-file-if-exists=.env src/server.ts",
-    "probe:runtimes": "./runtime/bin/node tools/probe-runtime.cjs && ./runtime-bun/bin/bun run tools/probe-runtime.cjs && ./runtime-deno/bin/deno run -A tools/probe-runtime.cjs"
+    "probe:runtimes": "./runtime/bin/node tools/probe-runtime.cjs && ./runtime-bun/bin/bun run tools/probe-runtime.cjs && ./runtime-deno/bin/deno run -A tools/probe-runtime.cjs",
+    "types:build": "cd ../shared && cargo run --quiet --bin gen-types"
   },
   "devDependencies": {
     "typescript": "^5.8.0",
