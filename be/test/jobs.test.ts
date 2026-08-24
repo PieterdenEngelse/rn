@@ -2,7 +2,7 @@ import { test, beforeEach, afterEach, after } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, writeFile, utimes, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, isAbsolute } from "node:path";
 import { runJob } from "../src/jobs/run.ts";
 import { JOBS, jobById } from "../src/jobs/index.ts";
 import * as scheduler from "../src/jobs/scheduler.ts";
@@ -42,6 +42,7 @@ function probe(overrides: Partial<Job> = {}): Job & { seen: { dryRun?: boolean }
         id: "probe",
         label: "Probe",
         info: { what: "w", why: "y", ifWrong: "i" },
+        source: import.meta.filename,
         async run(ctx) {
             seen.dryRun = ctx.dryRun;
             return { summary: { files: 1 }, changed: true };
@@ -176,21 +177,21 @@ async function artifact(name: string, ageDays: number, body = "x"): Promise<void
 
 test("an empty directory is reported as skipped, not as a failure", async () => {
     setDryRun(false);
-    const r = await pruneProfiles.run({ dryRun: false, step: () => {} });
+    const r = await pruneProfiles.run({ dryRun: false, step: () => {}, signal: new AbortController().signal });
     assert.equal(r.changed, false);
     assert.match(r.skipped ?? "", /No profiling artifacts/);
 });
 
 test("an unreadable directory is skipped with the reason attached", async () => {
     setConfig(join(dir, "does-not-exist"), 7);
-    const r = await pruneProfiles.run({ dryRun: false, step: () => {} });
+    const r = await pruneProfiles.run({ dryRun: false, step: () => {}, signal: new AbortController().signal });
     assert.equal(r.changed, false);
     assert.match(r.skipped ?? "", /Could not read/);
 });
 
 test("artifacts younger than the window are kept, and the reason says so", async () => {
     await artifact("jit-1.dump", 2);
-    const r = await pruneProfiles.run({ dryRun: false, step: () => {} });
+    const r = await pruneProfiles.run({ dryRun: false, step: () => {}, signal: new AbortController().signal });
     assert.equal(r.changed, false);
     assert.equal(r.summary.stale, 0);
     assert.match(r.skipped ?? "", /younger than 7 days/);
@@ -202,7 +203,7 @@ test("dry run deletes nothing but reports exactly what it would delete", async (
     await artifact("isolate-0xabc-1-v8.log", 30, "bb");
     await artifact("recent.cpuprofile", 1, "c");
 
-    const r = await pruneProfiles.run({ dryRun: true, step: () => {} });
+    const r = await pruneProfiles.run({ dryRun: true, step: () => {}, signal: new AbortController().signal });
 
     assert.equal(r.changed, false, "a dry run never reports a change");
     assert.equal(r.summary.stale, 2);
@@ -218,7 +219,7 @@ test("armed, it deletes only the stale artifacts", async () => {
     await artifact("recent.cpuprofile", 1);
     await artifact("notes.txt", 400);
 
-    const r = await pruneProfiles.run({ dryRun: false, step: () => {} });
+    const r = await pruneProfiles.run({ dryRun: false, step: () => {}, signal: new AbortController().signal });
 
     assert.equal(r.changed, true);
     assert.equal(r.summary.deleted, 2);
@@ -232,8 +233,8 @@ test("dry run and armed run agree on which files are stale", async () => {
     await artifact("jit-2.dump", 8);
     await artifact("jit-3.dump", 6);
 
-    const dry = await pruneProfiles.run({ dryRun: true, step: () => {} });
-    const armed = await pruneProfiles.run({ dryRun: false, step: () => {} });
+    const dry = await pruneProfiles.run({ dryRun: true, step: () => {}, signal: new AbortController().signal });
+    const armed = await pruneProfiles.run({ dryRun: false, step: () => {}, signal: new AbortController().signal });
 
     // If these ever disagree the dry run is worthless as a preview.
     assert.equal(dry.summary.stale, armed.summary.deleted);
@@ -242,7 +243,7 @@ test("dry run and armed run agree on which files are stale", async () => {
 
 test("the job reports facts, never the word done", async () => {
     await artifact("jit-1.dump", 30);
-    const r = await pruneProfiles.run({ dryRun: false, step: () => {} });
+    const r = await pruneProfiles.run({ dryRun: false, step: () => {}, signal: new AbortController().signal });
     // log.ts: "a line that says 'done' cannot become an explanation".
     assert.ok(typeof r.summary.dir === "string");
     assert.ok(typeof r.summary.scanned === "number");
@@ -310,6 +311,7 @@ test("a scheduled job fires when its slot arrives", async () => {
         id: "tick-probe",
         label: "Tick probe",
         info: { what: "w", why: "y", ifWrong: "i" },
+        source: import.meta.filename,
         schedule: { kind: "everyMinutes", minutes: 60 },
         async run() {
             ran += 1;
@@ -333,6 +335,7 @@ test("a job still running when its slot arrives is skipped, not stacked", async 
         id: "slow-probe",
         label: "Slow probe",
         info: { what: "w", why: "y", ifWrong: "i" },
+        source: import.meta.filename,
         schedule: { kind: "everyMinutes", minutes: 1 },
         async run() {
             return { summary: {}, changed: false };
@@ -355,6 +358,7 @@ test("a throwing scheduled job still advances to its next slot", async () => {
         id: "throwing-probe",
         label: "Throwing probe",
         info: { what: "w", why: "y", ifWrong: "i" },
+        source: import.meta.filename,
         schedule: { kind: "everyMinutes", minutes: 60 },
         async run() {
             attempts += 1;
@@ -376,6 +380,7 @@ test("a job with no schedule is never scheduled", () => {
         id: "manual-only",
         label: "Manual only",
         info: { what: "w", why: "y", ifWrong: "i" },
+        source: import.meta.filename,
         async run() {
             return { summary: {}, changed: false };
         },
@@ -421,6 +426,7 @@ test("a scheduled run is recorded as scheduled", async () => {
         id: "sched-probe",
         label: "Sched probe",
         info: { what: "w", why: "y", ifWrong: "i" },
+        source: import.meta.filename,
         schedule: { kind: "everyMinutes", minutes: 60 },
         async run() {
             return { summary: {}, changed: false };
@@ -465,4 +471,188 @@ test("a run survives a restart", async () => {
     // process does. The query string defeats the module cache.
     const fresh = await import(`../src/jobs/history.ts?reload=${Date.now()}`);
     assert.equal(fresh.list().length, 1, "the record outlived the process");
+});
+
+// ---- job source ---------------------------------------------------------
+
+test("every job declares a source file that exists and is its own", async () => {
+    const { readFile } = await import("node:fs/promises");
+    for (const job of JOBS) {
+        const content = await readFile(job.source, "utf8");
+        // Not just "a file exists": the file must actually define this job, or
+        // the page would confidently show someone the wrong code.
+        assert.ok(
+            content.includes(`id: "${job.id}"`),
+            `${job.source} does not define ${job.id}`,
+        );
+    }
+});
+
+test("a job's source path is absolute, so reading it never depends on cwd", () => {
+    for (const job of JOBS) {
+        assert.ok(isAbsolute(job.source), `${job.id}: ${job.source}`);
+    }
+});
+
+// ---- the error log ------------------------------------------------------
+
+/** A job that fails on demand, for exercising failure retention. */
+function flaky(id: string, shouldFail: () => boolean): Job {
+    return {
+        id,
+        label: id,
+        info: { what: "w", why: "y", ifWrong: "i" },
+        source: import.meta.filename,
+        async run() {
+            if (shouldFail()) throw new Error(`${id} broke`);
+            return { summary: {}, changed: true };
+        },
+    };
+}
+
+test("a failure survives being pushed out of the ordinary run list", async () => {
+    let fail = true;
+    const job = flaky("evictee", () => fail);
+    await assert.rejects(runJob(job));
+    fail = false;
+
+    // Enough successes to evict the failure from the 200-entry run list.
+    for (let i = 0; i < 205; i += 1) await runJob(job);
+
+    assert.equal(history.list().some((r) => r.error !== undefined), false,
+        "the failure really has been evicted from the run list");
+    // ...and is still in the error log, which is the whole point.
+    const errors = history.failuresFor("evictee");
+    assert.equal(errors.length, 1);
+    assert.equal(errors[0]?.error, "evictee broke");
+});
+
+test("failuresFor is per job and newest first", async () => {
+    const a = flaky("job-a", () => true);
+    const b = flaky("job-b", () => true);
+    await assert.rejects(runJob(a));
+    await assert.rejects(runJob(b));
+    await assert.rejects(runJob(a));
+
+    const errors = history.failuresFor("job-a");
+    assert.equal(errors.length, 2, "only job-a's failures");
+    assert.ok(errors[0]!.startedAt >= errors[1]!.startedAt, "newest first");
+    assert.equal(history.failuresFor("job-b").length, 1);
+    assert.equal(history.failuresFor("never-failed").length, 0);
+});
+
+test("countsFor reports retained runs and failures, not a lifetime total", async () => {
+    const job = flaky("counted", () => false);
+    await runJob(job);
+    await runJob(job);
+    const counts = history.countsFor("counted");
+    assert.equal(counts.runs, 2);
+    assert.equal(counts.failures, 0);
+});
+
+test("the old bare-array file format is read, and its failures are kept", async () => {
+    const { writeFile } = await import("node:fs/promises");
+    // The shape written before failures had their own list.
+    await writeFile(config.jobRunsPath, JSON.stringify([
+        { jobId: "old", startedAt: 1, ms: 1, trigger: "manual", dryRun: false,
+          changed: false, error: "ancient", summary: {} },
+        { jobId: "old", startedAt: 2, ms: 1, trigger: "manual", dryRun: false,
+          changed: true, summary: {} },
+    ]));
+    const fresh = await import(`../src/jobs/history.ts?fmt=${Date.now()}`);
+    assert.equal(fresh.list().length, 2, "runs read from the old shape");
+    assert.equal(fresh.failuresFor("old").length, 1, "its failure carried over");
+});
+
+// ---- timeouts -----------------------------------------------------------
+
+test("a hung job is given up on, and stops blocking everything behind it", async () => {
+    const hung: Job = {
+        id: "hung",
+        label: "Hung",
+        info: { what: "w", why: "y", ifWrong: "i" },
+        source: import.meta.filename,
+        timeoutMs: 50,
+        // Never settles. Before the timeout this held the registry open
+        // forever: no restart could proceed and the scheduler skipped every
+        // future slot as "still running".
+        run: () => new Promise<never>(() => {}),
+    };
+
+    await assert.rejects(runJob(hung), /timed out after 50ms/);
+
+    // The properties that actually matter, none of which are about the promise.
+    assert.equal(running.isIdle(), true, "the registry is released");
+    let restartCould = false;
+    running.whenIdle(() => (restartCould = true));
+    assert.equal(restartCould, true, "a restart would no longer queue forever");
+
+    const [run] = history.list();
+    assert.equal(history.outcome(run!), "failed", "and it is red, not silently pink");
+    assert.match(run!.error ?? "", /timed out/);
+});
+
+test("the job is handed a signal that is aborted when its time runs out", async () => {
+    let aborted = false;
+    const job: Job = {
+        id: "abortable",
+        label: "Abortable",
+        info: { what: "w", why: "y", ifWrong: "i" },
+        source: import.meta.filename,
+        timeoutMs: 40,
+        async run(ctx) {
+            ctx.signal.addEventListener("abort", () => (aborted = true));
+            return new Promise<never>(() => {});
+        },
+    };
+
+    await assert.rejects(runJob(job), /timed out/);
+    // The only mechanism that can stop the work itself, rather than merely
+    // stopping us waiting for it.
+    assert.equal(aborted, true);
+});
+
+test("a job that finishes in time is untouched by the timeout", async () => {
+    const job: Job = {
+        id: "prompt",
+        label: "Prompt",
+        info: { what: "w", why: "y", ifWrong: "i" },
+        source: import.meta.filename,
+        timeoutMs: 5_000,
+        async run(ctx) {
+            assert.equal(ctx.signal.aborted, false);
+            return { summary: { ok: 1 }, changed: true };
+        },
+    };
+    const result = await runJob(job);
+    assert.equal(result.changed, true);
+    assert.equal(history.outcome(history.list()[0]!), "changed");
+});
+
+test("a job that rejects after losing the race does not crash the process", async () => {
+    // Without the no-op catch in runJob this is an unhandled rejection, which
+    // under the default unhandledRejections setting takes the process down —
+    // turning a slow job into a crash.
+    const job: Job = {
+        id: "late-reject",
+        label: "Late reject",
+        info: { what: "w", why: "y", ifWrong: "i" },
+        source: import.meta.filename,
+        timeoutMs: 30,
+        run: () =>
+            new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error("too late")), 120),
+            ),
+    };
+    await assert.rejects(runJob(job), /timed out/);
+    await new Promise((r) => setTimeout(r, 200)); // let the late rejection land
+    assert.ok(true, "still here");
+});
+
+test("every registered job's timeout is a positive number if it sets one", () => {
+    for (const job of JOBS) {
+        if (job.timeoutMs !== undefined) {
+            assert.ok(job.timeoutMs > 0, `${job.id}: ${job.timeoutMs}`);
+        }
+    }
 });

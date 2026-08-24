@@ -5,8 +5,8 @@
 //! `web-sys`, neither of which belongs anywhere near a shared type crate.
 
 use super::wire::{
-    JobRunResult, JobsResponse, NodeHistory, NodeMetrics, ParamsResponse, RestartOutcome,
-    SaveResponse, StatusResponse, StopOutcome,
+    JobErrors, JobRunResult, JobSource, JobsResponse, NodeHistory, NodeMetrics,
+    ParamsResponse, RestartOutcome, SaveResponse, StatusResponse, StopOutcome,
 };
 
 /// Base URL of the backend API. In development the frontend is served by
@@ -211,4 +211,44 @@ pub async fn run_job(id: &str) -> Result<JobRunResult, String> {
             .to_string()),
         Err(_) => Err(format!("the run failed ({})", resp.status())),
     }
+}
+
+/// Read a job's own source file.
+///
+/// Takes an id, never a path — the backend resolves the file from the job
+/// definition, so there is nothing here a traversal could reach.
+pub async fn fetch_job_source(id: &str) -> Result<JobSource, String> {
+    let resp = gloo_net::http::Request::get(&format!("{API_BASE}/api/jobs/{id}/source"))
+        .send()
+        .await
+        .map_err(|e| format!("{e}"))?;
+
+    if resp.ok() {
+        return resp.json::<JobSource>().await.map_err(|e| format!("{e}"));
+    }
+    match resp.json::<serde_json::Value>().await {
+        Ok(v) => Err(v
+            .get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("source unavailable")
+            .to_string()),
+        Err(_) => Err(format!("source unavailable ({})", resp.status())),
+    }
+}
+
+/// Read one job's recorded failures.
+///
+/// Fetched on demand rather than with the job list: no failures is the common
+/// case, and sending every job's error messages on every poll would pay for the
+/// exception on the ordinary path.
+pub async fn fetch_job_errors(id: &str) -> Result<JobErrors, String> {
+    let resp = gloo_net::http::Request::get(&format!("{API_BASE}/api/jobs/{id}/errors"))
+        .send()
+        .await
+        .map_err(|e| format!("{e}"))?;
+
+    if resp.ok() {
+        return resp.json::<JobErrors>().await.map_err(|e| format!("{e}"));
+    }
+    Err(format!("could not read the error log ({})", resp.status()))
 }

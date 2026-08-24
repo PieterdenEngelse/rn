@@ -13,6 +13,8 @@ pub enum Health {
     Checking,
     /// Nothing answered. The backend is not running.
     Offline,
+    /// Up, but the last run of at least one job failed.
+    Failing,
     /// Up, but saved settings are not in effect.
     Pending,
     /// Up and working — jobs in flight.
@@ -27,7 +29,9 @@ impl Health {
     fn from_status(s: &StatusResponse) -> Self {
         // Severity order matters: a busy process with pending settings should
         // report the pending state, because that is the one needing action.
-        if s.pending_count > 0 {
+        if s.failed_jobs > 0 {
+            Health::Failing
+        } else if s.pending_count > 0 {
             Health::Pending
         } else if s.jobs > 0 {
             Health::Busy
@@ -44,6 +48,12 @@ impl Health {
         match self {
             Health::Checking => ("bg-purple-400", "#c084fc", "animate-pulse"),
             Health::Offline => ("bg-red-500", "#ef4444", ""),
+            // The same red as Offline on purpose. The two cannot both be true —
+            // Failing needs a status response, Offline means there wasn't one —
+            // so sharing the colour costs no ambiguity, and a second red nobody
+            // can tell apart would be worse than none. Red means "this needs
+            // you"; the panel says which.
+            Health::Failing => ("bg-red-500", "#ef4444", ""),
             Health::Pending => ("bg-yellow-500", "#eab308", ""),
             Health::Busy => ("bg-pink-500", "#ec4899", ""),
             Health::Unsupervised => ("bg-blue-400", "#60a5fa", ""),
@@ -55,6 +65,7 @@ impl Health {
         match self {
             Health::Checking => "Checking",
             Health::Offline => "Offline",
+            Health::Failing => "Job failed",
             Health::Pending => "Settings pending",
             Health::Busy => "Working",
             Health::Unsupervised => "Unsupervised",
@@ -66,6 +77,7 @@ impl Health {
         match self {
             Health::Checking => "Asking the backend how it is.",
             Health::Offline => "Nothing answered. What that means depends on why — see below.",
+            Health::Failing => "Running, but an automation's last run failed.",
             Health::Pending => "Running, but settings you saved are not in effect yet. Restart to apply them.",
             Health::Busy => "Running an automation right now.",
             Health::Unsupervised => "Running, but not under the launcher, so it cannot restart itself.",
@@ -100,6 +112,20 @@ impl Health {
                 "origin is wrong. Those lead to opposite fixes, so the details box names ",
                 "which one it was.",
             ),
+            Health::Failing => concat!(
+                "At least one job's most recent run ended in a thrown error rather than a ",
+                "result. The backend works this out from the run record on disk, not from ",
+                "anything held in memory, so it survives a page reload and a restart — the ",
+                "failure is still reported the next morning.\n\n",
+
+                "Most recent is the whole point. A job that failed last week and has ",
+                "succeeded every night since is not failing, and a light that stays red on ",
+                "the strength of old news is one people stop reading. Run the job again ",
+                "and the light clears the moment it succeeds.\n\n",
+
+                "It outranks pending settings: a stale setting is a task, a failed ",
+                "automation is something that did not happen.",
+            ),
             Health::Pending => concat!(
                 "Settings you saved are not in effect in the running process. The backend ",
                 "works this out by comparing what the settings file resolves to against ",
@@ -119,8 +145,10 @@ impl Health {
                 "backend's own registry of in-flight work, so it is what the process is ",
                 "doing rather than what it has scheduled.\n\n",
 
-                "It says nothing about whether that work is going well. A job failing and ",
-                "a job succeeding are both pink, and both end in green.",
+                "It says nothing about whether the work is going well *while* it runs — a ",
+                "job failing and a job succeeding are both pink. Where they differ is how ",
+                "they end: a success returns the light to green, a failure turns it red and ",
+                "leaves it there until that job succeeds again.",
             ),
             Health::Unsupervised => concat!(
                 "The process is up and answering, but no launcher is supervising it — it ",
@@ -139,10 +167,11 @@ impl Health {
                 "flight, a launcher is supervising the process, and the settings file ",
                 "matches what the running process actually has.\n\n",
 
-                "It is deliberately narrow. Green means up, idle, supervised, and running ",
-                "what you saved — it does not mean your automations are succeeding. Twenty ",
-                "failing jobs finish just as quietly as twenty successful ones, and the ",
-                "light returns to green either way.",
+                "It is deliberately narrow, but it does now include the jobs: green means ",
+                "no job's most recent run failed. What it still cannot tell you is whether ",
+                "a job that succeeded did the right thing — a filter matching nothing ",
+                "succeeds perfectly and changes nothing, and this light will call that ",
+                "green. Monitor → Jobs carries the counts that would show it.",
             ),
         }
     }
@@ -160,6 +189,12 @@ impl Health {
                 "Click the light and read the reason line in the details box. A refused ",
                 "connection means start the backend. A discarded response means the backend ",
                 "is already running and its allowed origin is what needs fixing.",
+            ),
+            Health::Failing => concat!(
+                "Open Monitor → Jobs. The failing job's row carries the error it ended ",
+                "with, and Recent runs shows whether this is the first time or the fifth. ",
+                "Fix the cause and run it by hand — the light clears on the next success ",
+                "rather than waiting for the schedule to come round again.",
             ),
             Health::Pending => concat!(
                 "Restart the backend, from the banner on Config → Settings. Nearly every ",
@@ -366,16 +401,18 @@ pub fn StatusLight() -> Element {
                     "Worth knowing what it does not check, because green is easy to read ",
                     "as everything is fine.\n\n",
 
-                    "It says nothing about whether jobs are succeeding — twenty failing ",
-                    "jobs and twenty succeeding ones both read as working, then green. It ",
+                    "It reports a job whose last run failed, but not a job that succeeded ",
+                    "and did nothing useful — a filter that matches no files succeeds every ",
+                    "time. It does not notice a job that never ran at all, because a ",
+                    "schedule that was missed leaves no failure behind. It ",
                     "does not check that the runtime running is the one selected, which ",
                     "the Active runtime board on Config reports instead. It does not look ",
                     "at memory, CPU or the event loop, so a process thrashing itself to a ",
                     "standstill stays green as long as it answers. And it cannot tell ",
                     "whether this page and the backend are the same version.\n\n",
 
-                    "Green means the process is up, idle, supervised, and running the ",
-                    "settings you saved. That is all it means.",
+                    "Green means the process is up, idle, supervised, running the settings ",
+                    "you saved, and no job's last run failed. That is all it means.",
                 ).to_string(),
             }
         }

@@ -25,6 +25,18 @@ export interface JobContext {
      * `ctx.step("scanning files")`.
      */
     step(name: string, detail?: Record<string, unknown>): void;
+
+    /**
+     * Aborted when the job passes its timeout. Pass it to `fetch`, to
+     * `fs.promises` calls that accept one, and to anything else cancellable.
+     *
+     * This matters more than it looks. A JavaScript promise cannot be killed
+     * from outside — the runner can stop *waiting* for a hung job, but the work
+     * itself carries on holding whatever it holds until the process restarts.
+     * The signal is the only way work actually stops, and it only works if the
+     * job passes it on.
+     */
+    signal: AbortSignal;
 }
 
 /**
@@ -93,5 +105,34 @@ export interface Job {
      * runnable by hand — the schedule is an extra door, not a replacement.
      */
     schedule?: Schedule;
+
+    /**
+     * Absolute path to the file this job is defined in. Set it to
+     * `import.meta.filename` and it cannot drift: a mapping kept anywhere else
+     * is one a rename silently invalidates.
+     *
+     * Exists so the Jobs page can show the job's own source. An info panel says
+     * what a job does in prose; the source says what it actually does, which is
+     * the version that is true. It is also what makes the path from "a control
+     * on a page" to "the code behind it" a click rather than a search.
+     *
+     * The request never carries a path — only a job id, looked up in the
+     * catalogue — so there is nothing here for a traversal to reach.
+     */
+    source: string;
+
+    /**
+     * Wall-clock ceiling for one run, in milliseconds. Defaults to
+     * DEFAULT_TIMEOUT_MS in run.ts.
+     *
+     * There is no way to opt out, and that is deliberate: a job with no ceiling
+     * that hangs takes the whole app with it quietly. It never finishes, so the
+     * in-flight registry never empties, so every future restart queues behind
+     * it forever and the scheduler skips its slot every night as "still
+     * running". Nothing has failed, so nothing is red. Set a large number for a
+     * job that genuinely runs for hours — that is a statement about the job,
+     * which is worth having on the record.
+     */
+    timeoutMs?: number;
     run(ctx: JobContext): Promise<JobResult>;
 }

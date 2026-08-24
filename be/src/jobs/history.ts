@@ -65,25 +65,52 @@ export function outcome(run: JobRun): Outcome {
  */
 const CAPACITY = 200;
 
+/**
+ * Failures are kept separately, and for longer in effective terms.
+ *
+ * A single bounded list gets this exactly backwards: failures are the rare,
+ * valuable entries, and they are the ones a run of successes evicts. A job that
+ * failed twice in March and has succeeded nightly since would have no trace of
+ * March left — which is precisely the history someone opens an error log to
+ * read. 50 failures is a lot of failures; if a job has more than that, the
+ * oldest are not what you need.
+ */
+const FAILURE_CAPACITY = 50;
+
 let runs: JobRun[] = [];
+let failures: JobRun[] = [];
 
 function load(): void {
     try {
         const raw: unknown = JSON.parse(readFileSync(config.jobRunsPath, "utf8"));
-        if (!Array.isArray(raw)) return;
-        runs = (raw as JobRun[])
-            .filter((r) => typeof r?.jobId === "string" && typeof r?.startedAt === "number")
-            .slice(-CAPACITY);
+        // An older shape existed: a bare array of runs, with no separate
+        // failure list. It is read and then written back in the new form, so
+        // the failures it happens to still contain are carried over rather
+        // than dropped on the first upgrade.
+        const parsed = Array.isArray(raw)
+            ? { runs: raw as JobRun[], failures: (raw as JobRun[]).filter(isFailure) }
+            : (raw as { runs?: JobRun[]; failures?: JobRun[] });
+
+        runs = (parsed.runs ?? []).filter(valid).slice(-CAPACITY);
+        failures = (parsed.failures ?? []).filter(valid).slice(-FAILURE_CAPACITY);
     } catch {
         // Missing is the normal first run; corrupt must not stop the app from
         // starting. Either way we begin with nothing, which is honest.
     }
 }
 
+function valid(r: JobRun): boolean {
+    return typeof r?.jobId === "string" && typeof r?.startedAt === "number";
+}
+
+function isFailure(r: JobRun): boolean {
+    return r?.error !== undefined;
+}
+
 function save(): void {
     try {
         mkdirSync(dirname(config.jobRunsPath), { recursive: true });
-        writeFileSync(config.jobRunsPath, JSON.stringify(runs), "utf8");
+        writeFileSync(config.jobRunsPath, JSON.stringify({ runs, failures }), "utf8");
     } catch {
         // A record we cannot persist is still a record we can show until the
         // next restart. Better than refusing to finish the job over it.
@@ -93,7 +120,32 @@ function save(): void {
 export function record(run: JobRun): void {
     runs.push(run);
     if (runs.length > CAPACITY) runs = runs.slice(-CAPACITY);
+
+    if (isFailure(run)) {
+        failures.push(run);
+        if (failures.length > FAILURE_CAPACITY) failures = failures.slice(-FAILURE_CAPACITY);
+    }
     save();
+}
+
+/** Every recorded failure of one job, newest first. */
+export function failuresFor(jobId: string): JobRun[] {
+    return failures.filter((r) => r.jobId === jobId).reverse();
+}
+
+/**
+ * How many runs of this job are still on record, and how many of them failed.
+ *
+ * Both are needed to read the error log honestly: three failures means
+ * something different out of five runs than out of five hundred. `runs` is
+ * capped, so this counts what is retained rather than what has ever happened —
+ * which the panel says out loud rather than implying a lifetime total.
+ */
+export function countsFor(jobId: string): { runs: number; failures: number } {
+    return {
+        runs: runs.filter((r) => r.jobId === jobId).length,
+        failures: failures.filter((r) => r.jobId === jobId).length,
+    };
 }
 
 /** Every run, newest first — the order a reader scans in. */
@@ -112,6 +164,7 @@ export function lastFor(jobId: string): JobRun | undefined {
 /** Test seam, matching running.reset(). */
 export function reset(): void {
     runs = [];
+    failures = [];
 }
 
 load();

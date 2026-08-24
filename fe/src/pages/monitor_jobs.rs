@@ -1,5 +1,6 @@
 use crate::api::{
-    fetch_jobs, run_job, CatalogueJob, JobRun, JobRunResult, JobsResponse, ScheduledJob,
+    fetch_job_errors, fetch_job_source, fetch_jobs, run_job, CatalogueJob, JobErrors, JobRun,
+    JobRunResult, JobSource, JobsResponse, ScheduledJob,
 };
 use crate::components::param::PARAM_INPUT_ROW_CLASS;
 use crate::components::{InfoButton, Panel};
@@ -142,7 +143,13 @@ fn JobRow(
 ) -> Element {
     let mut outcome: Signal<Option<Result<JobRunResult, String>>> = use_signal(|| None);
     let mut busy = use_signal(|| false);
+    let mut source: Signal<Option<Result<JobSource, String>>> = use_signal(|| None);
+    let mut showing_source = use_signal(|| false);
+    let mut errors: Signal<Option<Result<JobErrors, String>>> = use_signal(|| None);
+    let mut showing_errors = use_signal(|| false);
 
+    let source_id = job.id.clone();
+    let errors_id = job.id.clone();
     let id = job.id.clone();
     let start = move |_| {
         let id = id.clone();
@@ -164,6 +171,7 @@ fn JobRow(
                     if running {
                         span { class: "text-gray-300 text-xs", "running…" }
                     }
+                    span { class: "text-gray-400", "times out after {duration(job.timeout_ms)}" }
                     match scheduled.as_ref() {
                         Some(s) => rsx! {
                             span { class: "text-gray-300 text-xs",
@@ -176,6 +184,44 @@ fn JobRow(
                     }
                 }
                 div { class: "flex items-center gap-3",
+                    // Cyan rather than blue: a secondary action beside the
+                    // primary one, per the colour rules in CLAUDE.md.
+                    button {
+                        class: "cursor-pointer",
+                        style: "color: #22d3ee;",
+                        onclick: move |_| {
+                            let was = showing_source();
+                            showing_source.set(!was);
+                            // Fetched once, on first open — the file does not
+                            // change while the page is up, and re-reading it on
+                            // every toggle would be a request per click.
+                            if !was && source.read().is_none() {
+                                let id = source_id.clone();
+                                spawn(async move {
+                                    source.set(Some(fetch_job_source(&id).await));
+                                });
+                            }
+                        },
+                        if showing_source() { "Hide source" } else { "View source" }
+                    }
+                    button {
+                        class: "cursor-pointer",
+                        style: "color: #22d3ee;",
+                        onclick: move |_| {
+                            let was = showing_errors();
+                            showing_errors.set(!was);
+                            // Re-fetched on every open, unlike the source: a run
+                            // can fail while this page is up, and a stale empty
+                            // error log is the one thing this must never show.
+                            if !was {
+                                let id = errors_id.clone();
+                                spawn(async move {
+                                    errors.set(Some(fetch_job_errors(&id).await));
+                                });
+                            }
+                        },
+                        if showing_errors() { "Hide errors" } else { "Error log" }
+                    }
                     button {
                         class: "text-blue-400 hover:text-blue-300 cursor-pointer disabled:cursor-default",
                         onclick: start,
@@ -200,6 +246,28 @@ fn JobRow(
                     }
                 } else {
                     p { class: "mt-2 text-xs text-gray-400", "never run" }
+                }
+            }
+
+            if showing_errors() {
+                match &*errors.read() {
+                    Some(Ok(e)) => rsx! { ErrorLog { errors: e.clone() } },
+                    Some(Err(e)) => rsx! {
+                        p { class: "text-red-400 mt-3", "Could not read the error log" }
+                        p { class: "text-gray-300 mt-1", "{e}" }
+                    },
+                    None => rsx! { p { class: "text-gray-400 mt-3", "Reading…" } },
+                }
+            }
+
+            if showing_source() {
+                match &*source.read() {
+                    Some(Ok(src)) => rsx! { SourceView { source: src.clone() } },
+                    Some(Err(e)) => rsx! {
+                        p { class: "text-red-400 mt-3", "Could not read the source" }
+                        p { class: "text-gray-300 mt-1", "{e}" }
+                    },
+                    None => rsx! { p { class: "text-gray-400 mt-3", "Reading {job.source}…" } },
                 }
             }
 
@@ -379,4 +447,91 @@ fn ago(epoch_ms: f64) -> String {
         return format!("{h}h ago");
     }
     format!("{}d ago", h / 24)
+}
+
+/// The job's own source, as it is on disk.
+///
+/// An info panel says what a job does in prose; this says what it actually
+/// does, which is the version that is true. Shown verbatim and unhighlighted —
+/// a wrong guess at syntax colouring is worse than none, and the point here is
+/// that what you are reading is the file, not a rendering of it.
+#[component]
+fn SourceView(source: JobSource) -> Element {
+    let lines = source.content.lines().count();
+    rsx! {
+        div { class: "mt-3 pt-3 border-t border-gray-600",
+            div { class: "flex items-center gap-3 mb-2",
+                code { class: "text-gray-300", "{source.path}" }
+                span { class: "text-gray-400", "{lines} lines" }
+            }
+            // Its own scroll container: the page body must never scroll
+            // sideways, and source lines are long.
+            pre {
+                class: "rounded border border-gray-600 bg-gray-900 p-3 overflow-x-auto max-h-96 overflow-y-auto",
+                code { class: "text-gray-200 whitespace-pre", "{source.content}" }
+            }
+        }
+    }
+}
+
+/// One job's recorded failures.
+///
+/// Kept separate from Recent runs deliberately. That panel answers "what has
+/// been happening"; this answers "what has gone wrong with *this* job", which
+/// is the question you have when its row is red — and scanning a mixed list of
+/// every job's runs for the failures of one is exactly the work a page should
+/// be doing for you.
+#[component]
+fn ErrorLog(errors: JobErrors) -> Element {
+    if errors.failures.is_empty() {
+        return rsx! {
+            div { class: "mt-3 pt-3 border-t border-gray-600",
+                p { class: "text-gray-300",
+                    "No failures on record, across {errors.runs_retained} retained run(s)."
+                }
+                p { class: "text-gray-400 mt-1 max-w-3xl",
+                    "Failures are kept in their own list, so a run of successes cannot push "
+                    "one out of view. An empty log means this job has genuinely not failed "
+                    "within what is retained — not that the record has moved on."
+                }
+            }
+        };
+    }
+
+    rsx! {
+        div { class: "mt-3 pt-3 border-t border-gray-600",
+            p { class: "text-gray-300 mb-2",
+                "{errors.failures_retained} failure(s) on record, across {errors.runs_retained} retained run(s)."
+            }
+            div { class: "rounded border border-gray-600 overflow-hidden",
+                for (i, run) in errors.failures.iter().enumerate() {
+                    div {
+                        class: if i % 2 == 1 { "flex items-start gap-3 px-3 py-2 bg-gray-800" } else { "flex items-start gap-3 px-3 py-2 bg-gray-700" },
+                        span { class: "text-gray-400 w-24 shrink-0", "{ago(run.started_at)}" }
+                        span { class: "text-gray-400 w-20 shrink-0", "{run.trigger}" }
+                        span { class: "text-gray-400 w-16 shrink-0", "{run.ms as i64}ms" }
+                        // The message wraps rather than truncating: a truncated
+                        // error is no error.
+                        span { class: "text-red-400 flex-1 break-words",
+                            {run.error.clone().unwrap_or_default()}
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// "5m", "30m", "2h" — a ceiling stated the way a person would say it.
+fn duration(ms: f64) -> String {
+    let secs = (ms / 1000.0).round() as i64;
+    if secs < 60 {
+        return format!("{secs}s");
+    }
+    let mins = secs / 60;
+    if mins < 60 {
+        return format!("{mins}m");
+    }
+    let (h, m) = (mins / 60, mins % 60);
+    if m == 0 { format!("{h}h") } else { format!("{h}h {m}m") }
 }

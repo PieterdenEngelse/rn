@@ -135,6 +135,40 @@ pub struct CatalogueJob {
     pub id: String,
     pub label: String,
     pub info: JobInfo,
+    /// Display path of the file defining this job, e.g. `~/rn/be/src/jobs/x.ts`.
+    /// Display form only — the absolute path stays on the backend, and the
+    /// source endpoint takes an id rather than a path.
+    #[serde(default)]
+    pub source: String,
+    /// Wall-clock ceiling for one run, in milliseconds — already resolved to
+    /// the effective value, so the page never needs to know the default.
+    #[serde(default, rename = "timeoutMs")]
+    pub timeout_ms: f64,
+}
+
+/// One job's recorded failures.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct JobErrors {
+    pub id: String,
+    /// Newest first. Kept in their own bounded list on the backend, so a run of
+    /// successes cannot evict them — see be/src/jobs/history.ts.
+    #[serde(default)]
+    pub failures: Vec<JobRun>,
+    /// Runs of this job still on record. Read the failure count against it:
+    /// three failures means something different out of five runs than out of
+    /// five hundred. Retained, not lifetime — the run list is capped.
+    #[serde(default, rename = "runsRetained")]
+    pub runs_retained: u32,
+    #[serde(default, rename = "failuresRetained")]
+    pub failures_retained: u32,
+}
+
+/// A job's own source, as read from disk.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct JobSource {
+    pub id: String,
+    pub path: String,
+    pub content: String,
 }
 
 /// One scheduled job and when it next fires.
@@ -246,6 +280,10 @@ pub struct StatusResponse {
     /// Saved settings not yet in effect — drives the amber header light.
     #[serde(default, rename = "pendingCount")]
     pub pending_count: u32,
+    /// Jobs whose most recent run failed — drives the red header light.
+    /// Most-recent, not ever-failed, so a successful re-run clears it.
+    #[serde(default, rename = "failedJobs")]
+    pub failed_jobs: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]

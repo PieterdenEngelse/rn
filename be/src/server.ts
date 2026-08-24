@@ -6,9 +6,12 @@
  * PUT  /api/settings  save settings (validated); reports what needs a restart
  * GET  /api/jobs      the catalogue, what is running, scheduled, and what ran
  * POST /api/jobs/:id  run one job now
+ * GET  /api/jobs/:id/source   the job's own source file
+ * GET  /api/jobs/:id/errors   the job's recorded failures
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { readFile } from "node:fs/promises";
 import { RUNTIME_PARAMS, WITHHELD } from "./runtime-params.ts";
 import {
     applyRuntimeSettings,
@@ -31,7 +34,14 @@ import { display as displayPath } from "./paths.ts";
 const EXIT_RESTART = 75;
 import { step } from "./log.ts";
 import * as running from "./running.ts";
-import { JOBS, jobById, runJob, scheduler, history as jobHistory } from "./jobs/index.ts";
+import {
+    JOBS,
+    jobById,
+    runJob,
+    scheduler,
+    history as jobHistory,
+    DEFAULT_TIMEOUT_MS,
+} from "./jobs/index.ts";
 import { collect as collectNodeMetrics, lifetimeDelay } from "./node_metrics.ts";
 import { withDistribution } from "./node_history.ts";
 
@@ -149,6 +159,13 @@ export function createApp() {
                 restartPending: restartWhenIdle,
                 // Lets the header light go amber without a second request.
                 pendingCount: pendingRestart(load(config.settingsPath)).length,
+                // Jobs whose *most recent* run failed. Most-recent rather than
+                // ever-failed so the light clears itself on the next success —
+                // a warning that never goes out is one people learn to ignore.
+                failedJobs: JOBS.filter((j) => {
+                    const last = jobHistory.lastFor(j.id);
+                    return last !== undefined && jobHistory.outcome(last) === "failed";
+                }).length,
             });
             return done(200);
         }
@@ -182,7 +199,20 @@ export function createApp() {
                 // The catalogue, so the Jobs page can list what exists rather
                 // than only what happens to be running at the moment it loads.
                 // Carries each job's info-panel prose; see be/src/jobs/types.ts.
-                catalogue: JOBS.map((j) => ({ id: j.id, label: j.label, info: j.info })),
+                catalogue: JOBS.map((j) => ({
+                    id: j.id,
+                    label: j.label,
+                    info: j.info,
+                    // Display form only — the reader needs to know which file
+                    // they are about to open. The absolute path is never sent,
+                    // and never accepted back.
+                    source: displayPath(j.source),
+                    // Surfaced because a ceiling nobody can see is a surprise
+                    // when it fires. Resolved here rather than sent as
+                    // "undefined means the default", so the page never has to
+                    // know what the default is.
+                    timeoutMs: j.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+                })),
                 dryRun: config.dryRun,
                 // What fires on its own, and when next. Shown on the Jobs page
                 // because a schedule nobody can see is indistinguishable from
@@ -203,6 +233,61 @@ export function createApp() {
                 recent: jobHistory
                     .list(25)
                     .map((run) => ({ ...run, outcome: jobHistory.outcome(run) })),
+            });
+            return done(200);
+        }
+
+        // A job's own source. The path is taken from the job definition, not
+        // from the request — the URL carries an id that must match a job in
+        // the catalogue — so there is no path here for a traversal to reach.
+        if (url.pathname.startsWith("/api/jobs/") && url.pathname.endsWith("/source")
+            && req.method === "GET") {
+            const id = decodeURIComponent(
+                url.pathname.slice("/api/jobs/".length, -"/source".length),
+            );
+            const job = jobById(id);
+            if (!job) {
+                send(res, 404, { message: `No job with id "${id}".` });
+                return done(404);
+            }
+            try {
+                const content = await readFile(job.source, "utf8");
+                send(res, 200, { id: job.id, path: displayPath(job.source), content });
+                return done(200);
+            } catch (err) {
+                // A packaged install could conceivably ship without sources.
+                // Say which file was missing rather than returning an empty box.
+                send(res, 404, {
+                    message: `Could not read ${displayPath(job.source)}: ${
+                        err instanceof Error ? err.message : String(err)
+                    }`,
+                });
+                return done(404);
+            }
+        }
+
+        // One job's failures. Separate from GET /api/jobs so the page can open
+        // it on demand: a job with no failures is the common case, and sending
+        // fifty stack-trace-length messages for every job on every poll would
+        // be paying for the exception on the ordinary path.
+        if (url.pathname.startsWith("/api/jobs/") && url.pathname.endsWith("/errors")
+            && req.method === "GET") {
+            const id = decodeURIComponent(
+                url.pathname.slice("/api/jobs/".length, -"/errors".length),
+            );
+            const job = jobById(id);
+            if (!job) {
+                send(res, 404, { message: `No job with id "${id}".` });
+                return done(404);
+            }
+            const counts = jobHistory.countsFor(job.id);
+            send(res, 200, {
+                id: job.id,
+                failures: jobHistory
+                    .failuresFor(job.id)
+                    .map((run) => ({ ...run, outcome: jobHistory.outcome(run) })),
+                runsRetained: counts.runs,
+                failuresRetained: counts.failures,
             });
             return done(200);
         }

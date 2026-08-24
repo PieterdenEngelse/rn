@@ -20,7 +20,7 @@ export function jobById(id: string): Job | undefined {
     return JOBS.find((j) => j.id === id);
 }
 
-export { runJob } from "./run.ts";
+export { runJob, DEFAULT_TIMEOUT_MS } from "./run.ts";
 export * as scheduler from "./scheduler.ts";
 export * as history from "./history.ts";
 export type { Job, JobContext, JobInfo, JobResult, Schedule } from "./types.ts";

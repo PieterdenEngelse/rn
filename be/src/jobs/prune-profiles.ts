@@ -49,6 +49,13 @@ export const pruneProfiles: Job = {
     // whatever zone `timezone` is set to; see Schedule in types.ts.
     schedule: { kind: "dailyAt", hour: 3, minute: 0 },
 
+    source: import.meta.filename,
+
+    // Generous for what this does — a stat per artifact — but it bounds the
+    // case that would otherwise hang: a network filesystem that stops
+    // answering mid-scan. Five minutes of that is plenty of evidence.
+    timeoutMs: 5 * 60_000,
+
     info: {
         what:
             "Scans the runtime's working directory for the files V8 leaves behind — " +
