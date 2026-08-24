@@ -1,6 +1,9 @@
 use crate::api::{fetch_node_history, fetch_node_metrics, fetch_status, StatusResponse, NodeHistory, NodeMetrics};
+// Extension traits: the derived readings the charts need. See api::history —
+// they are traits so the wire types can move to `shared/` without breaking.
+use crate::api::{HistoryTierView, NodeHistoryView, UnavailableView};
 use crate::components::param::*;
-use crate::components::{runtime_name, GlossaryEntry, InfoButton, Panel, ProcessBoards, Series, Sparkline};
+use crate::components::{format_reading, runtime_name, GlossaryEntry, InfoButton, Panel, ProcessBoards, Series, SideLabel, Sparkline};
 use dioxus::prelude::*;
 
 /// Monitor → Runtime. What the runtime is actually doing.
@@ -83,8 +86,6 @@ fn MonitorBoards(
     // is happening here" rather than "this runtime does not count it". Drop it.
     let loop_board_useful =
         !(not_counted("eventLoop.delay") && not_counted("eventLoop.utilizationPct"));
-    let concurrency_board_useful = !(not_counted("concurrency.threadpoolSize")
-        && not_counted("concurrency.activeResources"));
 
     let running = m
         .versions
@@ -122,11 +123,27 @@ fn MonitorBoards(
 
     rsx! {
         Panel {
-            // Not "{running} runtime" any more: Process and Host are kernel and
-            // machine readings that say the same thing under any runtime. What
-            // these four boards share is that they measure consumption.
-            title: "Resources".to_string(),
-            subtitle: Some(format!("what {running} and the machine are using — sampled every 2s")),
+            // The runtime doing the work, where the panel's own name used to be.
+            // "Resources" said only that these are readings — which a monitor
+            // page can take as read — while what a reader cannot take as read is
+            // which of the three runtimes produced them, since the same board
+            // means different things under each.
+            //
+            // Read from the versions the process reports, not from the setting:
+            // the setting is a request, and this is the outcome.
+            // Its own version, not "node" under Bun: Bun and Deno both publish a
+            // Node number for compatibility, and printing that beside their own
+            // name would claim a Node that is not running. Each runtime is asked
+            // for the entry under its own key.
+            title: match m.versions.get(&running) {
+                Some(v) => format!("{} {v}", runtime_name(&running)),
+                None => runtime_name(&running),
+            },
+            // The cadence stays. It was the half of the old subtitle that said
+            // something the boards cannot: every reading under here is a
+            // two-second sample, which is what makes a spike between polls
+            // invisible and a rate meaningful.
+            subtitle: Some("sampled every 2s".to_string()),
             actions: Some(rsx! {
                 div { class: "flex items-center gap-3",
                     button {
@@ -318,180 +335,507 @@ fn MonitorBoards(
                 // ── Memory ────────────────────────────────────────────
                 Board { title: "Memory".to_string(),
                     fill: true,
+                    note: hist.as_ref().map(|h| format!("last {}", window_minutes(h))),
+                    // 18rem of plot, 11rem of label gutter, 1rem between them.
+                    chart_width: "w-[30rem] shrink-0".to_string(),
                     chart: Some(rsx! {
                         if let Some(h) = hist.as_ref() {
+                            // Same definition the plot uses for the top of its
+                            // scale: the largest reading either series reached
+                            // in the window, which on this plot is always rss.
+                            {
+                                let mem_peak = h
+                                    .samples
+                                    .iter()
+                                    .map(|s| s.rss_mb.max(s.heap_used_mb))
+                                    .fold(0.0_f64, f64::max);
+                                // The top of the host plot's own scale. Derived
+                                // from the samples the same way the plot derives
+                                // it, so the two cannot disagree: the most the
+                                // machine had in use is the least it had free.
+                                let old_space_peak = h
+                                    .samples
+                                    .iter()
+                                    .filter_map(|s| s.old_space_mb)
+                                    .fold(0.0_f64, f64::max);
+                                let host_peak = h
+                                    .samples
+                                    .iter()
+                                    .filter_map(|s| s.host_free_mb.map(|f| h.host_total_mb - f))
+                                    .fold(0.0_f64, f64::max);
+                                rsx! {
+                            // The machine above the process, on its own scale.
+                            // Sharing one would flatten this board to a single
+                            // line: free memory here is in thousands of MB and
+                            // the heap in tens, so plotted together the heap
+                            // would be a mark on the axis.
+                            //
+                            // Fixed height, so the process plot below still
+                            // takes the board's leftover rather than the two
+                            // splitting it — this is context, not the subject.
+                            if h.samples.iter().any(|s| s.host_free_mb.is_some()) {
+                                // `pr-48` is the label gutter below plus the gap
+                                // before it — 11rem and 1rem. This plot has no
+                                // labels of its own, so without the padding it
+                                // ran the gutter's width wider than the plot it
+                                // sits above, and two charts of the same data at
+                                // two widths read as two different windows.
+                                div { class: "mb-1",
+                                    Sparkline {
+                                        before_start: h.before_start_fraction(),
+                                        runtime_change: h.runtime_change(),
+                                        series: vec![
+                                            Series {
+                                                label: "host used".to_string(),
+                                                color: "#a78bfa".to_string(),
+                                                // Sampled as free and shown as
+                                                // used: free is what the kernel
+                                                // reports, and deriving used
+                                                // here keeps the history usable
+                                                // either way round rather than
+                                                // baking one reading into the
+                                                // file. Rising means pressure,
+                                                // which is the direction every
+                                                // other series on this board
+                                                // already rises in.
+                                                points: h
+                                                    .samples
+                                                    .iter()
+                                                    .map(|s| s.host_free_mb.map(|f| h.host_total_mb - f))
+                                                    .collect(),
+                                            },
+                                        ],
+                                        unit: " MB".to_string(),
+                                        height: 36,
+                                        // Named beside its own line, like the
+                                        // two below it — and the gutter this
+                                        // draws is what holds this plot to the
+                                        // same width as theirs. With the name
+                                        // there, the legend row under the plot
+                                        // held nothing but its own height.
+                                        show_peak: false,
+                                        show_legend: false,
+                                        // The readings column sits 5mm above
+                                        // where centring alone puts it.
+                                        labels_shift: Some("-5mm".to_string()),
+                                        side_labels: vec![
+                                            SideLabel {
+                                                value: m.host.total_mem_mb - m.host.free_mem_mb,
+                                                content: rsx! {
+                                                    div { class: "w-full",
+                                                        Metric {
+                                                            // What the machine
+                                                            // has, on the label
+                                                            // line: it qualifies
+                                                            // the series, and the
+                                                            // reading below is
+                                                            // only legible
+                                                            // against it.
+                                                            label: format!("host used · {} MB installed", h.host_total_mb),
+                                                            value: format!("{} MB", (m.host.total_mem_mb - m.host.free_mem_mb).round()),
+                                                            what: "Memory in use across the whole machine — every process, plus what the kernel keeps for caches and buffers. rn is one contributor among them, and usually a small one.".to_string(),
+                                                            why: "It is the context the heap limit is set against. A ceiling larger than what is free here will be enforced by the operating system first, and less politely: the process is killed outright, with no JavaScript error and nothing in the log from V8.".to_string(),
+                                                            if_wrong: "High usage with rn's own rss flat means the pressure is coming from something else on the machine — check this before changing any setting on the Config page.".to_string(),
+                                                        }
+                                                        p { class: "text-[10px] text-gray-400",
+                                                            "peak {format_reading(host_peak)} MB"
+                                                        }
+
+                                                    }
+                                                },
+                                            },
+                                        ],
+                                    }
+                                }
+                            }
                             // Stretches so the plot can fill the board: h-full on the
                             // Sparkline resolves against this, and an auto-height
                             // wrapper would collapse it back to its content.
-                            div { class: "mb-2 flex flex-col flex-1 min-h-0",
-                                Sparkline {
-                                        before_start: h.before_start_fraction(),
-                                        runtime_change: h.runtime_change(),
-                                    series: vec![
-                                        Series {
-                                            label: "heap".to_string(),
-                                            color: "#22c55e".to_string(),
-                                            points: h.samples.iter().map(|s| Some(s.heap_used_mb)).collect(),
-                                        },
-                                        Series {
-                                            label: "rss".to_string(),
-                                            color: "#60a5fa".to_string(),
-                                            points: h.samples.iter().map(|s| Some(s.rss_mb)).collect(),
-                                        },
-                                    ],
-                                    unit: " MB".to_string(),
-                                    fill_height: true,
-                                    height: 44,
+                            // Capped rather than free-flexing. Filling the board
+                            // meant the plot absorbed every pixel the row's
+                            // tallest board handed down, and the readings pinned
+                            // to it — and the footer under them — were carried to
+                            // the bottom with it. Ten rem is enough to read the
+                            // shape; what is left over collects under the board's
+                            // last row instead of inside the plot.
+                            //
+                            // Eight rem, not ten: the axis starts at zero and the
+                            // heap sits at a fiftieth of the scale, so a good
+                            // fifth of any height given to this plot is empty
+                            // floor under the lower line. Height spent there buys
+                            // nothing and pushes every reading down.
+                            // The plot, the readings pinned inside it and the
+                            // footer under them, moved as one. Two offsets, one
+                            // per block, moved the footer twice as far as the
+                            // readings — they stack, because the footer sits
+                            // below the plot rather than beside it.
+                            div {
+                                class: "flex flex-col flex-1 min-h-0",
+                                style: "margin-top: 2mm;",
+                                div {
+                                    // Ten rem, not eight. The two readings pinned
+                                    // in the gutter are three lines each and are
+                                    // placed by value: squeeze the plot and the
+                                    // gap between the lines shrinks below the
+                                    // height their labels need, and rss's peak
+                                    // lands on heap used's name. This is a floor
+                                    // for the labels, not for the curve — the
+                                    // curve reads fine much smaller.
+                                    class: "mb-1 flex flex-col flex-1 min-h-0 max-h-40",
+                                    Sparkline {
+                                            before_start: h.before_start_fraction(),
+                                            runtime_change: h.runtime_change(),
+                                        series: vec![
+                                            Series {
+                                                label: "heap".to_string(),
+                                                color: "#22c55e".to_string(),
+                                                points: h.samples.iter().map(|s| Some(s.heap_used_mb)).collect(),
+                                            },
+                                            Series {
+                                                label: "rss".to_string(),
+                                                color: "#60a5fa".to_string(),
+                                                points: h.samples.iter().map(|s| Some(s.rss_mb)).collect(),
+                                            },
+                                        ],
+                                        unit: " MB".to_string(),
+                                        fill_height: true,
+                                        height: 44,
+                                        show_legend: false,
+                                        // Lifted with the host plot's readings,
+                                        // so the whole right-hand column moves
+                                        // as one.
+                                        labels_shift: Some("-5mm".to_string()),
+                                        // Said under the rss reading below instead:
+                                        // the peak is the top of the scale, and on
+                                        // this plot the line that reaches it is
+                                        // always rss.
+                                        show_peak: false,
+                                        // Each reading beside its own curve, at the
+                                        // height the curve is drawn at. In a column
+                                        // they were spread evenly instead, which put
+                                        // the first one level with the upper line
+                                        // whichever line that was — and on a shared
+                                        // scale rss is always the upper one, so the
+                                        // two readings labelled each other's curve.
+                                        //
+                                        // `w-56` so both rows are one width: the
+                                        // param-row rule pushes each info button to
+                                        // that edge, which is what keeps the two
+                                        // buttons in a column of their own.
+                                        side_labels: vec![
+                                            SideLabel {
+                                                value: m.memory.rss_mb,
+                                                content: rsx! {
+                                                    // Nudged half a centimetre below
+                                                    // the line it names. The block is
+                                                    // centred on the curve, and with
+                                                    // three lines of its own — name,
+                                                    // reading, peak — centring puts
+                                                    // the name level with the curve
+                                                    // and the reading under it. The
+                                                    // offset moves the block as a
+                                                    // whole so the curve runs above
+                                                    // it rather than through it.
+                                                    div {
+                                                    class: "w-full",
+                                                    // The 0.75rem the `mt-3` was,
+                                                    // plus 4mm on top of it.
+                                                    style: "margin-top: calc(0.75rem + 4mm);",
+                                        Metric {
+                                        label: "rss",
+                                        value: format!("{} MB", m.memory.rss_mb),
+                                        what: "Total memory the operating system has given this process — heap plus the runtime itself, buffers and native allocations.".to_string(),
+                                        why: "This is the number that matters to the rest of the machine. It is always well above the heap; the gap is Node itself.".to_string(),
+                                        if_wrong: "RSS growing while the heap stays flat points at native memory — buffers or an addon, which the heap limit does not constrain.".to_string(),
+                                        }
+                                                        // The plot's peak, under the
+                                                        // reading that reaches it.
+                                                        // It is the top of the scale
+                                                        // rather than a reading of
+                                                        // its own, which is why it
+                                                        // is set in the legend's
+                                                        // type rather than the
+                                                        // value's.
+                                                        p { class: "text-[10px] text-gray-400",
+                                                            "peak {format_reading(mem_peak)} MB"
+                                                        }
+                                                    }
+                                                },
+                                            },
+                                            SideLabel {
+                                                value: m.memory.heap_used_mb,
+                                                content: rsx! {
+                                                    div { class: "w-full",
+                                                        Metric {
+                                        label: "heap used",
+                                        value: format!("{} MB ({}%)", m.memory.heap_used_mb, heap_pct),
+                                        what: [
+                                            concat!(
+                                            "Memory held by JavaScript objects that are still live, measured ",
+                                            "against ",
+                                            ),
+                                            heap_engine_short,
+                                            concat!(
+                                            "'s ceiling for this process.\n\n",
+
+                                            "A live object is one the garbage collector can still reach. That ",
+                                            "is the whole definition: liveness is decided by reachability, not ",
+                                            "by whether your code will ever touch the object again. An object ",
+                                            "you are completely finished with stays live, and keeps its memory, ",
+                                            "for as long as any reference to it survives.\n\n",
+
+                                            "Reaching starts from a fixed set of roots: the global object ",
+                                            "(globalThis), the variables of every function currently on the ",
+                                            "call stack, the top-level bindings of every loaded [[module]], and the ",
+                                            "callbacks held by pending timers, promises, event listeners and ",
+                                            "open sockets. From each root V8 follows every reference it finds — ",
+                                            "object properties, array elements, Map and Set entries, values ",
+                                            "captured inside closures — then follows the references of whatever ",
+                                            "it lands on, and so on. Any object it can arrive at by some chain ",
+                                            "is live; anything it cannot arrive at is unreachable, and is ",
+                                            "freed.\n\n",
+
+                                            "\"In scope\" is about names rather than objects. A scope is the ",
+                                            "region of code in which a binding is valid: the module itself for ",
+                                            "a top-level const or let, a function body for its parameters and ",
+                                            "locals, or a single block between braces for a let or const ",
+                                            "declared inside it. Each scope exists at runtime as an environment ",
+                                            "holding those bindings, and a name keeps its object alive only ",
+                                            "while that environment is itself reachable. This is why closures ",
+                                            "matter: a callback that mentions one variable keeps its entire ",
+                                            "enclosing environment alive, and with it every object those ",
+                                            "bindings point at, long after the function that created them ",
+                                            "returned.\n\n",
+
+                                            "Leaks follow directly from the definition. One forgotten entry ",
+                                            "pushed into a [[module]]-level array or Map is reachable from a root ",
+                                            "for the life of the process, so it and everything it refers to can ",
+                                            "never be collected — however finished with it you are.\n\n",
+
+                                            "Expect a sawtooth rather than a line: the figure climbs as work ",
+                                            "allocates and drops each time collection runs, so a rising number ",
+                                            "is normal. Only the floor it keeps returning to is meaningful.\n\n",
+
+                                            "Note this is not all the memory your code uses. Node has a call ",
+                                            "stack too, separate from the heap: function frames, return ",
+                                            "addresses, and the local slots holding references. It is about 1MB, ",
+                                            "fixed when the thread starts, reclaimed automatically as calls ",
+                                            "return, and not counted here. Runaway recursion fills that instead ",
+                                            "and fails immediately with 'Maximum call stack size exceeded' — a ",
+                                            "RangeError you can catch, not the process death you get from ",
+                                            "exhausting the heap.\n\n",
+
+                                            "The reason the distinction is easy to miss is that JavaScript never ",
+                                            "lets you choose. Every object you create goes on the heap and the ",
+                                            "stack frame holds only a reference to it, so all your data feels ",
+                                            "heap-shaped — and the heap is the part that leaks, that you tune, ",
+                                            "and that kills the process, so it is the part everyone talks about. ",
+                                            "V8 does sometimes prove a short-lived object never escapes its ",
+                                            "function and keep it in registers or the frame instead, so even ",
+                                            "'objects always go on the heap' is a convenience rather than a ",
+                                            "rule.\n\n",
+
+                                            "Worth separating from the Stack trace depth setting on the Config ",
+                                            "page, which sounds related and is not: that is how many frames get ",
+                                            "captured into an Error object, not how deep the stack may go.",
+                                            ),
+                                        ].concat(),
+                                        why: "The measured counterpart of the Heap memory limit setting. Watch the percentage: a job that fails with 'heap out of memory' was pushing this to 100.".to_string(),
+                                        if_wrong: "Climbing steadily across runs and never falling back after a job ends means something is retained — a leak, not a limit that is too low.".to_string(),
+                                        glossary: vec![GlossaryEntry {
+                                            term: "module".to_string(),
+                                            body: concat!(
+                                                "In Node.js a module is one file. That is the unit, and ",
+                                                "everything else follows from it.\n\n",
+
+                                                "Each file gets its own scope. A top-level const, let or ",
+                                                "function is not global — it is private to that file unless ",
+                                                "exported. Code in another file referring to it by name gets a ",
+                                                "ReferenceError, which is what makes \"module scope\" a real ",
+                                                "boundary rather than a convention.\n\n",
+
+                                                "A module is evaluated once per process and then cached, keyed ",
+                                                "by its resolved path. However many files import it, the body ",
+                                                "runs a single time and every importer receives the same ",
+                                                "instance. This is why module-level state is effectively a ",
+                                                "process-wide singleton: be/src/jobs.ts holds `const running = ",
+                                                "new Map()` at the top level, and that one Map is what the API ",
+                                                "handlers and the restart path both see. No registry object or ",
+                                                "injection needed — the module is the singleton.\n\n",
+
+                                                "It is also why such state is the classic leak. A module-level ",
+                                                "Map or array is reachable from a root for the entire life of ",
+                                                "the process, so anything put in and not removed can never be ",
+                                                "collected. jobs.track() ends its job in a finally block for ",
+                                                "exactly this reason.\n\n",
+
+                                                "Imports are live bindings rather than copies. If an exporting ",
+                                                "module reassigns an exported variable later, importers see the ",
+                                                "new value — they hold a view onto the binding, not a snapshot ",
+                                                "taken at import time. (CommonJS `require` copies the value at ",
+                                                "that moment; this is one of the real differences between the ",
+                                                "two systems.)\n\n",
+
+                                                "rn uses ES modules throughout — import/export, top-level await, ",
+                                                "import.meta.url — enabled by \"type\": \"module\" in ",
+                                                "be/package.json. One consequence: relative imports need the ",
+                                                "file extension, `./config.ts` and not `./config`, or Node ",
+                                                "answers ERR_MODULE_NOT_FOUND. That is ESM resolution, not a ",
+                                                "TypeScript quirk.",
+                                            )
+                                            .to_string(),
+                                        }],
+                                        }
+                                                    }
+                                                },
+                                            },
+                                        ],
+                                    }
                                 }
-                                p { class: "text-[10px] text-gray-400",
-                                    "last {window_minutes(h)} · heap limit {h.heap_limit_mb} MB"
+                                // Outside the block above, not inside it: that block
+                                // carries `mb-2`, which lifted this row eight pixels
+                                // clear of the column's foot while the readings on
+                                // the right end flush with theirs — so the last row
+                                // on each side sat at a different height. As the
+                                // column's own last child it ends where they end.
+                                // Not `PARAM_INPUT_ROW_CLASS`: that is `w-full` plus
+                                // the `.param-row` rule, which pushes a row's last
+                                // child to the right edge so buttons line up in a
+                                // column. There is no column to join on this side of
+                                // the board — one row, one button — and pushed right
+                                // it sat adrift in the middle of the plot's width.
+                                // Inline beside its text, which is the exception the
+                                // alignment rule already carves out.
+                                div {
+                                    class: "flex items-end gap-4",
+                                div { class: "flex items-end gap-2 flex-1 min-w-0",
+                                    span { class: "text-gray-200 font-mono break-all max-w-xs",
+                                        "heap limit {m.memory.heap_limit_mb} MB"
+                                    }
+                                    InfoButton {
+                                        title: "Heap limit".to_string(),
+                                        what: format!("The ceiling {heap_engine_short} will not grow past, and the dashed rule across the chart above. It is the only figure on this board that is a limit rather than a reading — everything else here is what the process is using, this is what it may not exceed.\n\nChosen from installed RAM unless the Heap memory limit setting under Config → Settings overrides it."),
+                                        why: concat!(
+                                            "It is the line the heap series is worth reading against: a heap at ",
+                                            "14 MB under a 2240 MB ceiling is idle, the same 14 MB under a 16 MB ",
+                                            "ceiling is about to die.\n\n",
+
+                                            "It is also the only ceiling on the page. The committed figure beside ",
+                                            "each space on the Heap spaces board is not one — V8 grows those as it ",
+                                            "goes — and this is the number that ends the process when old_space ",
+                                            "reaches it.\n\n",
+
+                                            "And it is what --max-old-space-size actually produced, which is ",
+                                            "worth checking, because the two numbers are not the same one. The ",
+                                            "flag sets the ceiling for old space alone; this figure is that ",
+                                            "plus the other spaces — new_space, code_space, large_object_space, ",
+                                            "trusted_space — so it always lands higher than the number you ",
+                                            "typed.\n\n",
+
+                                            "Measured on this machine, the gap is 192 MB: unset, the limit ",
+                                            "reads 2240 MB, and the same runtime started with ",
+                                            "--max-old-space-size=512 reads 704 MB. Read backwards, that puts ",
+                                            "old space's own maximum at about 2048 MB here — V8's default, ",
+                                            "chosen from installed RAM.\n\n",
+
+                                            "That maximum is not reported anywhere at runtime, which is why ",
+                                            "this board shows the total instead of a ceiling per space. ",
+                                            "getHeapSpaceStatistics() offers space_available_size, and it is ",
+                                            "the wrong number to reach for: it is the headroom inside what a ",
+                                            "space has already committed, not inside what it may grow to. Old ",
+                                            "space can report a fifth of a megabyte available while two ",
+                                            "gigabytes of ceiling remain.",
+                                        ).to_string(),
+                                        if_wrong: concat!(
+                                            "Exceeding it ends the process rather than slowing it: V8 prints ",
+                                            "\"Reached heap limit\" and aborts, with no JavaScript error to catch.\n\n",
+
+                                            "If this does not match what you set under Config → Settings, the ",
+                                            "setting is not reaching the process — check `rn --print-env`.\n\n",
+
+                                            "Raising it above the machine's free memory does not buy room. It only ",
+                                            "moves the failure to the operating system, which reports nothing — the ",
+                                            "process is simply killed.",
+                                        ).to_string(),
+                                    }
+                                }
+                                // Same width as the label gutter above it and at the
+                                // same right edge, so `.param-row` puts this info
+                                // button in the column the two pinned readings' sit
+                                // in. In the readings column to the right of the
+                                // board it was pushed to that column's edge instead,
+                                // a gutter's width further out.
+                                if !not_counted("memory.largestSpace") {
+                                    div { class: "w-44 shrink-0",
+                                        Metric {
+                                            label: "largest space",
+                                            value: format!("{} ({} MB)", m.memory.largest_space.name, m.memory.largest_space.used_mb),
+                                            what: concat!(
+                                                "The V8 heap space holding the most: old_space for long-lived ",
+                                                "objects, new_space for recent ones. Read fresh from ",
+                                                "getHeapSpaceStatistics() on every poll, the same two seconds ",
+                                                "as everything else on this panel.\n\n",
+
+                                                "It will still look frozen, and that is the point of it. Six ",
+                                                "polls of an idle backend give old_space at 6.2 MB every time ",
+                                                "while heap used moves on each one — 13.3, 12.7, 13.1, 13.4, ",
+                                                "13.0, 13.2. The reading is live; the number underneath it is ",
+                                                "what moves slowly.",
+                                            ).to_string(),
+                                            why: concat!(
+                                                "It says what kind of memory is growing, not just that it is, ",
+                                                "because old space changes on two events rather than on ",
+                                                "allocation.\n\n",
+
+                                                "It rises when a minor collection promotes an object out of new ",
+                                                "space — an object has to survive two scavenges to be promoted — ",
+                                                "and when something is allocated straight into old space for ",
+                                                "being too large for the young generation. Ordinary short-lived ",
+                                                "objects never reach it: they are born in new space and die ",
+                                                "there.\n\n",
+
+                                                "It falls only when a major collection runs and frees old ",
+                                                "objects that have become unreachable, which on an idle process ",
+                                                "can be minutes apart or not at all. So this draws a slow ",
+                                                "staircase where heap used draws a sawtooth — heap used is every ",
+                                                "space added together, dominated by new-space churn.",
+                                            ).to_string(),
+                                            if_wrong: concat!(
+                                                "Persistent old_space growth across idle periods is the ",
+                                                "signature of a leak: rss and heap used both wander with normal ",
+                                                "traffic, but nothing should be getting promoted while nothing ",
+                                                "is happening, so a staircase that only goes up means live data ",
+                                                "is accumulating.\n\n",
+
+                                                "A value that never moves at all is not evidence of anything on ",
+                                                "its own — see above. To watch it change, give the backend some ",
+                                                "work; to see it reset, restart the process. The Heap spaces ",
+                                                "board on this page breaks out every space if you want to see ",
+                                                "new_space moving underneath this one.\n\n",
+
+                                                "The peak under this reading is old space's high-water mark ",
+                                                "across the window; the max is the ceiling it may grow to. ",
+                                                "That ceiling is not a figure V8 reports: with ",
+                                                "--max-old-space-size set it is that flag, and unset it is ",
+                                                "the heap limit less V8's fixed allowance for the other ",
+                                                "spaces — 192 MB, measured on this runtime. It is ",
+                                                "deliberately not space_available_size, which counts only ",
+                                                "what is free inside what the space has already committed, ",
+                                                "and reads as a fifth of a megabyte while gigabytes of ",
+                                                "ceiling remain.",
+                                            ).to_string(),
+                                        }
+                                        p { class: "text-[10px] text-gray-400",
+                                            "peak {format_reading(old_space_peak)} MB · max {m.memory.old_space_max_mb} MB"
+                                        }
+                                    }
+                                }
+                                }
+                            }
                                 }
                             }
                         }
                     }),
-                                        Metric {
-                        label: "heap used",
-                        value: format!("{} MB ({}%)", m.memory.heap_used_mb, heap_pct),
-                        what: [
-                            concat!(
-                            "Memory held by JavaScript objects that are still live, measured ",
-                            "against ",
-                            ),
-                            heap_engine_short,
-                            concat!(
-                            "'s ceiling for this process.\n\n",
-
-                            "A live object is one the garbage collector can still reach. That ",
-                            "is the whole definition: liveness is decided by reachability, not ",
-                            "by whether your code will ever touch the object again. An object ",
-                            "you are completely finished with stays live, and keeps its memory, ",
-                            "for as long as any reference to it survives.\n\n",
-
-                            "Reaching starts from a fixed set of roots: the global object ",
-                            "(globalThis), the variables of every function currently on the ",
-                            "call stack, the top-level bindings of every loaded [[module]], and the ",
-                            "callbacks held by pending timers, promises, event listeners and ",
-                            "open sockets. From each root V8 follows every reference it finds — ",
-                            "object properties, array elements, Map and Set entries, values ",
-                            "captured inside closures — then follows the references of whatever ",
-                            "it lands on, and so on. Any object it can arrive at by some chain ",
-                            "is live; anything it cannot arrive at is unreachable, and is ",
-                            "freed.\n\n",
-
-                            "\"In scope\" is about names rather than objects. A scope is the ",
-                            "region of code in which a binding is valid: the module itself for ",
-                            "a top-level const or let, a function body for its parameters and ",
-                            "locals, or a single block between braces for a let or const ",
-                            "declared inside it. Each scope exists at runtime as an environment ",
-                            "holding those bindings, and a name keeps its object alive only ",
-                            "while that environment is itself reachable. This is why closures ",
-                            "matter: a callback that mentions one variable keeps its entire ",
-                            "enclosing environment alive, and with it every object those ",
-                            "bindings point at, long after the function that created them ",
-                            "returned.\n\n",
-
-                            "Leaks follow directly from the definition. One forgotten entry ",
-                            "pushed into a [[module]]-level array or Map is reachable from a root ",
-                            "for the life of the process, so it and everything it refers to can ",
-                            "never be collected — however finished with it you are.\n\n",
-
-                            "Expect a sawtooth rather than a line: the figure climbs as work ",
-                            "allocates and drops each time collection runs, so a rising number ",
-                            "is normal. Only the floor it keeps returning to is meaningful.\n\n",
-
-                            "Note this is not all the memory your code uses. Node has a call ",
-                            "stack too, separate from the heap: function frames, return ",
-                            "addresses, and the local slots holding references. It is about 1MB, ",
-                            "fixed when the thread starts, reclaimed automatically as calls ",
-                            "return, and not counted here. Runaway recursion fills that instead ",
-                            "and fails immediately with 'Maximum call stack size exceeded' — a ",
-                            "RangeError you can catch, not the process death you get from ",
-                            "exhausting the heap.\n\n",
-
-                            "The reason the distinction is easy to miss is that JavaScript never ",
-                            "lets you choose. Every object you create goes on the heap and the ",
-                            "stack frame holds only a reference to it, so all your data feels ",
-                            "heap-shaped — and the heap is the part that leaks, that you tune, ",
-                            "and that kills the process, so it is the part everyone talks about. ",
-                            "V8 does sometimes prove a short-lived object never escapes its ",
-                            "function and keep it in registers or the frame instead, so even ",
-                            "'objects always go on the heap' is a convenience rather than a ",
-                            "rule.\n\n",
-
-                            "Worth separating from the Stack trace depth setting on the Config ",
-                            "page, which sounds related and is not: that is how many frames get ",
-                            "captured into an Error object, not how deep the stack may go.",
-                            ),
-                        ].concat(),
-                        why: "The measured counterpart of the Heap memory limit setting. Watch the percentage: a job that fails with 'heap out of memory' was pushing this to 100.".to_string(),
-                        if_wrong: "Climbing steadily across runs and never falling back after a job ends means something is retained — a leak, not a limit that is too low.".to_string(),
-                        glossary: vec![GlossaryEntry {
-                            term: "module".to_string(),
-                            body: concat!(
-                                "In Node.js a module is one file. That is the unit, and ",
-                                "everything else follows from it.\n\n",
-
-                                "Each file gets its own scope. A top-level const, let or ",
-                                "function is not global — it is private to that file unless ",
-                                "exported. Code in another file referring to it by name gets a ",
-                                "ReferenceError, which is what makes \"module scope\" a real ",
-                                "boundary rather than a convention.\n\n",
-
-                                "A module is evaluated once per process and then cached, keyed ",
-                                "by its resolved path. However many files import it, the body ",
-                                "runs a single time and every importer receives the same ",
-                                "instance. This is why module-level state is effectively a ",
-                                "process-wide singleton: be/src/jobs.ts holds `const running = ",
-                                "new Map()` at the top level, and that one Map is what the API ",
-                                "handlers and the restart path both see. No registry object or ",
-                                "injection needed — the module is the singleton.\n\n",
-
-                                "It is also why such state is the classic leak. A module-level ",
-                                "Map or array is reachable from a root for the entire life of ",
-                                "the process, so anything put in and not removed can never be ",
-                                "collected. jobs.track() ends its job in a finally block for ",
-                                "exactly this reason.\n\n",
-
-                                "Imports are live bindings rather than copies. If an exporting ",
-                                "module reassigns an exported variable later, importers see the ",
-                                "new value — they hold a view onto the binding, not a snapshot ",
-                                "taken at import time. (CommonJS `require` copies the value at ",
-                                "that moment; this is one of the real differences between the ",
-                                "two systems.)\n\n",
-
-                                "rn uses ES modules throughout — import/export, top-level await, ",
-                                "import.meta.url — enabled by \"type\": \"module\" in ",
-                                "be/package.json. One consequence: relative imports need the ",
-                                "file extension, `./config.ts` and not `./config`, or Node ",
-                                "answers ERR_MODULE_NOT_FOUND. That is ESM resolution, not a ",
-                                "TypeScript quirk.",
-                            )
-                            .to_string(),
-                        }],
-                    }
-                    Metric {
-                        label: "heap limit",
-                        value: format!("{} MB", m.memory.heap_limit_mb),
-                        what: format!("The ceiling {heap_engine_short} will not grow past. Chosen from installed RAM unless the Heap memory limit setting overrides it."),
-                        why: "It is what --max-old-space-size actually produced, which is worth checking: the flag sets old space, so the effective total lands higher than the number you typed.".to_string(),
-                        if_wrong: "If this does not match what you set under Config → Settings, the setting is not reaching the process — check `rn --print-env`.".to_string(),
-                    }
-                    Metric {
-                        label: "rss",
-                        value: format!("{} MB", m.memory.rss_mb),
-                        what: "Total memory the operating system has given this process — heap plus the runtime itself, buffers and native allocations.".to_string(),
-                        why: "This is the number that matters to the rest of the machine. It is always well above the heap; the gap is Node itself.".to_string(),
-                        if_wrong: "RSS growing while the heap stays flat points at native memory — buffers or an addon, which the heap limit does not constrain.".to_string(),
-                    }
-                    if !not_counted("memory.largestSpace") {
-                    Metric {
-                        label: "largest space",
-                        value: format!("{} ({} MB)", m.memory.largest_space.name, m.memory.largest_space.used_mb),
-                        what: "The V8 heap space holding the most: old_space for long-lived objects, new_space for recent ones.".to_string(),
-                        why: "Tells you what kind of memory is growing, not just that it is. Growth in old_space is retained data; growth in new_space is churn.".to_string(),
-                        if_wrong: "Persistent old_space growth across idle periods is the signature of a leak.".to_string(),
-                    }
-                    }
                 }
 
                 // ── Event loop ────────────────────────────────────────
@@ -500,6 +844,19 @@ fn MonitorBoards(
                 Board {
                     title: "Event loop".to_string(),
                     fill: true,
+                    // Takes the width the other two leave rather than its own
+                    // content's. Memory is fixed by its plot and gutter, Kernel
+                    // counters by three short readings — so with `w-fit` here
+                    // the row ended short of the panel's right edge and the
+                    // difference read as an unfinished layout. `min-w-0` lets it
+                    // give the space back on a narrow window instead of pushing
+                    // the row into a scroll.
+                    width: "flex-1 min-w-0".to_string(),
+                    // And the plots and percentile bars stretch with the board:
+                    // held at the default width they left the extra space empty,
+                    // which is the board looking stretched rather than being
+                    // used.
+                    chart_width: "flex-1 min-w-0".to_string(),
                     info: Some(rsx! {
                         InfoButton {
                             title: "The event loop".to_string(),
@@ -865,17 +1222,56 @@ fn MonitorBoards(
                 }
                 }
 
-                // ── Concurrency ───────────────────────────────────────
-                // Both figures are inert under Bun; same reasoning as the loop board.
-                if concurrency_board_useful {
+                // ── Kernel counters ───────────────────────────────────
+                // Named for what it holds. "Process" collided with the "This
+                // process" panel below without separating them — everything in
+                // this panel is the same process, and what marks this board out
+                // is the source of its figures, not their subject.
+                //
+                // Ungated: maxRSS, filesystem ops and context switches come
+                // from the OS, so they read the same under every runtime. It
+                // used to hang off the lower panel's threadpool/handles flags,
+                // which meant a board of kernel counters disappeared under Bun
+                // because the *runtime* could not report something else.
                 Board {
-                    title: "Process".to_string(),
+                    title: "Kernel counters".to_string(),
                     info: Some(rsx! {
                         InfoButton {
                             title: "What the kernel has counted".to_string(),
-                            what: "These come from the operating system rather than from the runtime, which is why they read the same under all three. They count what the process has actually done: the most memory it ever held, how many filesystem operations it has issued, and how often it was taken off the CPU.".to_string(),
+                            what: concat!(
+                                "These come from the operating system rather than from the runtime, ",
+                                "which is why they read the same under all three. They count what the ",
+                                "process has actually done: the most memory it ever held, how many ",
+                                "filesystem operations it has issued, and how often it was taken off ",
+                                "the CPU.\n\n",
+
+                                "This process, and only this one. The kernel keeps the tally per pid, ",
+                                "so a restart starts a fresh count from zero — measured across one ",
+                                "here: 74,032 reads and 113,713 voluntary context switches before, 144 ",
+                                "and 596 a few seconds after, those being the new process booting.\n\n",
+
+                                "Peak memory is the exception that looks like a rule. It resets too, ",
+                                "but startup is the heaviest moment a process has, so within seconds ",
+                                "the new peak climbs back to roughly the old one — 93.3 MB before that ",
+                                "restart, 93.0 MB after. Nothing was carried over; it simply happened ",
+                                "again.",
+                            ).to_string(),
                             why: "They answer questions the runtime's own figures cannot. Heap used tells you what is live now; peak memory tells you the high-water mark someone else on this machine had to make room for. And a slow job with a large filesystem count is I/O-bound, which is the case the libuv thread pool setting exists for — nothing else on this page distinguishes that from being busy.".to_string(),
-                            if_wrong: "Filesystem counts are cumulative and never reset, so a large number on a long-running process means nothing by itself. Watch how fast it moves during a job, not where it sits.".to_string(),
+                            if_wrong: concat!(
+                                "Filesystem counts are cumulative for as long as the process lives, ",
+                                "so a large number on a long-running one means nothing by itself. ",
+                                "Watch how fast it moves during a job, not where it sits.\n\n",
+
+                                "A small number means nothing by itself either, and that is the ",
+                                "reading that misleads: quiet and just-restarted look identical here. ",
+                                "The uptime on this panel's header line is what tells them apart — ",
+                                "these figures are worth no more than the uptime beside them.\n\n",
+
+                                "Nothing here survives a restart. Heap, rss, loop delay, handles and ",
+                                "host memory are all sampled into the History panel below and outlive ",
+                                "the process; these are not recorded anywhere, so a restart really is ",
+                                "a clean slate for this board.",
+                            ).to_string(),
                         }
                     }),
                     Metric {
@@ -899,36 +1295,6 @@ fn MonitorBoards(
                         why: "Voluntary switches are the normal shape of an I/O-bound program waiting. Forced ones mean the machine had more work than cores, so the process was interrupted mid-run.".to_string(),
                         if_wrong: "Forced switches rising sharply means contention with other processes rather than anything inside rn — check the load average beside this before changing a setting here.".to_string(),
                     }
-                }
-
-                // ── Host & versions ───────────────────────────────────
-                Board { title: "Host".to_string(),
-                    Metric {
-                        label: "free memory",
-                        value: format!("{} MB of {} MB", m.host.free_mem_mb.round(), m.host.total_mem_mb.round()),
-                        what: "Memory free on the machine as a whole.".to_string(),
-                        why: "The heap limit is only meaningful against this. A limit larger than free memory will be enforced by the operating system first, and less politely.".to_string(),
-                        if_wrong: "If free memory approaches zero the kernel may kill the process outright — that shows as a restart with no JavaScript error.".to_string(),
-                    }
-                    if !not_counted("concurrency.activeResources") {
-                    Metric {
-                        label: "active handles",
-                        value: if m.concurrency.active_resources.is_empty() {
-                            "none".to_string()
-                        } else {
-                            m.concurrency
-                                .active_resources
-                                .iter()
-                                .map(|(k, v)| format!("{k} ×{v}"))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        },
-                        what: "Open resources keeping the process alive — sockets, servers, timers.".to_string(),
-                        why: "Explains why a process will not exit, and shows leaked handles: a count that only grows is a connection or timer never cleaned up.".to_string(),
-                        if_wrong: "Steadily growing socket counts mean something is opening connections without closing them.".to_string(),
-                    }
-                    }
-                }
                 }
 
             }
@@ -959,48 +1325,67 @@ fn MonitorBoards(
                 // leftover.
                 class: "flex-auto min-w-0".to_string(),
                 // Capitalised at the display boundary: `running` stays the
-                // settings id everything else matches on.
-                title: format!("{} specifics", runtime_name(&running)),
+                // settings id everything else matches on. The version comes
+                // from the runtime's own key for the reason the panel above
+                // gives — Bun and Deno publish a Node number too, and it is not
+                // the version of anything running here.
+                title: match m.versions.get(&running) {
+                    Some(v) => format!("{} {v} specifics", runtime_name(&running)),
+                    None => format!("{} specifics", runtime_name(&running)),
+                },
                 subtitle: Some("what this runtime alone reports, and what it is built from".to_string()),
+                // Puts this button in the Heap spaces board's info column rather
+                // than leaving it wherever the title and subtitle happen to end.
+                // Measured: the panel's content starts at x=41 and that column's
+                // buttons end at x=520, so the header row stops 479px in and
+                // `ml-auto` does the rest.
+                //
+                // A measured number, so it holds only while the two boards left
+                // of that column keep their widths — both size to their content.
+                // The Runtime panel does the same trick against a board with a
+                // fixed width, which is the sturdier version of it.
+                header_class: "w-[479px]".to_string(),
                 info: Some(rsx! {
-                    InfoButton {
-                        title: format!("Why this panel changes with the runtime"),
-                        what: concat!(
-                            "Everything here is reported by one runtime and by no ",
-                            "other. Node exposes V8's collector, so it can say how ",
-                            "many collections have run. Bun runs JavaScriptCore, ",
-                            "which counts live objects rather than regions of ",
-                            "memory, and has no equivalent figure. Deno is the only ",
-                            "one that enforces permissions, so it is the only one ",
-                            "that can report them.\n\n",
+                    div { class: "ml-auto",
+                        InfoButton {
+                            title: format!("Why this panel changes with the runtime"),
+                            what: concat!(
+                                "Everything here is reported by one runtime and by no ",
+                                "other. Node exposes V8's collector, so it can say how ",
+                                "many collections have run. Bun runs JavaScriptCore, ",
+                                "which counts live objects rather than regions of ",
+                                "memory, and has no equivalent figure. Deno is the only ",
+                                "one that enforces permissions, so it is the only one ",
+                                "that can report them.\n\n",
 
-                            "The version rows are the same idea. `process.versions` ",
-                            "lists the components the running runtime is built ",
-                            "from, and those components differ: Bun has no libuv ",
-                            "and no V8, Deno carries a TypeScript compiler, only ",
-                            "Node has all four of its own.",
-                        ).to_string(),
-                        why: concat!(
-                            "Switching the runtime under Config → Settings changes ",
-                            "what this page can measure, not just what the numbers ",
-                            "say. Keeping the runtime-specific boards in a panel ",
-                            "named after the runtime makes that visible: boards ",
-                            "appear and disappear with the selection, which is the ",
-                            "honest picture of what you traded away.\n\n",
+                                "The version rows are the same idea. `process.versions` ",
+                                "lists the components the running runtime is built ",
+                                "from, and those components differ: Bun has no libuv ",
+                                "and no V8, Deno carries a TypeScript compiler, only ",
+                                "Node has all four of its own.",
+                            ).to_string(),
+                            why: concat!(
+                                "Switching the runtime under Config → Settings changes ",
+                                "what this page can measure, not just what the numbers ",
+                                "say. Keeping the runtime-specific boards in a panel ",
+                                "named after the runtime makes that visible: boards ",
+                                "appear and disappear with the selection, which is the ",
+                                "honest picture of what you traded away.\n\n",
 
-                            "The panel beside this one is the counterpart — ",
-                            "kernel and machine figures that read the same under ",
-                            "all three, and are comparable across a switch in a ",
-                            "way nothing here is.",
-                        ).to_string(),
-                        if_wrong: concat!(
-                            "An empty panel means the runtime reports none of ",
-                            "this, which is a real answer rather than a fault. ",
-                            "Do not compare a figure here against one you ",
-                            "remember from a different runtime — they are not the ",
-                            "same measurement under a shared name, and the History ",
-                            "charts rule the boundary for exactly that reason.",
-                        ).to_string(),
+                                "The panel beside this one is the counterpart — ",
+                                "kernel and machine figures that read the same under ",
+                                "all three, and are comparable across a switch in a ",
+                                "way nothing here is.",
+                            ).to_string(),
+                            if_wrong: concat!(
+                                "An empty panel means the runtime reports none of ",
+                                "this, which is a real answer rather than a fault. ",
+                                "Do not compare a figure here against one you ",
+                                "remember from a different runtime — they are not the ",
+                                "same measurement under a shared name, and the History ",
+                                "charts rule the boundary for exactly that reason.",
+                            ).to_string(),
+                        }
                     }
                 }),
 
@@ -1283,18 +1668,35 @@ fn MonitorBoards(
                                             what: if claimed {
                                                 format!("Not a Node that exists here. {running} implements enough of Node's API to run code written for it, and reports this number when asked which Node it is. No Node of this version is installed, bundled, or running.")
                                             } else {
-                                                format!("Version of {key} inside the bundled runtime.")
+                                                match component_what(key) {
+                                                    Some(text) => format!("Version of {key} inside the bundled runtime.\n\n{text}"),
+                                                    None => format!("Version of {key} inside the bundled runtime."),
+                                                }
                                             },
                                             why: if claimed {
                                                 format!("It tells you which Node API level {running} is aiming at, which is what decides whether a package written for Node works here. Read it as a compatibility target, never as the runtime in use — the runtime in use is named at the top of this page.")
                                             } else {
-                                                "The runtime ships with rn, so these are fixed at packaging time rather than whatever the machine has. Worth quoting in a bug report.".to_string()
+                                                match component_why(key) {
+                                                    Some(text) => text.to_string(),
+                                                    None => "The runtime ships with rn, so these are fixed at packaging time rather than whatever the machine has. Worth quoting in a bug report.".to_string(),
+                                                }
                                             },
                                             if_wrong: if claimed {
                                                 "If a package fails here but works under Node, this number is the first thing to quote: the claim is a target rather than a guarantee, and the gap between claimed and implemented is where those failures live.".to_string()
                                             } else {
                                                 "A node version differing from be/.nvmrc means the bundled runtime and the development one have drifted.".to_string()
                                             },
+                                        }
+                                        // The version alone says what libuv can
+                                        // do; this says what it is doing. On
+                                        // 1.49 and later file work runs on this
+                                        // pool rather than on io_uring, so the
+                                        // size is the number that follows from
+                                        // the version above it.
+                                        if key == "uv" && !not_counted("concurrency.threadpoolSize") {
+                                            p { class: "text-[10px] text-gray-400",
+                                                "thread pool {m.concurrency.threadpool_size}"
+                                            }
                                         }
                                     }
                                 }
@@ -1304,14 +1706,69 @@ fn MonitorBoards(
                 }
             }
 
-            // The machine, not the runtime: these read the same whichever
-            // runtime is running, so they do not belong in a tile named after one.
+            // The process rather than the runtime: a pid, a launcher, a job
+            // count and a listening address are the same facts whichever
+            // runtime is executing, so they do not belong in a tile named after
+            // one. What they consume over time is the Resources panel above.
             Panel {
                 class: "flex-auto min-w-0".to_string(),
                 // Not "All runtimes": a pid, a launcher, a job count and a
-                // listening address describe this process and no other.
-                title: "This process".to_string(),
+                // listening address describe this process and no other. And not
+                // "This process" either — with three panels on screen "this" is
+                // unanchored, and the process a reader starts by hand is the
+                // launcher, not the one measured here. Named for the pair: rn
+                // supervises, its Node child is what these boards report on.
+                // Lower-case `rn`, as everywhere else the app names itself —
+                // the binary, the header, the info panels. A capital here would
+                // be the only one on the page.
+                title: "rn backend process".to_string(),
                 subtitle: Some("how it is running, and what it is running".to_string()),
+                info: Some(rsx! {
+                    InfoButton {
+                        title: "Which process this is".to_string(),
+                        what: concat!(
+                            "Two processes run this app, and this panel is about the second ",
+                            "one.\n\n",
+
+                            "`rn` is the launcher — the command you start from a terminal. It ",
+                            "spawns the backend, supervises it, and is what --status and --stop ",
+                            "talk to. The backend is its child: the bundled Node running ",
+                            "be/src/server.ts, which serves this page, holds the heap the ",
+                            "Memory board draws, and owns the handles and the thread pool.\n\n",
+
+                            "The pid on the Runtime board is that child. The pid in \"supervised ",
+                            "— launcher pid …\" is `rn`, its parent. Restarting works by the ",
+                            "child exiting and the launcher starting a fresh one, which is why ",
+                            "the backend pid changes across a restart while the launcher pid ",
+                            "does not.",
+                        ).to_string(),
+                        why: concat!(
+                            "Because everything here is true of one pid and no other. Uptime is ",
+                            "this process's, not the app's — the launcher may have been up for ",
+                            "hours across several restarts. The kernel counters on the panel ",
+                            "above reset with it. The heap is this process's heap.\n\n",
+
+                            "It also decides what to look for outside this page. Neither ",
+                            "process is called what you would guess: the launcher's name is ",
+                            "`rn`, and the backend's is `MainThread` — Node names its own ",
+                            "threads and the main thread's name overwrites the one the kernel ",
+                            "keeps, which is what ps, top and ss read. So `pgrep -x node` finds ",
+                            "nothing here; `pgrep -x rn` finds the launcher and `pgrep -x ",
+                            "MainThread` finds the backend.",
+                        ).to_string(),
+                        if_wrong: concat!(
+                            "If \"supervised\" says no, this process was started directly ",
+                            "rather than by the launcher — restart cannot work, because there ",
+                            "is nobody to start the replacement.\n\n",
+
+                            "The name a process reports is not proof of what it is running. ",
+                            "The path is: the Active runtime board on Config → Settings shows ",
+                            "the executable this pid was launched from, and it is inside the ",
+                            "app rather than anywhere on PATH — which is the whole point of ",
+                            "the app carrying its own runtime.",
+                        ).to_string(),
+                    }
+                }),
 
                 div { class: "flex flex-wrap gap-4 items-stretch",
 
@@ -1346,6 +1803,39 @@ fn MonitorBoards(
                             what: "Machine-wide run-queue average over the last minute — every process, not just rn.".to_string(),
                             why: "Context for the numbers above: rn can look slow because the machine is busy with something else entirely.".to_string(),
                             if_wrong: "Load persistently above the core count means everything on this machine is queueing.".to_string(),
+                        }
+
+                        // ── Active handles ────────────────────────────
+                        // Here rather than on the Host board, where these sat
+                        // under the machine's free memory: what is holding
+                        // *this process* open belongs beside its threads and
+                        // its CPU, which is where a reader looks for it.
+                        //
+                        // A row per kind, not one joined line. The total is the
+                        // number worth watching — the chart under History plots
+                        // it — and the kinds say what it is made of.
+                        if !not_counted("concurrency.activeResources") {
+                            Metric {
+                                label: "active handles",
+                                value: m.concurrency
+                                    .active_resources
+                                    .values()
+                                    .sum::<u32>()
+                                    .to_string(),
+                                what: "How many resources are keeping the process alive right now — sockets, servers, timers. Node exits when this reaches zero, which is why a script that 'hangs' at the end is usually one handle nobody closed.".to_string(),
+                                why: "The total is what a leak moves. One reading says nothing; the same reading climbing across the History chart below is a connection or timer never cleaned up, and the rows under this one say which kind is doing the climbing.".to_string(),
+                                if_wrong: "A count that rises and never falls under steady load is the shape to act on. A count that rises and falls with traffic is just traffic.".to_string(),
+                            }
+                            for (kind, count) in m.concurrency.active_resources.iter() {
+                                Metric {
+                                    label: handle_label(kind),
+                                    value: format!("{count}"),
+                                    mono_note: Some(kind.clone()),
+                                    what: handle_what(kind),
+                                    why: "The kinds are libuv's own names for what it is holding open, which is why the raw name is shown beside the plain one — it is what you will find in a stack trace or a Node issue.".to_string(),
+                                    if_wrong: "An open connection count that never drops back means sockets are being opened without being closed; a timer count that only grows means intervals are never cleared.".to_string(),
+                                }
+                            }
                         }
                     }
 
@@ -1489,6 +1979,69 @@ fn MonitorBoards(
                                     ],
                                 }
                             }
+                            // The board the live panel cannot have: the kernel's
+                            // own counters reset with the process, so the only
+                            // way they outlive a restart is as rates recorded
+                            // here. Both are per second and both are counts, so
+                            // they share a scale honestly.
+                            if h.tier_has_kernel(tier) {
+                                Board { title: "Kernel".to_string(),
+                                fill: true,
+                                    Sparkline {
+                                        before_start: marker,
+                                        runtime_change: switch.clone(),
+                                        unit: "/s".to_string(),
+                                        fill_height: true,
+                                        height: 120,
+                                        series: vec![
+                                            Series {
+                                                label: "fs ops".to_string(),
+                                                color: "#22d3ee".to_string(),
+                                                points: tier.buckets.iter().map(|b| b.fs_ops_peak_per_sec).collect(),
+                                            },
+                                            Series {
+                                                label: "switches".to_string(),
+                                                color: "#f59e0b".to_string(),
+                                                points: tier.buckets.iter().map(|b| b.ctx_peak_per_sec).collect(),
+                                            },
+                                        ],
+                                    }
+                                    p { class: "text-[10px] text-gray-400",
+                                        "busiest second in each bucket — file work and time given up waiting"
+                                    }
+                                }
+                            }
+                            // The reason the total is worth recording: a leak
+                            // is a shape over time, and the live tile can only
+                            // ever show one instant of it. Peak per bucket, so
+                            // a climb stays a climb at every zoom level.
+                            if h.tier_has_handles(tier) {
+                                Board { title: "Handles".to_string(),
+                                fill: true,
+                                    Sparkline {
+                                        before_start: marker,
+                                        runtime_change: switch.clone(),
+                                        unit: "".to_string(),
+                                        fill_height: true,
+                                        height: 120,
+                                        series: vec![
+                                            Series {
+                                                label: "peak open".to_string(),
+                                                color: "#a78bfa".to_string(),
+                                                points: tier.buckets.iter().map(|b| b.handles_peak).collect(),
+                                            },
+                                        ],
+                                    }
+                                    p { class: "text-[10px] text-gray-400",
+                                        "rising and never falling under steady load is a leak; rising and falling with traffic is traffic"
+                                    }
+                                    if let Some(u) = h.why_not("handles") {
+                                        p { class: "text-[10px] text-amber-400 mt-1",
+                                            "the series ends where {running} took over — {u.reason}"
+                                        }
+                                    }
+                                }
+                            }
                             if measures_loop {
                                 Board { title: "Event loop".to_string(),
                                 fill: true,
@@ -1572,6 +2125,18 @@ fn Board(
     /// beside it with it. Such a board names a width that fits its widest
     /// reading, and adds `shrink-0` so the wrapping row honours it.
     #[props(default = "w-fit".to_string())] width: String,
+    /// A qualifier for the whole board, set beside the title in legend type —
+    /// the window its plots cover, when every reading on it shares one.
+    #[props(default = None)] note: Option<String>,
+    /// Width of the chart column, `shrink` included: a board that stretches
+    /// passes `flex-1 min-w-0` so its plots stretch with it, and `flex-1` and
+    /// `shrink-0` are both flex properties, so leaving one hardcoded here
+    /// would leave which wins to the order of the generated stylesheet.
+    ///
+    /// The default suits a plot on its own; a plot with a label gutter beside
+    /// it needs the gutter's width on top, or the curve is squeezed into what
+    /// is left.
+    #[props(default = "w-72 shrink-0".to_string())] chart_width: String,
     children: Element,
 ) -> Element {
     rsx! {
@@ -1582,6 +2147,9 @@ fn Board(
         div { class: if fill { "{PARAM_BOARD_BASE_CLASS} {width} flex flex-col" } else { "{PARAM_BOARD_BASE_CLASS} {width}" },
             div { class: "flex items-center gap-2 mb-3",
                 span { class: PARAM_BOARD_TITLE_CLASS, "{title}" }
+                if let Some(note) = note {
+                    span { class: "text-[10px] text-gray-400", "{note}" }
+                }
                 if let Some(info) = info {
                     // Same right edge as the row buttons below it, which the
                     // param-row rule pushes there. Sitting beside the title
@@ -1599,7 +2167,7 @@ fn Board(
                 // the chart whenever the board is width-constrained — which
                 // looks exactly like the change not having happened.
                 div { class: if fill { "flex items-stretch gap-4 flex-1 min-h-0" } else { "flex items-stretch gap-4" },
-                    div { class: "w-72 shrink-0 flex flex-col", {chart} }
+                    div { class: "{chart_width} flex flex-col", {chart} }
                     // justify-between when filling: the fields otherwise stack
                     // from the top and stop wherever they run out, so the column
                     // ends partway up the plot beside it. Spread, the last field
@@ -1631,6 +2199,12 @@ fn Metric(
     /// the number — with the value greyed and the reason stated under it.
     #[props(default = None)]
     unavailable: Option<crate::api::Unavailable>,
+    /// The runtime's own name for the thing, when the label is a translation of
+    /// it. Shown in mono beside the value, the way the Config rows carry the
+    /// flag name beside the plain-English one: the reader gets the term they
+    /// can search for without having to learn it to read the row.
+    #[props(default = None)]
+    mono_note: Option<String>,
 ) -> Element {
     rsx! {
         div { class: PARAM_BLOCK_CLASS,
@@ -1644,6 +2218,9 @@ fn Metric(
                     },
                     "{value}"
                 }
+                if let Some(note) = mono_note.as_ref() {
+                    span { class: "text-[10px] text-gray-400 font-mono", "{note}" }
+                }
                 InfoButton { title: label, what, why, if_wrong, glossary }
             }
             if let Some(u) = unavailable.as_ref() {
@@ -1651,6 +2228,125 @@ fn Metric(
             }
         }
     }
+}
+
+/// What a named component of the runtime actually is.
+///
+/// The version rows otherwise say only "version of uv", which names the number
+/// and not the thing — and uv in particular is doing most of the work behind
+/// the rest of this page.
+fn component_what(key: &str) -> Option<&'static str> {
+    match key {
+        "uv" => Some(concat!(
+            "The letters stand for nothing. The name came first and meant nothing; ",
+            "people kept asking, so the maintainers picked something after the fact — ",
+            "Unicorn Velociraptor, which is why the library's logo is one. The likely ",
+            "real origin is duller: libuv began as the cross-platform layer over libev ",
+            "on Unix and IOCP on Windows, and the name followed in that family.\n\n",
+
+            "libuv: the C library that gives Node everything asynchronous. Node is ",
+            "JavaScript plus V8 plus this — V8 executes the language, libuv provides ",
+            "the event loop, the timers, the sockets, the file and DNS calls, and the ",
+            "child processes. It was written for Node and is now used well beyond it.\n\n",
+
+            "Its job is mostly hiding differences between operating systems. Waiting ",
+            "efficiently on many sockets at once is epoll on Linux, kqueue on macOS ",
+            "and IOCP on Windows, three unrelated interfaces; libuv presents one loop ",
+            "over all of them, which is a large part of why the same JavaScript runs ",
+            "unchanged on all three.\n\n",
+
+            "Three things on this page are libuv's directly. The event-loop delay ",
+            "measured above is the delay of its loop. The active handles on the ",
+            "Concurrency board are its handles, which is why they carry names like ",
+            "TCPServerWrap rather than anything from JavaScript. And the threadpool ",
+            "reading beside them is its pool of worker threads — the loop itself is ",
+            "one thread, so file reads, DNS lookups, zlib and some crypto are handed ",
+            "to that pool to keep from blocking it. The libuv thread pool setting on ",
+            "Config → Settings sizes exactly that pool.",
+        )),
+        _ => None,
+    }
+}
+
+/// Why a component's version is worth reading, where it is.
+///
+/// Most of these numbers are fixed at packaging time and never worth a glance.
+/// uv is the exception, and specifically so: it decides whether file work goes
+/// through the thread pool this app lets you size.
+fn component_why(key: &str) -> Option<&'static str> {
+    match key {
+        "uv" => Some(concat!(
+            "Day to day, not at all — it changes only when the bundled runtime does. ",
+            "It matters in one case, and that case is a control on this page.\n\n",
+
+            "libuv changed how file work is dispatched, twice. In 1.45.0 read, write, ",
+            "fsync, fdatasync, stat, fstat and lstat started going to io_uring on Linux ",
+            "instead of the thread pool. In 1.49.0 that was reverted: the thread pool ",
+            "again by default, with io_uring only where the loop opts in.\n\n",
+
+            "So the number decides who does the reading. Past 1.49, file operations go ",
+            "through the libuv thread pool — which is what makes the threadpool reading ",
+            "on the Concurrency board and the libuv thread pool setting on Config → ",
+            "Settings worth anything. On a runtime carrying 1.45 to 1.48 the same ",
+            "setting would barely move a read-heavy job, because the kernel would be ",
+            "doing the reads.\n\n",
+
+            "Read it when file work is slow and you are deciding whether the thread ",
+            "pool is the lever, and quote it in a bug report — \"uv 1.52.1\" pins ",
+            "behaviour that \"Node 24\" does not.",
+        )),
+        _ => None,
+    }
+}
+
+/// libuv's handle names in plain English.
+///
+/// The raw names are what the runtime reports and what a stack trace will say,
+/// so they are kept beside these rather than replaced — but "TCPSocketWrap" is
+/// not a thing anybody outside libuv recognises, and a monitor whose stated job
+/// is making the invisible legible cannot print it and call that surfaced.
+fn handle_label(kind: &str) -> String {
+    match kind {
+        "TCPServerWrap" => "listening socket",
+        "TCPSocketWrap" => "open connection",
+        "TCPWrap" => "tcp socket",
+        "PipeWrap" | "PipeConnectWrap" => "pipe",
+        "UDPWrap" => "udp socket",
+        "Timeout" => "timer",
+        "Immediate" => "immediate callback",
+        "TTYWrap" => "terminal",
+        "FSReqCallback" | "FSReqPromise" => "file operation",
+        "FSWatcher" | "StatWatcher" => "file watcher",
+        "ChildProcess" | "ProcessWrap" => "child process",
+        "Signal" | "SignalWrap" => "signal handler",
+        "MessagePort" => "message port",
+        "Worker" => "worker thread",
+        "HTTPParser" | "HTTPClientRequest" | "HTTPIncomingMessage" => "http request",
+        "DNSChannel" | "GetAddrInfoReqWrap" | "GetNameInfoReqWrap" => "dns lookup",
+        "ZlibStream" => "compression stream",
+        "TLSWrap" => "tls connection",
+        // Unknown kinds are shown as they came. Guessing at a translation would
+        // be worse than the raw name, which is at least true.
+        other => return other.to_string(),
+    }
+    .to_string()
+}
+
+/// What each kind actually is, for its info panel.
+fn handle_what(kind: &str) -> String {
+    match kind {
+        "TCPServerWrap" => "The socket the backend listens on. One of these is the HTTP server itself — it is open for as long as rn is accepting requests, and it alone will keep the process from exiting.",
+        "TCPSocketWrap" | "TCPWrap" => "A live TCP connection. Every browser tab on this page holds one, including this one, so a count that tracks the number of open tabs is the system working rather than leaking.",
+        "Timeout" => "A pending setTimeout or setInterval. An interval counts once no matter how often it fires; a count that grows means intervals are being created and never cleared.",
+        "Immediate" => "A setImmediate callback queued to run at the end of the current loop turn. Normally transient — seeing one is a matter of when the sample landed.",
+        "FSReqCallback" | "FSReqPromise" => "A file-system operation in flight on the libuv thread pool. These appear and vanish; a persistent count means file work is queueing behind the pool size.",
+        "FSWatcher" | "StatWatcher" => "A watch on a file or directory. It stays open until closed explicitly, so watchers are a classic source of handles that never go away.",
+        "ChildProcess" | "ProcessWrap" => "A spawned process that has not been reaped. Under rn this is the Rust-component boundary: a CLI invoked from Node shows up here while it runs.",
+        "Worker" => "A worker thread. It holds the process open until it exits or is terminated.",
+        "Signal" | "SignalWrap" => "A registered signal handler — SIGINT and SIGTERM here, which is how the launcher asks the backend to stop cleanly.",
+        _ => "A resource libuv is holding open on the process's behalf. It keeps the process alive until it is closed.",
+    }
+    .to_string()
 }
 
 /// What "atomic" means, linked from the mutex entry.

@@ -1,7 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { RUNTIME_PARAMS } from "../src/runtime-params.ts";
-import { resolveLaunch, validate, needsRestart, pendingRestart } from "../src/settings.ts";
+import { resolveLaunch, validate, needsRestart, pendingRestart, save, load } from "../src/settings.ts";
+import { mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 test("every parameter carries its info panel text", () => {
     // CLAUDE.md: a control ships with its explanation, in the same change.
@@ -75,4 +78,44 @@ test("pendingRestart is silent when the value is already in effect", () => {
 
 test("a runtime-applied setting is never pending a restart", () => {
     assert.deepEqual(pendingRestart({ stackTraceLimit: 42 }), []);
+});
+
+test("a save that drops keys leaves the previous file recoverable", () => {
+    // save() replaces rather than merges, so a client sending a partial
+    // document deletes the rest. That is a bug in the client, but it cost a
+    // real settings file during development — the backup is what made the
+    // difference between "undo it" and "reconstruct it from a screenshot".
+    const dir = mkdtempSync(join(tmpdir(), "rn-settings-"));
+    const path = join(dir, "settings.json");
+
+    save(path, { threadpoolSize: 32, jsRuntime: "node" });
+    save(path, { threadpoolSize: 128 });
+
+    assert.deepEqual(load(path), { threadpoolSize: 128 });
+    assert.deepEqual(JSON.parse(readFileSync(`${path}.bak`, "utf8")), {
+        threadpoolSize: 32,
+        jsRuntime: "node",
+    });
+});
+
+test("an unchanged save keeps the backup it already had", () => {
+    // Restart saves before restarting. Without this, two restarts in a row
+    // would replace the backup with a copy of the current file.
+    const dir = mkdtempSync(join(tmpdir(), "rn-settings-"));
+    const path = join(dir, "settings.json");
+
+    save(path, { threadpoolSize: 32 });
+    save(path, { threadpoolSize: 128 });
+    save(path, { threadpoolSize: 128 });
+
+    assert.deepEqual(JSON.parse(readFileSync(`${path}.bak`, "utf8")), { threadpoolSize: 32 });
+});
+
+test("the first save of a new file writes no backup", () => {
+    const dir = mkdtempSync(join(tmpdir(), "rn-settings-"));
+    const path = join(dir, "settings.json");
+
+    save(path, { threadpoolSize: 32 });
+
+    assert.equal(existsSync(`${path}.bak`), false);
 });

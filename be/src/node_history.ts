@@ -7,9 +7,10 @@
  */
 
 import { monitorEventLoopDelay } from "node:perf_hooks";
-import { getHeapStatistics } from "node:v8";
+import { getHeapStatistics, getHeapSpaceStatistics } from "node:v8";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { freemem, totalmem } from "node:os";
 import { config } from "./config.ts";
 import { platformUnavailable, runqueueNs, CPU_WAIT_AVAILABLE, type CapabilityKind, type Unavailable } from "./capabilities.ts";
 
@@ -51,6 +52,60 @@ const RUNTIME = ((): string => {
  * the runtime was switched. Null is a gap the chart can draw as one.
  */
 const LOOP_MEASURED = RUNTIME !== "deno";
+
+/**
+ * Whether getActiveResourcesInfo() reports anything here.
+ *
+ * Bun returns an empty list with timers and sockets pending, which as a series
+ * is worse than no series: a flat zero reads as "nothing is holding the process
+ * open" — the exact conclusion the chart exists to support — rather than as
+ * "not measured". node_metrics suppresses the live tile for the same reason.
+ */
+const HANDLES_MEASURED = RUNTIME !== "bun";
+
+/**
+ * Old space in use, MB.
+ *
+ * Bun reports one synthetic old_space holding its whole heap — a compatibility
+ * shim rather than a measurement, which node_metrics suppresses for the same
+ * reason — so nothing is recorded under it rather than a number that would be
+ * read as V8's.
+ */
+/**
+ * Previous kernel tallies, for this module's own deltas.
+ *
+ * Its own rather than shared with node_metrics for the same reason the runqueue
+ * reading is: two consumers reading one previous value would steal each other's
+ * interval, and this one samples on a timer while that one answers requests.
+ */
+let lastUsage = process.resourceUsage();
+
+function kernelRates(elapsedMs: number): { fsOpsPerSec: number; ctxPerSec: number } {
+    const now = process.resourceUsage();
+    const per = (a: number, b: number): number => {
+        // A restart cannot appear here — the module is loaded once per process —
+        // but a counter that goes backwards would still be a negative rate, and
+        // a negative is worse than a zero: it draws below the axis and drags the
+        // scale with it.
+        const delta = Math.max(0, a - b);
+        return Number(((delta * 1000) / elapsedMs).toFixed(1));
+    };
+    const out = {
+        fsOpsPerSec:
+            per(now.fsRead, lastUsage.fsRead) + per(now.fsWrite, lastUsage.fsWrite),
+        ctxPerSec:
+            per(now.voluntaryContextSwitches, lastUsage.voluntaryContextSwitches) +
+            per(now.involuntaryContextSwitches, lastUsage.involuntaryContextSwitches),
+    };
+    lastUsage = now;
+    return out;
+}
+
+function oldSpaceUsedMB(): number | null {
+    if (RUNTIME === "bun") return null;
+    const sp = getHeapSpaceStatistics().find((x) => x.space_name === "old_space");
+    return sp ? Number((sp.space_used_size / MB).toFixed(2)) : null;
+}
 
 /**
  * Previous run-queue reading, for this module's own delta.
@@ -130,6 +185,30 @@ export interface Bucket {
      * quiet hour averages away to nothing, and it is the thing worth finding.
      */
     cpuWaitPeakMsPerSec: number | null;
+    /**
+     * Most resources open at any sample in the bucket. Peak, like the delay
+     * figures: a handle count that keeps climbing is the leak this is for, and
+     * a mean would blunt exactly that shape.
+     */
+    handlesPeak: number | null;
+    /**
+     * Least free memory the machine had at any sample in the bucket. The floor
+     * rather than the mean: an hour that dipped to 90 MB free and recovered is
+     * an hour something nearly died in, and a mean hides exactly that.
+     *
+     * Absent on buckets recorded before this was sampled.
+     */
+    hostFreeFloorMB?: number | null;
+    /**
+     * Most old space held at any sample in the bucket. The peak, because old
+     * space falls only when a major collection runs: the high-water mark is
+     * what a leak moves, and a mean would blur the staircase into a slope.
+     */
+    oldSpacePeakMB?: number | null;
+    /** Busiest second of filesystem work in the bucket, ops/s. */
+    fsOpsPeakPerSec?: number | null;
+    /** Busiest second of context switching in the bucket, switches/s. */
+    ctxPeakPerSec?: number | null;
     /** How many fine samples landed in it — 0 buckets are never stored. */
     n: number;
     /**
@@ -181,6 +260,17 @@ function record(x: Sample): void {
             last.loopP99Ms = maxOrNull(last.loopP99Ms, x.loopP99Ms);
             last.loopMaxMs = maxOrNull(last.loopMaxMs, x.loopMaxMs);
             last.cpuWaitPeakMsPerSec = maxOrNull(last.cpuWaitPeakMsPerSec, x.cpuWaitMsPerSec);
+            last.handlesPeak = maxOrNull(last.handlesPeak, x.handles);
+            last.oldSpacePeakMB = maxOrNull(last.oldSpacePeakMB, x.oldSpaceMB);
+            last.fsOpsPeakPerSec = maxOrNull(last.fsOpsPeakPerSec, x.fsOpsPerSec);
+            last.ctxPeakPerSec = maxOrNull(last.ctxPeakPerSec, x.ctxPerSec);
+            last.hostFreeFloorMB =
+                last.oldSpacePeakMB = maxOrNull(last.oldSpacePeakMB, x.oldSpaceMB);
+            last.fsOpsPeakPerSec = maxOrNull(last.fsOpsPeakPerSec, x.fsOpsPerSec);
+            last.ctxPeakPerSec = maxOrNull(last.ctxPeakPerSec, x.ctxPerSec);
+            last.hostFreeFloorMB == null
+                    ? x.hostFreeMB
+                    : Math.min(last.hostFreeFloorMB, x.hostFreeMB);
             last.n += 1;
             last.rt = x.rt;
             continue;
@@ -198,6 +288,11 @@ function record(x: Sample): void {
             loopP99Ms: x.loopP99Ms,
             loopMaxMs: x.loopMaxMs,
             cpuWaitPeakMsPerSec: x.cpuWaitMsPerSec,
+            handlesPeak: x.handles,
+            hostFreeFloorMB: x.hostFreeMB,
+            oldSpacePeakMB: x.oldSpaceMB,
+            fsOpsPeakPerSec: x.fsOpsPerSec,
+            ctxPeakPerSec: x.ctxPerSec,
             n: 1,
             rt: x.rt,
         });
@@ -225,6 +320,42 @@ export interface Sample {
      * where the kernel does not report it; the unsupported list says why.
      */
     cpuWaitMsPerSec: number | null;
+    /**
+     * How many resources were keeping the process alive at this instant —
+     * sockets, servers, timers — from getActiveResourcesInfo(). null under a
+     * runtime that does not report them; see HANDLES_MEASURED.
+     *
+     * A count, not the breakdown by kind: the kinds are what a reading is made
+     * of, the count is what a leak moves.
+     */
+    handles: number | null;
+    /**
+     * Memory free on the machine as a whole, MB.
+     *
+     * The machine rather than the process: the heap limit is only meaningful
+     * against it, and a process killed for being large is killed by the
+     * operating system on this number, not on anything V8 reports.
+     */
+    hostFreeMB: number;
+    /**
+     * Old space in use, MB — the V8 space holding objects that survived
+     * collection, and the one a leak shows up in. null where the runtime has no
+     * V8 spaces to report.
+     */
+    oldSpaceMB: number | null;
+    /**
+     * Filesystem operations per second, read and write together, over this
+     * interval only.
+     *
+     * A rate, not the kernel's running total. The total is per pid and starts
+     * again at zero on every restart, so a line drawn from it falls off a cliff
+     * each time the app restarts — and restarting is how every setting on the
+     * Config page takes effect, so that cliff would be the most common shape on
+     * the chart. Rates either side of a restart are directly comparable.
+     */
+    fsOpsPerSec: number;
+    /** Context switches per second, voluntary and forced together. Same reasoning. */
+    ctxPerSec: number;
     /**
      * Which runtime measured it. Absent on samples written before this existed;
      * see RUNTIME above for why the same field means different things under
@@ -270,6 +401,10 @@ function take(): void {
         loopP99Ms: LOOP_MEASURED ? delayMs(intervalDelay.percentile(99)) : null,
         loopMaxMs: LOOP_MEASURED ? delayMs(intervalDelay.max) : null,
         cpuWaitMsPerSec: cpuWait(elapsedMs),
+        handles: HANDLES_MEASURED ? process.getActiveResourcesInfo().length : null,
+        hostFreeMB: Number((freemem() / MB).toFixed(1)),
+        oldSpaceMB: oldSpaceUsedMB(),
+        ...kernelRates(elapsedMs),
         rt: RUNTIME,
     });
     intervalDelay.reset();
@@ -355,6 +490,8 @@ export interface HistoryResponse {
     sampleMs: number;
     capacity: number;
     heapLimitMB: number;
+    /** Installed memory, MB. Constant, so it is sent once rather than sampled. */
+    hostTotalMB: number;
     samples: Sample[];
     /** Lifetime distribution of loop delay — the shape, not the timeline. */
     loopPercentiles: { label: string; ms: number }[];
@@ -402,6 +539,16 @@ function unsupportedSeries(): Unavailable[] {
               kind: runtime,
               reason,
           }));
+    if (!HANDLES_MEASURED) {
+        out.push({
+            id: "handles",
+            kind: runtime,
+            reason:
+                "Bun's getActiveResourcesInfo() returns an empty list even with timers " +
+                "and sockets pending, so a handle series under it would be a flat zero " +
+                "rather than a measurement.",
+        });
+    }
     return out.concat(platformUnavailable("cpuWaitMsPerSec"));
 }
 
@@ -412,6 +559,7 @@ export function history(): HistoryResponse {
         sampleMs: SAMPLE_MS,
         capacity: CAPACITY,
         heapLimitMB: Number((getHeapStatistics().heap_size_limit / MB).toFixed(0)),
+        hostTotalMB: Number((totalmem() / MB).toFixed(0)),
         samples: [...samples],
         loopPercentiles: [],
         unsupported: unsupportedSeries(),

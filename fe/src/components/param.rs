@@ -43,3 +43,37 @@ pub const PARAM_BOARD_FIXED_CLASS: &str =
 pub const PARAM_BOARD_TITLE_CLASS: &str = "text-sm text-gray-300 font-semibold";
 pub const PARAM_BOARD_NOTE_CLASS: &str = "text-xs text-gray-300 italic";
 pub const PARAM_COLUMN_HEADING_CLASS: &str = "text-gray-300 font-semibold text-xs";
+
+/// Which settings the page would write if it saved right now — the ids whose
+/// draft value differs from what the backend has stored, plus any the page has
+/// cleared entirely.
+///
+/// Both Restart buttons save before they restart, so this is what such a
+/// restart is about to apply. Naming those ids is the difference between a
+/// confirmation the reader can act on and one they can only accept.
+pub fn unsaved_ids(
+    draft: &std::collections::BTreeMap<String, serde_json::Value>,
+    saved: &serde_json::Value,
+) -> Vec<String> {
+    let empty = serde_json::Map::new();
+    let saved = saved.as_object().unwrap_or(&empty);
+
+    let mut ids: Vec<String> = draft
+        .iter()
+        .filter(|(id, value)| saved.get(id.as_str()) != Some(value))
+        .map(|(id, _)| id.clone())
+        .collect();
+
+    // A row emptied on the page is an edit too: saving it removes the stored
+    // value, and a restart then comes back up without it.
+    ids.extend(
+        saved
+            .keys()
+            .filter(|id| !draft.contains_key(id.as_str()))
+            .cloned(),
+    );
+
+    ids.sort();
+    ids.dedup();
+    ids
+}

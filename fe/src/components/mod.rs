@@ -9,7 +9,7 @@ pub mod process_panel;
 pub use process_panel::ProcessPanel;
 pub mod restart_banner;
 pub mod sparkline;
-pub use sparkline::{Series, Sparkline};
+pub use sparkline::{format_reading, Series, SideLabel, Sparkline};
 pub mod status_light;
 pub mod sub_nav;
 pub use sub_nav::SubNav;

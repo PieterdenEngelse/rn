@@ -132,9 +132,13 @@ This is not node:worker_threads, despite the similar names. Those are real JavaS
 
 It follows from what the pool covers that raising it helps exactly one shape of workload: many concurrent filesystem, zlib or password-hashing operations. If the automation is mostly network calls, or mostly computation in JavaScript, this number changes nothing.
 
+One more thing decides whether it bites at all, and it is not a setting: the libuv version, shown on Monitor → Runtime. In libuv 1.45.0 file reads, writes, fsync, fdatasync and the stat calls moved to io_uring on Linux, bypassing this pool entirely; 1.49.0 reverted that, and they run on the pool again unless the loop opts in. The runtime bundled here carries 1.52.1, so file work is on the pool and this setting is the lever. On a runtime carrying 1.45 to 1.48 the same change would barely move a read-heavy job, because the kernel would be doing the reads.
+
 **If it's wrong.** Too high wastes memory and adds contention. Above 1024 libuv silently clamps — a value of 2000 starts with no warning and behaves as 1024.
 
 The symptom of it being too low is a job that is slow while the machine looks idle: low CPU, low event-loop utilisation, and the Monitor's thread pool figure sitting at its ceiling. That combination is this setting and almost nothing else.
+
+Changing it while the app runs does nothing at all. libuv builds the pool on the first operation that needs one and never resizes it, which is why this is a restart setting rather than an immediate one — the constraint is libuv's, not the page's.
 
 Default: 4 · Takes effect: on restart · Settings key: `threadpoolSize`
 

@@ -22,6 +22,33 @@ pub fn Config() -> Element {
         fetch_params()
     });
 
+    // The page's edits live here rather than in `ParamBoards`, which is
+    // mounted only while a fetch has succeeded: a restart takes the backend
+    // away, the offline panel replaces the boards, and a draft owned by them
+    // would be dropped and re-seeded from the server on the way back — losing
+    // exactly the edits the restart was meant to apply.
+    //
+    // Seeded once, from the first payload that arrives. Re-seeding on every
+    // reload would overwrite what the user is in the middle of typing each
+    // time the poll below refetches.
+    let mut draft = use_signal(BTreeMap::<String, serde_json::Value>::new);
+    let mut seeded = use_signal(|| false);
+    use_effect(move || {
+        // `read`, not `read_unchecked`: the effect has to subscribe to the
+        // resource, or it runs once while the fetch is still pending, seeds
+        // nothing, and never runs again — leaving every control drawing an
+        // empty draft as though nothing were configured.
+        if let Some(Ok(resp)) = &*data.read() {
+            if seeded() {
+                return;
+            }
+            if let Some(map) = resp.settings.as_object() {
+                draft.set(map.iter().map(|(k, v)| (k.clone(), v.clone())).collect());
+            }
+            seeded.set(true);
+        }
+    });
+
     // Why the backend is away, when it is. Only meaningful while the fetch is
     // failing; cleared as soon as one succeeds.
     let mut offline = use_signal(|| Option::<OfflineReason>::None);
@@ -59,8 +86,11 @@ pub fn Config() -> Element {
                         pending: resp.pending.clone(),
                         supervised: resp.supervised,
                         reload,
+                        draft,
+                        saved: resp.settings.clone(),
+                        seeded: seeded(),
                     }
-                    ParamBoards { resp: resp.clone(), reload }
+                    ParamBoards { resp: resp.clone(), reload, draft, seeded: seeded() }
                 },
                 Some(Err(err)) => rsx! {
                     Panel { title: "Runtime settings".to_string(),
@@ -128,17 +158,18 @@ fn category_title(cat: &str) -> &str {
 }
 
 #[component]
-fn ParamBoards(resp: ParamsResponse, reload: Signal<u32>) -> Element {
-    // Draft values, seeded from what the backend has saved. Editing never
-    // touches the server until Save — a half-typed number must not reconfigure
-    // a running system.
-    let initial: BTreeMap<String, serde_json::Value> = resp
-        .settings
-        .as_object()
-        .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
-        .unwrap_or_default();
-
-    let draft = use_signal(|| initial);
+fn ParamBoards(
+    resp: ParamsResponse,
+    reload: Signal<u32>,
+    /// Draft values, owned by `Config` so they survive the offline window a
+    /// restart opens. Editing never touches the server until Save or Restart —
+    /// a half-typed number must not reconfigure a running system.
+    draft: Signal<BTreeMap<String, serde_json::Value>>,
+    /// Whether the draft has been filled from the server yet. Nothing writes
+    /// settings while this is false: a save replaces the file rather than
+    /// merging into it, so an empty draft is a delete of everything.
+    seeded: bool,
+) -> Element {
     let mut status = use_signal(|| Option::<String>::None);
     let mut error = use_signal(|| Option::<String>::None);
 
@@ -207,91 +238,180 @@ fn ParamBoards(resp: ParamsResponse, reload: Signal<u32>) -> Element {
         .collect();
 
     rsx! {
-        Panel {
-            title: "Runtime".to_string(),
-            subtitle: Some("which runtime runs the app".to_string()),
-            // Puts this button at the right edge of the Active runtime board's
-            // info column below it, instead of trailing the subtitle a few
-            // pixels to the right of it: 15rem is that board's 16rem less its
-            // p-4, and pr-px is its 1px border, which border-box counts inside
-            // the 16rem but this unbordered row has no equivalent of.
-            header_class: "w-60 pr-px".to_string(),
-            // Explains the concept. The buttons inside explain the choices —
-            // useless to someone who does not yet know what is being chosen.
-            info: Some(rsx! {
-                div { class: "ml-auto",
-                    InfoButton {
-                        title: "What a runtime is".to_string(),
-                        what: "The program that executes the backend's JavaScript. Your code is text until something runs it: the runtime parses it, compiles it, manages its memory, and provides everything the language itself does not — timers, the filesystem, sockets, processes. rn's backend is JavaScript, so a runtime is not optional; it is the process the app lives inside. Node, Bun and Deno are three separate implementations of that job, each with its own standard library and its own idea of what a program is allowed to do.\n\nThey are not three engines, though. Node and Deno both run V8, the engine from Chrome. Bun runs JavaScriptCore, the one from Safari — a different compiler, a different garbage collector, a different memory layout. That single fact explains most of what differs between the tiles on this page and on Monitor: the heap settings here are V8 flags and do nothing under Bun, and the V8 space breakdown on Monitor is replaced there by JavaScriptCore's own accounting, which counts live objects rather than regions of memory.\n\nThe engine is also the one thing a runtime will not tell you honestly. Asked its versions, Bun reports a V8 number and a Node number, because it is claiming an interface rather than describing itself — the giveaway is a webkit entry alongside them, which neither of the others has. Deno reports a Node version too, for the same reason and just as untruthfully. Nothing here trusts those fields: the code asks whether versions.bun or versions.deno exists, which only the runtime itself can answer.".to_string(),
-                        why: "It is worth understanding because it sets the boundaries of everything above it. The runtime decides how fast a script starts, which packages install at all, whether a dependency can reach the network behind your back, and how much memory the process may use before it is killed. Those are not library choices you can revisit per-file — they are properties of the process, fixed the moment it launches. The settings below tune the runtime; this panel picks which one you are tuning.".to_string(),
-                        if_wrong: "The common misconception is that this picks a language or a framework. It does not: the code is identical across all three. What changes is what runs it, and therefore what that code is capable of and constrained by. If you are unsure, Node is the right answer — it is what the app is bundled with and tested against, and the two alternatives exist for specific problems described in their own panels.".to_string(),
-                    }
-                }
-            }),
-
-            p { class: "text-gray-400 mb-3 max-w-3xl",
-                "What the launcher started, and what it should start next time. Changing either dropdown takes effect on restart."
-            }
-
-            // No flex-wrap here, unlike the tuning boards below: these three are
-            // one left-to-right sequence — what is running, what to run next,
-            // how to apply it — and wrapping the last one under the others
-            // breaks that reading. Narrow screens scroll the row instead.
-            div { class: "flex gap-4 items-stretch overflow-x-auto",
-                RuntimeBoard { effective: resp.effective.clone() }
-                if !runtime_rows.is_empty() {
-                    {
-                        // The panel text is generated from the same options the
-                        // controls are built from, so an option cannot appear in
-                        // one and be missing from the other.
-                        let runtime_rows_for_info = runtime_rows.clone();
-                        rsx! {
-                    CategoryBoard {
-                        title: "Selection".to_string(),
-                        rows: runtime_rows,
-                        draft,
-                        effective: resp.effective.clone(),
-                        info: Some(rsx! {
-                            InfoButton {
-                                title: "What you are choosing here".to_string(),
-                                what: describe_options(&runtime_rows_for_info),
-                                why: concat!(
-                                    "Almost never. The bundled runtime is the one rn is tested ",
-                                    "against, and the reason the app carries its own copy is so ",
-                                    "that what runs here does not depend on what happens to be ",
-                                    "installed on the machine.\n\n",
-
-                                    "The reasons to change it are specific: trying a newer ",
-                                    "release before it is bundled, reproducing a problem someone ",
-                                    "reports on a different runtime, or measuring whether an ",
-                                    "alternative is actually faster for your jobs rather than in ",
-                                    "a benchmark.",
-                                ).to_string(),
-                                if_wrong: concat!(
-                                    "A selection that cannot be honoured is not silently ",
-                                    "ignored: the launcher falls back to the bundled runtime and ",
-                                    "says so, and the Active runtime board above reports what is ",
-                                    "really executing. Read those two together — the setting is ",
-                                    "the request, that board is the outcome.\n\n",
-
-                                    "A runtime that starts but behaves differently is the harder ",
-                                    "case, and it shows up as unexpected errors rather than as a ",
-                                    "warning here. If anything looks strange after changing ",
-                                    "this, put it back to the bundled runtime before ",
-                                    "investigating anything else.",
-                                ).to_string(),
-                            }
-                        }),
-                    }
+        // One row: which runtime runs the app, and the engine settings that
+        // outlive the choice. V8 holds a single board and had a full-width
+        // panel to itself, so the page spent a row on one input while the
+        // panel it belongs beside sat above it.
+        //
+        // V8 keeps the width its board needs and Runtime takes the rest. The
+        // three boards in Runtime already scroll rather than wrap on a narrow
+        // screen, which is what they now do sooner.
+        div { class: "flex gap-4 items-stretch",
+            Panel {
+                title: "Runtime".to_string(),
+                class: "flex-auto min-w-0".to_string(),
+                subtitle: Some("which runtime runs the app".to_string()),
+                // Puts this button at the right edge of the Active runtime board's
+                // info column below it, instead of trailing the subtitle a few
+                // pixels to the right of it: 15rem is that board's 16rem less its
+                // p-4, and pr-px is its 1px border, which border-box counts inside
+                // the 16rem but this unbordered row has no equivalent of.
+                header_class: "w-60 pr-px".to_string(),
+                // Explains the concept. The buttons inside explain the choices —
+                // useless to someone who does not yet know what is being chosen.
+                info: Some(rsx! {
+                    div { class: "ml-auto",
+                        InfoButton {
+                            title: "What a runtime is".to_string(),
+                            what: "The program that executes the backend's JavaScript. Your code is text until something runs it: the runtime parses it, compiles it, manages its memory, and provides everything the language itself does not — timers, the filesystem, sockets, processes. rn's backend is JavaScript, so a runtime is not optional; it is the process the app lives inside. Node, Bun and Deno are three separate implementations of that job, each with its own standard library and its own idea of what a program is allowed to do.\n\nThey are not three engines, though. Node and Deno both run V8, the engine from Chrome. Bun runs JavaScriptCore, the one from Safari — a different compiler, a different garbage collector, a different memory layout. That single fact explains most of what differs between the tiles on this page and on Monitor: the heap settings here are V8 flags and do nothing under Bun, and the V8 space breakdown on Monitor is replaced there by JavaScriptCore's own accounting, which counts live objects rather than regions of memory.\n\nThe engine is also the one thing a runtime will not tell you honestly. Asked its versions, Bun reports a V8 number and a Node number, because it is claiming an interface rather than describing itself — the giveaway is a webkit entry alongside them, which neither of the others has. Deno reports a Node version too, for the same reason and just as untruthfully. Nothing here trusts those fields: the code asks whether versions.bun or versions.deno exists, which only the runtime itself can answer.".to_string(),
+                            why: "It is worth understanding because it sets the boundaries of everything above it. The runtime decides how fast a script starts, which packages install at all, whether a dependency can reach the network behind your back, and how much memory the process may use before it is killed. Those are not library choices you can revisit per-file — they are properties of the process, fixed the moment it launches. The settings below tune the runtime; this panel picks which one you are tuning.".to_string(),
+                            if_wrong: "The common misconception is that this picks a language or a framework. It does not: the code is identical across all three. What changes is what runs it, and therefore what that code is capable of and constrained by. If you are unsure, Node is the right answer — it is what the app is bundled with and tested against, and the two alternatives exist for specific problems described in their own panels.".to_string(),
                         }
                     }
+                }),
+
+                // No flex-wrap here, unlike the tuning boards below: these three are
+                // one left-to-right sequence — what is running, what to run next,
+                // how to apply it — and wrapping the last one under the others
+                // breaks that reading. Narrow screens scroll the row instead.
+                div { class: "flex gap-4 items-stretch overflow-x-auto",
+                    RuntimeBoard { effective: resp.effective.clone() }
+                    if !runtime_rows.is_empty() {
+                        {
+                            // The panel text is generated from the same options the
+                            // controls are built from, so an option cannot appear in
+                            // one and be missing from the other.
+                            let runtime_rows_for_info = runtime_rows.clone();
+                            rsx! {
+                        CategoryBoard {
+                            title: "Selection".to_string(),
+                            rows: runtime_rows,
+                            draft,
+                            effective: resp.effective.clone(),
+                            info: Some(rsx! {
+                                InfoButton {
+                                    title: "What you are choosing here".to_string(),
+                                    what: describe_options(&runtime_rows_for_info),
+                                    why: concat!(
+                                        "Almost never. The bundled runtime is the one rn is tested ",
+                                        "against, and the reason the app carries its own copy is so ",
+                                        "that what runs here does not depend on what happens to be ",
+                                        "installed on the machine.\n\n",
+
+                                        "The reasons to change it are specific: trying a newer ",
+                                        "release before it is bundled, reproducing a problem someone ",
+                                        "reports on a different runtime, or measuring whether an ",
+                                        "alternative is actually faster for your jobs rather than in ",
+                                        "a benchmark.",
+                                    ).to_string(),
+                                    if_wrong: concat!(
+                                        "A selection that cannot be honoured is not silently ",
+                                        "ignored: the launcher falls back to the bundled runtime and ",
+                                        "says so, and the Active runtime board above reports what is ",
+                                        "really executing. Read those two together — the setting is ",
+                                        "the request, that board is the outcome.\n\n",
+
+                                        "A runtime that starts but behaves differently is the harder ",
+                                        "case, and it shows up as unexpected errors rather than as a ",
+                                        "warning here. If anything looks strange after changing ",
+                                        "this, put it back to the bundled runtime before ",
+                                        "investigating anything else.",
+                                    ).to_string(),
+                                }
+                            }),
+                        }
+                            }
+                        }
+                    }
+                    ProcessPanel { reload, draft, saved: resp.settings.clone(), seeded }
                 }
-                ProcessPanel { reload }
+
+                if !runtime_rows_empty {
+                    p { class: "text-gray-400 mt-3 max-w-3xl",
+                        "Both sections share one draft — use Save below to apply changes made here."
+                    }
+                }
             }
 
-            if !runtime_rows_empty {
-                p { class: "text-gray-400 mt-3 max-w-3xl",
-                    "Both sections share one draft — use Save below to apply changes made here."
+            if !engine_tuning.is_empty() {
+                Panel {
+                    title: "V8".to_string(),
+                    class: "basis-[28rem] shrink-0".to_string(),
+                    subtitle: Some("shared by every runtime on this engine".to_string()),
+                    // The board below fills the panel, so its info column sits
+                    // one board inset in from the panel's own right edge: 16px
+                    // of `p-4` and the 1px border. Stopping the header row
+                    // there puts this button in that column.
+                    header_class: "w-full pr-[17px]".to_string(),
+                    info: Some(rsx! {
+                        div { class: "ml-auto",
+                            InfoButton {
+                                title: "Why these are not under the runtime".to_string(),
+                                what: concat!(
+                                    "These are V8's flags, not the runtime's. Node and Deno both ",
+                                    "run V8 — the engine from Chrome — so both accept them and ",
+                                    "both mean exactly the same thing by them. Bun runs ",
+                                    "JavaScriptCore and has none of the machinery they address, ",
+                                    "which is why this tile is absent while Bun is selected.\n\n",
+
+                                    "There is one stored value per setting, shared between the ",
+                                    "runtimes that use it. Set the heap limit while Node is ",
+                                    "selected, switch to Deno, and it is already set — not copied ",
+                                    "across, but the same value read twice.",
+                                ).to_string(),
+                                why: concat!(
+                                    "They had been sitting in the runtime tiles, which read as ",
+                                    "though each runtime had its own copy. Two tiles showing one ",
+                                    "value is how someone changes a setting for Deno and does not ",
+                                    "realise they changed it for Node.\n\n",
+
+                                    "The delivery does differ, and that part is genuinely per ",
+                                    "runtime: Node accepts V8 flags inside NODE_OPTIONS, while ",
+                                    "Deno ignores NODE_OPTIONS entirely and needs them folded into ",
+                                    "--v8-flags. The launcher handles that. The value you set here ",
+                                    "is the same either way.",
+                                ).to_string(),
+                                if_wrong: concat!(
+                                    "If a change here appears to do nothing, check which runtime is ",
+                                    "actually running on the Active runtime board rather than which ",
+                                    "is selected — these apply at startup, so a saved value waits ",
+                                    "for the next restart.\n\n",
+
+                                    "Under Bun they do nothing at all and are not shown. That is not ",
+                                    "a limitation to work around: there is no old_space or new_space ",
+                                    "in JavaScriptCore for them to size.",
+                                ).to_string(),
+                            }
+                        }
+                    }),
+
+                    p { class: "text-gray-400 mb-3 max-w-3xl",
+                        "Engine settings, not {selected} settings. One value, shared with every runtime that runs V8 — delivered differently to each, which the launcher takes care of."
+                    }
+
+                    div { class: "flex flex-wrap gap-4 items-stretch",
+                        for category in engine_tuning {
+                            {
+                                let rows: Vec<RuntimeParam> = params
+                                    .iter()
+                                    .filter(|p| p.category == category && owned_by_engine(p))
+                                    .cloned()
+                                    .collect();
+                                rsx! {
+                                    CategoryBoard {
+                                        title: category_title(&category).to_string(),
+                                        rows,
+                                        draft,
+                                        effective: resp.effective.clone(),
+                                        // Fills the panel while it is the only
+                                        // board here; shares the row if a
+                                        // second engine category appears.
+                                        width_class: "flex-1".to_string(),
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -321,76 +441,6 @@ fn ParamBoards(resp: ParamsResponse, reload: Signal<u32>) -> Element {
                             let rows: Vec<RuntimeParam> = params
                                 .iter()
                                 .filter(|p| p.category == category && owned_by_running(p))
-                                .cloned()
-                                .collect();
-                            rsx! {
-                                CategoryBoard {
-                                    title: category_title(&category).to_string(),
-                                    rows,
-                                    draft,
-                                    effective: resp.effective.clone(),
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        if !engine_tuning.is_empty() {
-            Panel {
-                title: "V8".to_string(),
-                subtitle: Some("shared by every runtime on this engine".to_string()),
-                info: Some(rsx! {
-                    InfoButton {
-                        title: "Why these are not under the runtime".to_string(),
-                        what: concat!(
-                            "These are V8's flags, not the runtime's. Node and Deno both ",
-                            "run V8 — the engine from Chrome — so both accept them and ",
-                            "both mean exactly the same thing by them. Bun runs ",
-                            "JavaScriptCore and has none of the machinery they address, ",
-                            "which is why this tile is absent while Bun is selected.\n\n",
-
-                            "There is one stored value per setting, shared between the ",
-                            "runtimes that use it. Set the heap limit while Node is ",
-                            "selected, switch to Deno, and it is already set — not copied ",
-                            "across, but the same value read twice.",
-                        ).to_string(),
-                        why: concat!(
-                            "They had been sitting in the runtime tiles, which read as ",
-                            "though each runtime had its own copy. Two tiles showing one ",
-                            "value is how someone changes a setting for Deno and does not ",
-                            "realise they changed it for Node.\n\n",
-
-                            "The delivery does differ, and that part is genuinely per ",
-                            "runtime: Node accepts V8 flags inside NODE_OPTIONS, while ",
-                            "Deno ignores NODE_OPTIONS entirely and needs them folded into ",
-                            "--v8-flags. The launcher handles that. The value you set here ",
-                            "is the same either way.",
-                        ).to_string(),
-                        if_wrong: concat!(
-                            "If a change here appears to do nothing, check which runtime is ",
-                            "actually running on the Active runtime board rather than which ",
-                            "is selected — these apply at startup, so a saved value waits ",
-                            "for the next restart.\n\n",
-
-                            "Under Bun they do nothing at all and are not shown. That is not ",
-                            "a limitation to work around: there is no old_space or new_space ",
-                            "in JavaScriptCore for them to size.",
-                        ).to_string(),
-                    }
-                }),
-
-                p { class: "text-gray-400 mb-3 max-w-3xl",
-                    "Engine settings, not {selected} settings. One value, shared with every runtime that runs V8 — delivered differently to each, which the launcher takes care of."
-                }
-
-                div { class: "flex flex-wrap gap-4 items-stretch",
-                    for category in engine_tuning {
-                        {
-                            let rows: Vec<RuntimeParam> = params
-                                .iter()
-                                .filter(|p| p.category == category && owned_by_engine(p))
                                 .cloned()
                                 .collect();
                             rsx! {
@@ -498,6 +548,16 @@ fn ParamBoards(resp: ParamsResponse, reload: Signal<u32>) -> Element {
                 button {
                     class: "btn btn-primary btn-sm",
                     onclick: move |_| {
+                        // Same guard as the two Restart buttons: a save writes
+                        // the whole file, so a draft that has not been filled
+                        // from the server is a request to delete everything.
+                        if !seeded {
+                            error.set(Some(
+                                "Nothing saved — this page has not loaded its settings yet."
+                                    .to_string(),
+                            ));
+                            return;
+                        }
                         let payload = serde_json::Value::Object(
                             draft().into_iter().collect::<serde_json::Map<_, _>>(),
                         );
@@ -619,17 +679,32 @@ fn CategoryBoard(
     /// settings is for, as opposed to any single row in it.
     #[props(default = None)]
     info: Option<Element>,
+    /// Width for the board box, for the board that is the only one in its
+    /// panel and should fill it. Empty means `w-fit`, which is what a board
+    /// sharing a row with others wants. Whichever is used arrives as the
+    /// board's single width utility — see `PARAM_BOARD_BASE_CLASS`.
+    #[props(default = String::new())]
+    width_class: String,
 ) -> Element {
     let all_restart = rows.iter().all(|p| p.applies_at == "restart");
+    let board_class = if width_class.is_empty() {
+        PARAM_BOARD_CLASS.to_string()
+    } else {
+        format!("{PARAM_BOARD_BASE_CLASS} {width_class}")
+    };
     rsx! {
-        div { class: PARAM_BOARD_CLASS,
+        div { class: "{board_class}",
             div { class: "flex items-center gap-2 mb-3",
                 span { class: PARAM_BOARD_TITLE_CLASS, "{title}" }
-                if let Some(info) = info {
-                    {info}
-                }
                 if all_restart {
                     span { class: PARAM_BOARD_NOTE_CLASS, "(restart required)" }
+                }
+                // Last in the row and pushed to the right edge, so a board's own
+                // info button lands in the same column as its rows' — the header
+                // div fills the board's content width, which the widest row set,
+                // and `.param-row` puts those buttons at that same edge.
+                if let Some(info) = info {
+                    div { class: "ml-auto", {info} }
                 }
             }
             div { class: PARAM_COLUMN_CLASS,

@@ -1,5 +1,9 @@
-use crate::api::{fetch_jobs, restart_backend, wait_until_healthy, PendingChange, RunningJob};
+use crate::api::{
+    fetch_jobs, restart_backend, save_settings, wait_until_healthy, PendingChange, RunningJob,
+};
+use crate::components::param::unsaved_ids;
 use dioxus::prelude::*;
+use std::collections::BTreeMap;
 
 /// Tells the user that saved settings are not yet in effect, and what to do.
 ///
@@ -12,10 +16,21 @@ pub fn RestartBanner(
     pending: Vec<PendingChange>,
     supervised: bool,
     reload: Signal<u32>,
+    /// The page's edits, saved or not. Written before the restart, exactly as
+    /// the board's own Restart does — one button restarting into different
+    /// settings than the other is the kind of difference nobody discovers
+    /// until it has already cost them their typing.
+    draft: Signal<BTreeMap<String, serde_json::Value>>,
+    /// What the backend has stored, to say which of the above are unsaved.
+    saved: serde_json::Value,
+    /// Whether the draft has been filled from the server yet. A save replaces
+    /// the whole settings file, so an unseeded draft must never be written.
+    seeded: bool,
 ) -> Element {
     let mut busy = use_signal(|| false);
     let mut error = use_signal(|| Option::<String>::None);
     let mut notice = use_signal(|| Option::<String>::None);
+    let mut confirm_apply = use_signal(|| false);
 
     // What is running right now decides which restart is safe to offer.
     let jobs = use_resource(fetch_jobs);
@@ -30,6 +45,14 @@ pub fn RestartBanner(
     };
     let busy_now = busy();
 
+    // What a restart from here would write, named before it writes it. Empty
+    // until the draft has been seeded — before that it is not an edit list.
+    let edits = if seeded {
+        unsaved_ids(&draft(), &saved)
+    } else {
+        Vec::new()
+    };
+
     // Shared by both buttons: fire the restart, then wait for the replacement
     // rather than guessing at a delay.
     let do_restart = move |now: bool| {
@@ -37,6 +60,41 @@ pub fn RestartBanner(
             busy.set(true);
             error.set(None);
             notice.set(None);
+
+            // Save first, so a restart applies what the page shows. A rejected
+            // value aborts the restart rather than being quietly dropped when
+            // the offline window re-seeds the draft from the server.
+            if seeded {
+                let payload = serde_json::Value::Object(
+                    draft().into_iter().collect::<serde_json::Map<_, _>>(),
+                );
+                match save_settings(payload).await {
+                    Ok(r) if r.ok => {}
+                    Ok(r) => {
+                        error.set(Some(format!(
+                            "Not restarted — these values were rejected: {}",
+                            r.errors
+                                .iter()
+                                .map(|e| e.id.clone())
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                        )));
+                        busy.set(false);
+                        return;
+                    }
+                    Err(e) => {
+                        error.set(Some(format!("Not restarted — saving failed: {e}")));
+                        busy.set(false);
+                        return;
+                    }
+                }
+            } else {
+                notice.set(Some(
+                    "Restarting without saving — this page has not loaded its settings yet."
+                        .to_string(),
+                ));
+            }
+
             match restart_backend(now).await {
                 Ok(outcome) if outcome.scheduled => {
                     let names: Vec<String> =
@@ -120,13 +178,46 @@ pub fn RestartBanner(
                             } else {
                                 "Wait for running jobs to finish, then restart"
                             },
-                            onclick: move |_| do_restart(false),
+                            onclick: {
+                                let edits = edits.clone();
+                                move |_| {
+                                    // Same confirmation as the board's button:
+                                    // this one saves the page's edits too, so
+                                    // it says which before applying them.
+                                    if edits.is_empty() || confirm_apply() {
+                                        do_restart(false);
+                                    } else {
+                                        notice.set(Some(format!(
+                                            "{} unsaved {} will be applied: {}.",
+                                            edits.len(),
+                                            if edits.len() == 1 { "edit" } else { "edits" },
+                                            edits.join(", "),
+                                        )));
+                                        confirm_apply.set(true);
+                                    }
+                                }
+                            },
                             if busy_now {
                                 "Working…"
                             } else if running.is_empty() {
                                 "Restart"
                             } else {
                                 "Restart when idle"
+                            }
+                        }
+
+                        if confirm_apply() {
+                            div {
+                                button {
+                                    class: "text-xs cursor-pointer hover:underline bg-transparent border-0 p-0",
+                                    style: "color: #22d3ee;",
+                                    disabled: busy_now,
+                                    onclick: move |_| {
+                                        confirm_apply.set(false);
+                                        do_restart(false);
+                                    },
+                                    "Apply and restart"
+                                }
                             }
                         }
 

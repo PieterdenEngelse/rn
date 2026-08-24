@@ -7,7 +7,7 @@
  * registry) so both sides agree on what a setting means.
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { copyFileSync, readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { getHeapStatistics } from "node:v8";
 import { availableParallelism } from "node:os";
 import { dirname } from "node:path";
@@ -143,7 +143,33 @@ export function save(path: string, settings: Settings): void {
         );
     }
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, JSON.stringify(settings, null, 2) + "\n", "utf8");
+
+    const next = JSON.stringify(settings, null, 2) + "\n";
+
+    // This is a replace, not a merge: what the caller sends becomes the whole
+    // file, and any key it omits is deleted. That is the right shape for a PUT
+    // — it is how a setting gets cleared at all — but it means one client
+    // sending a partial document wipes everything else, with no trace of what
+    // was there. A frontend bug did exactly that during development.
+    //
+    // So the previous contents go to `<path>.bak` first: one level of undo,
+    // costing a file copy on a path that runs when a human clicks Save.
+    //
+    // Skipped when nothing changed, which matters more than it looks. Restart
+    // saves before it restarts, so repeated restarts would otherwise overwrite
+    // the backup with a copy of the current file and undo the point of having
+    // one.
+    if (existsSync(path)) {
+        if (readFileSync(path, "utf8") === next) return;
+        try {
+            copyFileSync(path, `${path}.bak`);
+        } catch {
+            // A backup that cannot be written must not stop the save — the
+            // user asked for the new value, not for the insurance.
+        }
+    }
+
+    writeFileSync(path, next, "utf8");
 }
 
 /**

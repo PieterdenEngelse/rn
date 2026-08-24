@@ -36,6 +36,33 @@ pub fn Sparkline(
     /// over more pixels — the same data, read against a taller y axis.
     #[props(default = false)]
     fill_height: bool,
+    /// Readings to pin beside the plot, each at the height of its own value.
+    ///
+    /// The alternative is a column of readings next to the plot, spaced evenly
+    /// — which only lines up with the curves by luck, because the column and
+    /// the plot are different heights and the values are not evenly spread.
+    /// Drawn inside the plot's own box, a label sits exactly where its line is,
+    /// and follows it when the value moves.
+    #[props(default = vec![])]
+    side_labels: Vec<SideLabel>,
+    /// Whether to print the peak in the legend row. A plot whose readings are
+    /// pinned beside it says it there instead, under the series the peak
+    /// belongs to — in the legend it named no series in particular.
+    #[props(default = true)]
+    show_peak: bool,
+    /// Whether to draw the legend row at all. A plot whose series are named
+    /// beside their own lines has nothing left to put in one, and the row is
+    /// pure height. The runtime-change note lives there too, so the row still
+    /// appears when there is one to show.
+    #[props(default = true)]
+    show_legend: bool,
+    /// A CSS length to shift the label gutter by, negative to lift it. The
+    /// labels are placed against the plot's scale, which is the right anchor
+    /// for where they point — but the block around each reading is taller than
+    /// the line it names, so a board may want the column sitting a little
+    /// higher than dead centre.
+    #[props(default = None)]
+    labels_shift: Option<String>,
 ) -> Element {
     let width = 240.0_f64;
     let h = height as f64;
@@ -111,7 +138,15 @@ pub fn Sparkline(
             // each engine — Chromium flexes it, Firefox falls back to its
             // intrinsic height — so the box takes the leftover and the plot
             // simply fills the box, which both agree on.
-            div { class: if fill_height { "relative flex-1 min-h-0" } else { "" },
+            // Plot and label gutter side by side, both stretched by the row, so
+            // the gutter is exactly as tall as the plot — which is what makes a
+            // percentage down the gutter mean the same thing as a percentage
+            // down the plot. Positioning the labels off the plot's right edge
+            // instead took them out of the flow: they claimed no width, the
+            // board shrank to fit what was left, and the labels were drawn over
+            // the board beside it.
+            div { class: if fill_height { "flex gap-4 flex-1 min-h-0" } else { "flex gap-4" },
+            div { class: if fill_height { "relative flex-1 min-h-0" } else { "relative flex-1" },
                 svg {
                     class: if fill_height { "absolute inset-0 w-full h-full" } else { "" },
                     width: "100%",
@@ -167,6 +202,16 @@ pub fn Sparkline(
                                 stroke: "{s.color}",
                                 stroke_width: "1.5",
                                 stroke_linejoin: "round",
+                                // The viewBox is 44 units tall however many
+                                // pixels the box turns out to be, and
+                                // `preserve_aspect_ratio: none` stretches it to
+                                // fit — so on a filling plot the stroke was
+                                // scaled with everything else and came out
+                                // several times thicker than the same 1.5 on a
+                                // fixed-height plot beside it. This keeps the
+                                // width in screen pixels, so every line on the
+                                // page is drawn the same weight.
+                                vector_effect: "non-scaling-stroke",
                             }
                         }
                     }
@@ -188,10 +233,32 @@ pub fn Sparkline(
                     }
                 }
             }
+            if !side_labels.is_empty() {
+                div {
+                    class: "relative w-44 shrink-0",
+                    style: match labels_shift.as_ref() {
+                        Some(shift) => format!("margin-top: {shift};"),
+                        None => String::new(),
+                    },
+                    // Placed against the same scale the polylines use, so a
+                    // label and the line it names cannot disagree. The
+                    // half-height shift centres the block on the line rather
+                    // than hanging it below.
+                    for l in side_labels.iter() {
+                        div {
+                            class: "absolute left-0 right-0 -translate-y-1/2",
+                            style: "top: {(1.0 - (l.value / scale)).clamp(0.0, 1.0) * 100.0:.2}%",
+                            {l.content.clone()}
+                        }
+                    }
+                }
+            }
+            }
 
+            if show_legend || runtime_change.is_some() {
             div { class: "flex items-center justify-between text-[10px] text-gray-400",
                 div { class: "flex items-center gap-3",
-                    for s in series.iter() {
+                    for s in series.iter().filter(|_| show_legend) {
                         div { class: "flex items-center gap-1",
                             span {
                                 class: "inline-block w-2 h-2 rounded-sm",
@@ -213,10 +280,22 @@ pub fn Sparkline(
                         }
                     }
                 }
-                span { "peak {format_num(peak)}{unit}" }
+                if show_peak {
+                    span { "peak {format_num(peak)}{unit}" }
+                }
+            }
             }
         }
     }
+}
+
+/// A reading drawn beside the plot at the height of `value`.
+#[derive(Clone, PartialEq)]
+pub struct SideLabel {
+    /// The figure this label names, in the same units as the series — its
+    /// position is computed from it.
+    pub value: f64,
+    pub content: Element,
 }
 
 #[derive(Clone, PartialEq)]
@@ -227,6 +306,12 @@ pub struct Series {
     /// took that sample does not measure this figure — and is drawn as a break
     /// in the line rather than as a zero.
     pub points: Vec<Option<f64>>,
+}
+
+/// The peak label's own formatting, so a caller printing the peak elsewhere
+/// prints the same number the legend would have.
+pub fn format_reading(v: f64) -> String {
+    format_num(v)
 }
 
 fn format_num(v: f64) -> String {

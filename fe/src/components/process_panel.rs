@@ -1,12 +1,19 @@
 use crate::api::{
-    copy_to_clipboard, fetch_status, restart_backend, stop_backend, wait_until_healthy,
+    fetch_status, restart_backend, save_settings, stop_backend, wait_until_healthy,
     StatusResponse,
 };
-use crate::components::param::{PARAM_BOARD_CLASS, PARAM_BOARD_TITLE_CLASS};
+use crate::clipboard::copy_to_clipboard;
+use crate::components::param::{unsaved_ids, PARAM_BOARD_BASE_CLASS, PARAM_BOARD_TITLE_CLASS};
 use dioxus::prelude::*;
+use std::collections::BTreeMap;
 
 /// The command that starts rn. Shown rather than run: see the note below.
-const START_COMMAND: &str = "./launcher/target/debug/rn";
+///
+/// Written from `~` rather than relative to the repo, because the terminal it
+/// is pasted into is not the one this page knows about — a relative path only
+/// works from a directory the reader has to guess. The shell expands the tilde
+/// itself, so it stays a single copyable line.
+const START_COMMAND: &str = "~/rn/launcher/target/debug/rn";
 
 /// Process control for the backend: what is running, and how to stop it.
 ///
@@ -27,13 +34,36 @@ const START_COMMAND: &str = "./launcher/target/debug/rn";
 /// confirmation prompt, and gives no way to report failure back to the page,
 /// which is a lot of machinery for something a copyable command solves.)
 #[component]
-pub fn ProcessPanel(reload: Signal<u32>) -> Element {
+pub fn ProcessPanel(
+    reload: Signal<u32>,
+    /// The page's edits, saved or not. Restart writes them before it restarts,
+    /// so what comes back up is what the page shows — see `do_restart`.
+    draft: Signal<BTreeMap<String, serde_json::Value>>,
+    /// What the backend has stored, to say which of the above are unsaved.
+    saved: serde_json::Value,
+    /// Whether the draft has been filled from the server yet. Saving replaces
+    /// the settings file wholesale — `be/src/settings.ts` writes the body, it
+    /// does not merge it — so writing a draft that has not been seeded deletes
+    /// every setting the page has not yet loaded. False means "do not write".
+    seeded: bool,
+) -> Element {
     let status = use_resource(fetch_status);
     let mut busy = use_signal(|| false);
     let mut message = use_signal(|| Option::<String>::None);
     let mut confirm_force = use_signal(|| false);
     let mut confirm_restart_force = use_signal(|| false);
+    let mut confirm_apply = use_signal(|| false);
     let mut copied = use_signal(|| false);
+
+    // Named in the confirmation below, so it has to be the same comparison the
+    // save itself would make. An unseeded draft is empty, which would read as
+    // "every stored setting has been cleared" — not an edit list, just the page
+    // not having loaded yet.
+    let edits = if seeded {
+        unsaved_ids(&draft(), &saved)
+    } else {
+        Vec::new()
+    };
 
     let supervised = match &*status.read_unchecked() {
         Some(Ok(s)) => s.supervised,
@@ -42,10 +72,58 @@ pub fn ProcessPanel(reload: Signal<u32>) -> Element {
 
     // Same semantics as the restart banner: wait for running work by default,
     // interrupt only on an explicit second click.
+    //
+    // The draft is written first, so a restart applies what the page shows
+    // rather than what was last saved. Two reasons it has to happen here and
+    // not be left to the reader:
+    //
+    // Restarting is how nearly every setting on this page takes effect, so
+    // "restart without applying my edits" is not a thing anyone wants — and the
+    // edits would not merely be ignored, they would be lost: the backend goes
+    // away, the page swings to its offline panel, `ParamBoards` unmounts, and
+    // the draft is re-seeded from the server when it mounts again.
+    //
+    // A failed save aborts the restart. Restarting anyway would discard the
+    // edits and give no sign of it.
     let do_restart = move |now: bool| {
         spawn(async move {
             busy.set(true);
             message.set(None);
+
+            if seeded {
+                let payload = serde_json::Value::Object(
+                    draft().into_iter().collect::<serde_json::Map<_, _>>(),
+                );
+                match save_settings(payload).await {
+                    Ok(r) if r.ok => {}
+                    Ok(r) => {
+                        message.set(Some(format!(
+                            "Not restarted — these values were rejected: {}",
+                            r.errors
+                                .iter()
+                                .map(|e| e.id.clone())
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                        )));
+                        busy.set(false);
+                        return;
+                    }
+                    Err(e) => {
+                        message.set(Some(format!("Not restarted — saving failed: {e}")));
+                        busy.set(false);
+                        return;
+                    }
+                }
+            } else {
+                // Restarting is safe; writing is not. Said out loud, because a
+                // restart that silently skipped the edits it promised to apply
+                // is the same surprise in the other direction.
+                message.set(Some(
+                    "Restarting without saving — this page has not loaded its settings yet."
+                        .to_string(),
+                ));
+            }
+
             match restart_backend(now).await {
                 Ok(o) if o.scheduled => {
                     let names: Vec<String> = o.running.iter().map(|j| j.name.clone()).collect();
@@ -75,132 +153,206 @@ pub fn ProcessPanel(reload: Signal<u32>) -> Element {
     };
 
     rsx! {
-        div { class: "{PARAM_BOARD_CLASS} shrink-0",
-            div { class: "flex items-center gap-2 mb-3",
-                span { class: PARAM_BOARD_TITLE_CLASS, "Restart" }
-            }
-            match &*status.read_unchecked() {
-                Some(Ok(s)) => rsx! { StatusRows { status: s.clone() } },
-                Some(Err(e)) => rsx! { p { class: "text-red-400", "Status unavailable: {e}" } },
-                None => rsx! { p { class: "text-gray-400", "Checking…" } },
-            }
-
-            div { class: "flex flex-wrap items-center gap-3 mt-3 pt-3 border-t border-gray-700",
-
-                // ── Restart ───────────────────────────────────────────
-                // Always available, unlike the banner's button which only
-                // appears when something is pending. Wanting to restart is not
-                // always a reaction to a settings change.
-                button {
-                    class: "btn btn-primary btn-sm",
-                    disabled: busy() || !supervised,
-                    title: if supervised {
-                        "Restart the backend (waits for running work)"
-                    } else {
-                        "Not supervised — nothing can restart it"
-                    },
-                    onclick: move |_| do_restart(false),
-                    "Restart"
+        // Takes the width the other two boards leave rather than the width its
+        // own text happens to need. It is the last board in the row, so a
+        // `w-fit` board here left the panel's remaining space as bare
+        // background — and on a narrow window the same board pushed past the
+        // panel edge instead. `flex-1` makes it absorb the difference either
+        // way, down to `min-w-64` — below that the status values break one
+        // character per line, so the row scrolls instead of squeezing further.
+        div { class: "{PARAM_BOARD_BASE_CLASS} flex-1 min-w-64 flex items-stretch gap-4",
+            div { class: "flex-1 min-w-0",
+                div { class: "flex items-center gap-2 mb-3",
+                    span { class: PARAM_BOARD_TITLE_CLASS, "Restart Backend" }
+                }
+                match &*status.read_unchecked() {
+                    Some(Ok(s)) => rsx! { StatusRows { status: s.clone() } },
+                    Some(Err(e)) => rsx! { p { class: "text-red-400", "Status unavailable: {e}" } },
+                    None => rsx! { p { class: "text-gray-400", "Checking…" } },
                 }
 
-                if confirm_restart_force() {
+                div { class: "flex flex-wrap items-center gap-3 mt-3",
+
+                    // ── Restart ───────────────────────────────────────────
+                    // Always available, unlike the banner's button which only
+                    // appears when something is pending. Wanting to restart is not
+                    // always a reaction to a settings change.
                     button {
-                        class: "text-xs cursor-pointer hover:underline bg-transparent border-0 p-0",
-                        style: "color: #22d3ee;",
-                        disabled: busy(),
-                        onclick: move |_| do_restart(true),
-                        "Restart now, interrupting it"
-                    }
-                }
-
-                // ── Stop ──────────────────────────────────────────────
-                button {
-                    class: "btn btn-sm",
-                    disabled: busy(),
-                    title: "Stop the backend and its launcher",
-                    onclick: move |_| {
-                        spawn(async move {
-                            busy.set(true);
-                            message.set(None);
-                            match stop_backend(false).await {
-                                Ok(o) if o.ok => {
-                                    message.set(Some("Stopped. Start it again from a terminal.".to_string()));
-                                    let mut reload = reload;
-                                    reload += 1;
-                                }
-                                Ok(o) => {
-                                    // 409: work in progress.
-                                    let names: Vec<String> =
-                                        o.running.iter().map(|j| j.name.clone()).collect();
+                        class: "btn btn-primary btn-sm",
+                        disabled: busy() || !supervised,
+                        title: if supervised {
+                            "Save any edits on this page, then restart (waits for running work)"
+                        } else {
+                            "Not supervised — nothing can restart it"
+                        },
+                        onclick: {
+                            let edits = edits.clone();
+                            move |_| {
+                                // Restart applies the page's edits, so an
+                                // unsaved one is named before it does — the
+                                // reader can see what is about to change, or go
+                                // and undo it first. With nothing unsaved there
+                                // is nothing to confirm, and the click restarts.
+                                if edits.is_empty() || confirm_apply() {
+                                    do_restart(false);
+                                } else {
                                     message.set(Some(format!(
-                                        "{} Running: {}",
-                                        o.message,
-                                        names.join(", "),
+                                        "{} unsaved {} will be applied: {}.",
+                                        edits.len(),
+                                        if edits.len() == 1 { "edit" } else { "edits" },
+                                        edits.join(", "),
                                     )));
-                                    confirm_force.set(true);
+                                    confirm_apply.set(true);
                                 }
-                                Err(e) => message.set(Some(e)),
                             }
-                            busy.set(false);
-                        });
-                    },
-                    "Stop"
-                }
+                        },
+                        "Restart"
+                    }
 
-                if confirm_force() {
+                    if confirm_apply() {
+                        button {
+                            class: "text-xs cursor-pointer hover:underline bg-transparent border-0 p-0",
+                            style: "color: #22d3ee;",
+                            disabled: busy(),
+                            onclick: move |_| {
+                                confirm_apply.set(false);
+                                do_restart(false);
+                            },
+                            "Apply and restart"
+                        }
+                    }
+
+                    if confirm_restart_force() {
+                        button {
+                            class: "text-xs cursor-pointer hover:underline bg-transparent border-0 p-0",
+                            style: "color: #22d3ee;",
+                            disabled: busy(),
+                            onclick: move |_| do_restart(true),
+                            "Restart now, interrupting it"
+                        }
+                    }
+
+                    // ── Stop ──────────────────────────────────────────────
                     button {
-                        class: "text-xs cursor-pointer hover:underline bg-transparent border-0 p-0",
-                        style: "color: #22d3ee;",
+                        class: "btn btn-sm",
                         disabled: busy(),
+                        title: "Stop the backend and its launcher",
                         onclick: move |_| {
                             spawn(async move {
                                 busy.set(true);
-                                match stop_backend(true).await {
-                                    Ok(_) => {
-                                        message.set(Some("Stopped, interrupting the running work.".to_string()));
-                                        confirm_force.set(false);
+                                message.set(None);
+                                match stop_backend(false).await {
+                                    Ok(o) if o.ok => {
+                                        message.set(Some("Stopped. Start it again from a terminal.".to_string()));
+                                        let mut reload = reload;
+                                        reload += 1;
+                                    }
+                                    Ok(o) => {
+                                        // 409: work in progress.
+                                        let names: Vec<String> =
+                                            o.running.iter().map(|j| j.name.clone()).collect();
+                                        message.set(Some(format!(
+                                            "{} Running: {}",
+                                            o.message,
+                                            names.join(", "),
+                                        )));
+                                        confirm_force.set(true);
                                     }
                                     Err(e) => message.set(Some(e)),
                                 }
                                 busy.set(false);
                             });
                         },
-                        "Stop anyway, interrupting it"
+                        "Stop"
                     }
-                }
 
-                // ── Refresh (the "status" command) ────────────────────
-                button {
-                    class: "text-xs cursor-pointer hover:underline bg-transparent border-0 p-0",
-                    style: "color: #22d3ee;",
-                    onclick: move |_| {
-                        let mut status = status;
-                        status.restart();
-                        message.set(None);
-                    },
-                    "Refresh status"
-                }
-            }
+                    if confirm_force() {
+                        button {
+                            class: "text-xs cursor-pointer hover:underline bg-transparent border-0 p-0",
+                            style: "color: #22d3ee;",
+                            disabled: busy(),
+                            onclick: move |_| {
+                                spawn(async move {
+                                    busy.set(true);
+                                    match stop_backend(true).await {
+                                        Ok(_) => {
+                                            message.set(Some("Stopped, interrupting the running work.".to_string()));
+                                            confirm_force.set(false);
+                                        }
+                                        Err(e) => message.set(Some(e)),
+                                    }
+                                    busy.set(false);
+                                });
+                            },
+                            "Stop anyway, interrupting it"
+                        }
+                    }
 
-            if let Some(msg) = message() {
-                p { class: "text-gray-300 mt-2", "{msg}" }
-            }
-
-            // ── Start ─────────────────────────────────────────────────
-            div { class: "mt-3 pt-3 border-t border-gray-700",
-                p { class: "text-gray-400",
-                    "To start rn, run this in a terminal. Restart above works by asking the running backend to exit so its launcher replaces it — but once nothing is running, there is nobody left to ask, so the first start has to come from outside the page:"
-                }
-                div { class: "flex items-center gap-2 mt-1",
-                    code { class: "text-gray-200 bg-gray-900 rounded px-2 py-1", "{START_COMMAND}" }
+                    // ── Refresh (the "status" command) ────────────────────
                     button {
                         class: "text-xs cursor-pointer hover:underline bg-transparent border-0 p-0",
                         style: "color: #22d3ee;",
                         onclick: move |_| {
-                            copy_to_clipboard(START_COMMAND);
-                            copied.set(true);
+                            let mut status = status;
+                            status.restart();
+                            message.set(None);
                         },
-                        if copied() { "Copied" } else { "Copy" }
+                        "Refresh status"
+                    }
+                }
+
+                if let Some(msg) = message() {
+                    p { class: "text-gray-300 mt-2", "{msg}" }
+                }
+            }
+
+            // ── Start ─────────────────────────────────────────────────
+            // Beside the status rows rather than stacked under them: the board
+            // fills the width the other two boards leave, so this is room that
+            // already existed. It is the one case
+            // the buttons cannot cover — nothing on this page can start a
+            // backend that is not running to answer the request, so the
+            // command is shown to be copied rather than offered as a button.
+            div { class: "shrink-0 flex flex-col",
+                // Both halves stretch, so both headings start at the top of the
+                // board and sit level. The centring below is done inside this
+                // half — by `flex-1 justify-center` on the block under the
+                // heading — rather than by centring the half itself, which
+                // would take its heading down with it.
+                div { class: "flex items-baseline gap-1 mb-3",
+                    span { class: PARAM_BOARD_TITLE_CLASS, "Status:" }
+                    // Up or Down from the same fetch the rows below are drawn
+                    // from, so the word cannot disagree with them: a status
+                    // that arrived is a backend that answered. Green and red
+                    // match the header light — green #22c55e, red #ef4444 —
+                    // and "Checking" holds the space until the first reply
+                    // rather than guessing Down and correcting itself.
+                    match &*status.read_unchecked() {
+                        Some(Ok(_)) => rsx! {
+                            span { class: "text-sm font-semibold", style: "color: #22c55e;", "Up" }
+                        },
+                        Some(Err(_)) => rsx! {
+                            span { class: "text-sm font-semibold", style: "color: #ef4444;", "Down" }
+                        },
+                        None => rsx! { span { class: "text-sm text-gray-400", "Checking…" } },
+                    }
+                }
+                div { class: "flex-1 flex flex-col items-end justify-center gap-1",
+                    span { class: "text-gray-400", "When backend down start from terminal" }
+                    // Copy under the command rather than beside it, centred on the
+                    // command's own width — the block is right-aligned, so a Copy
+                    // on the end of the line would read as the end of the command.
+                    div { class: "flex flex-col items-center gap-1",
+                        code { class: "text-gray-200 bg-gray-900 rounded px-2 py-1", "{START_COMMAND}" }
+                        button {
+                            class: "text-xs cursor-pointer hover:underline bg-transparent border-0 p-0",
+                            style: "color: #22d3ee;",
+                            onclick: move |_| {
+                                copy_to_clipboard(START_COMMAND);
+                                copied.set(true);
+                            },
+                            if copied() { "Copied" } else { "Copy" }
+                        }
                     }
                 }
             }

@@ -97,6 +97,12 @@ export interface NodeMetrics {
         arrayBuffersMB: number;
         largestSpace: { name: string; usedMB: number };
         /**
+         * The ceiling old space may grow to, MB — the number V8 will not tell
+         * you. See oldSpaceMaxMB() for how it is arrived at, and why
+         * space_available_size is not it.
+         */
+        oldSpaceMaxMB: number;
+        /**
          * Every space holding anything, largest first. Empty under a runtime
          * that has no spaces to report — see unsupported.
          */
@@ -399,6 +405,32 @@ function runqueueWait(elapsedMs: number): number {
     return Number(((deltaMs / elapsedMs) * 1000).toFixed(1));
 }
 
+/**
+ * What old space may grow to, MB.
+ *
+ * V8 reports no per-space ceiling. getHeapSpaceStatistics offers
+ * space_available_size, and it is the wrong number to reach for: it is the
+ * headroom inside what the space has already committed, not inside what it may
+ * grow to — old space can report a fifth of a megabyte available with two
+ * gigabytes of ceiling left.
+ *
+ * So: when --max-old-space-size is set, that flag *is* the answer, and the
+ * launcher passes it through NODE_OPTIONS. Unset, it is derived from the one
+ * ceiling V8 does report. Measured on this runtime, the heap limit runs 192 MB
+ * above the old-space ceiling — 2240 against a default 2048, and 704 when the
+ * flag is set to 512 — that margin being V8's allowance for the other spaces.
+ * The derivation is approximate, and the panel beside it says so.
+ */
+function oldSpaceMaxMB(heapSizeLimit: number): number {
+    const flagged = /--max-old-space-size[= ](\d+)/.exec(
+        `${process.env.NODE_OPTIONS ?? ""} ${process.execArgv.join(" ")}`,
+    );
+    if (flagged) return Number(flagged[1]);
+
+    const OTHER_SPACES_MB = 192;
+    return Math.max(0, Math.round(heapSizeLimit / MB) - OTHER_SPACES_MB);
+}
+
 export function collect(): NodeMetrics {
     const mem = process.memoryUsage();
     const ru = process.resourceUsage();
@@ -461,6 +493,7 @@ export function collect(): NodeMetrics {
                 name: biggest.space_name,
                 usedMB: round(biggest.space_used_size / MB),
             },
+            oldSpaceMaxMB: oldSpaceMaxMB(heap.heap_size_limit),
         },
         eventLoop: {
             meanMs: delayMs(loopDelay.mean),

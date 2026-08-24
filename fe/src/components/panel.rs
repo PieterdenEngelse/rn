@@ -25,10 +25,15 @@ pub fn Panel(
 ) -> Element {
     rsx! {
         div { class: "bg-gray-800 border border-gray-700 rounded-lg p-4 shadow {class}",
-            if let Some(title) = title {
+            // Drawn for a panel with no title too, when it still has controls or
+            // an explanation to put on that line — dropping the heading must not
+            // take a Pause button and an uptime with it.
+            if title.is_some() || subtitle.is_some() || info.is_some() || actions.is_some() {
                 div { class: "flex items-center justify-between mb-3",
                     div { class: "flex items-center gap-3 {header_class}",
-                        h3 { class: "text-sm font-semibold text-gray-200", "{title}" }
+                        if let Some(title) = title {
+                            h3 { class: "text-sm font-semibold text-gray-200", "{title}" }
+                        }
                         if let Some(subtitle) = subtitle {
                             span { class: "text-[10px] text-gray-400", "{subtitle}" }
                         }
