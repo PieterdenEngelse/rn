@@ -5,8 +5,8 @@
 //! `web-sys`, neither of which belongs anywhere near a shared type crate.
 
 use super::wire::{
-    JobsResponse, NodeHistory, NodeMetrics, ParamsResponse, RestartOutcome, SaveResponse,
-    StatusResponse, StopOutcome,
+    JobRunResult, JobsResponse, NodeHistory, NodeMetrics, ParamsResponse, RestartOutcome,
+    SaveResponse, StatusResponse, StopOutcome,
 };
 
 /// Base URL of the backend API. In development the frontend is served by
@@ -187,4 +187,28 @@ pub async fn fetch_node_history() -> Result<NodeHistory, String> {
         .await
         .map_err(|e| format!("{e}"))?;
     resp.json::<NodeHistory>().await.map_err(|e| format!("{e}"))
+}
+
+/// Run one job now.
+///
+/// The backend answers 404 for an unknown id and 500 when the job threw; both
+/// carry a `message` explaining which, because "the run failed" and "there is
+/// no such job" send the reader to different places.
+pub async fn run_job(id: &str) -> Result<JobRunResult, String> {
+    let resp = gloo_net::http::Request::post(&format!("{API_BASE}/api/jobs/{id}"))
+        .send()
+        .await
+        .map_err(|e| format!("{e}"))?;
+
+    if resp.ok() {
+        return resp.json::<JobRunResult>().await.map_err(|e| format!("{e}"));
+    }
+    match resp.json::<serde_json::Value>().await {
+        Ok(v) => Err(v
+            .get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("the run failed")
+            .to_string()),
+        Err(_) => Err(format!("the run failed ({})", resp.status())),
+    }
 }

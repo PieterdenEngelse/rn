@@ -4,6 +4,8 @@
  * GET  /api/health    liveness
  * GET  /api/params    the parameter registry + live values + saved settings
  * PUT  /api/settings  save settings (validated); reports what needs a restart
+ * GET  /api/jobs      what is running, the catalogue, and what is scheduled
+ * POST /api/jobs/:id  run one job now
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -28,7 +30,8 @@ import { display as displayPath } from "./paths.ts";
  */
 const EXIT_RESTART = 75;
 import { step } from "./log.ts";
-import * as jobs from "./jobs.ts";
+import * as running from "./running.ts";
+import { JOBS, jobById, runJob, scheduler } from "./jobs/index.ts";
 import { collect as collectNodeMetrics, lifetimeDelay } from "./node_metrics.ts";
 import { withDistribution } from "./node_history.ts";
 
@@ -71,7 +74,9 @@ function doRestart(): void {
 }
 
 export function createApp() {
-    return createServer((req, res) => {
+    // Async because a job runs inside the request. Every other route is
+    // synchronous and unaffected; the one awaiting handler is the POST below.
+    return createServer(async (req, res) => {
         const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
         const started = Date.now();
 
@@ -89,7 +94,7 @@ export function createApp() {
             origin && config.corsOrigins.includes(origin) ? origin : config.corsOrigins[0]!,
         );
         res.setHeader("vary", "origin");
-        res.setHeader("access-control-allow-methods", "GET, PUT, OPTIONS");
+        res.setHeader("access-control-allow-methods", "GET, POST, PUT, OPTIONS");
         res.setHeader("access-control-allow-headers", "content-type");
 
         const done = (code: number): void => {
@@ -140,7 +145,7 @@ export function createApp() {
                 execPath: displayPath(process.execPath),
                 settingsPath: displayPath(config.settingsPath),
                 url: `http://${config.host}:${config.port}`,
-                jobs: jobs.count(),
+                jobs: running.count(),
                 restartPending: restartWhenIdle,
                 // Lets the header light go amber without a second request.
                 pendingCount: pendingRestart(load(config.settingsPath)).length,
@@ -149,7 +154,7 @@ export function createApp() {
         }
 
         if (url.pathname === "/api/stop" && req.method === "POST") {
-            const runningJobs = jobs.list();
+            const runningJobs = running.list();
             const force = url.searchParams.get("force") === "1";
             if (runningJobs.length > 0 && !force) {
                 send(res, 409, {
@@ -171,8 +176,47 @@ export function createApp() {
         }
 
         if (url.pathname === "/api/jobs" && req.method === "GET") {
-            send(res, 200, { running: jobs.list(), restartPending: restartWhenIdle });
+            send(res, 200, {
+                running: running.list(),
+                restartPending: restartWhenIdle,
+                // The catalogue, so the Jobs page can list what exists rather
+                // than only what happens to be running at the moment it loads.
+                // Carries each job's info-panel prose; see be/src/jobs/types.ts.
+                catalogue: JOBS.map((j) => ({ id: j.id, label: j.label, info: j.info })),
+                dryRun: config.dryRun,
+                // What fires on its own, and when next. Shown on the Jobs page
+                // because a schedule nobody can see is indistinguishable from
+                // no schedule at all — and this one deliberately does not
+                // catch up on missed slots, which is only defensible if the
+                // next slot is visible.
+                scheduled: scheduler.status(),
+            });
             return done(200);
+        }
+
+        // Run one job now. The only trigger that exists today — a scheduler is
+        // the next front door onto the same runner, not a second runner. See
+        // docs/jobs.md §3.
+        if (url.pathname.startsWith("/api/jobs/") && req.method === "POST") {
+            const id = decodeURIComponent(url.pathname.slice("/api/jobs/".length));
+            const job = jobById(id);
+            if (!job) {
+                send(res, 404, { message: `No job with id "${id}".` });
+                return done(404);
+            }
+            try {
+                const result = await runJob(job);
+                send(res, 200, { id: job.id, ...result });
+                return done(200);
+            } catch (err) {
+                // runJob has already logged this with a duration. The client
+                // gets the message so a panel can show why rather than "500".
+                send(res, 500, {
+                    id: job.id,
+                    message: err instanceof Error ? err.message : String(err),
+                });
+                return done(500);
+            }
         }
 
         if (url.pathname === "/api/restart" && req.method === "POST") {
@@ -191,12 +235,12 @@ export function createApp() {
             // Aborting a long automation to apply a setting is the failure
             // mode this guards against.
             const when = url.searchParams.get("when") === "now" ? "now" : "idle";
-            const runningJobs = jobs.list();
+            const runningJobs = running.list();
 
             if (when === "idle" && runningJobs.length > 0) {
                 if (!restartWhenIdle) {
                     restartWhenIdle = true;
-                    jobs.whenIdle(() => {
+                    running.whenIdle(() => {
                         step("restart-when-idle-fired", {});
                         doRestart();
                     });
@@ -263,7 +307,9 @@ function installSignalHandlers(srv: ReturnType<typeof createApp>): void {
         process.on(signal, () => {
             if (stopping) return;
             stopping = true;
-            step("stopping", { signal, running: jobs.count() });
+            step("stopping", { signal, running: running.count() });
+            // Stop firing new work the moment we know we are going down.
+            scheduler.stop();
             // Stop accepting connections, then exit 0 so the launcher knows
             // this was intentional and does not restart us.
             srv.close(() => process.exit(0));
@@ -275,7 +321,10 @@ function installSignalHandlers(srv: ReturnType<typeof createApp>): void {
 
 const server = createApp();
 installSignalHandlers(server);
+// The second front door onto runJob. Started after listen so a slow boot
+// cannot fire a job before the API can report that it is running.
 server.listen(config.port, config.host, () => {
+    scheduler.start();
     step("listening", {
         url: `http://${config.host}:${config.port}`,
         node: process.version,

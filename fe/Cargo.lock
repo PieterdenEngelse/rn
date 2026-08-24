@@ -1070,6 +1070,7 @@ dependencies = [
  "dioxus-router",
  "gloo-net",
  "gloo-timers",
+ "js-sys",
  "manganis",
  "serde",
  "serde_json",

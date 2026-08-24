@@ -116,11 +116,70 @@ pub struct RunningJob {
     pub started_at: f64,
 }
 
+/// Prose for a job's info panel.
+///
+/// Deliberately the same shape as [`ParamInfo`] — the backend mirrors it in
+/// `be/src/jobs/types.ts` so one `InfoButton` renders both. Kept as its own
+/// type rather than aliased so the two can diverge without a rename.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct JobInfo {
+    pub what: String,
+    pub why: String,
+    #[serde(rename = "ifWrong")]
+    pub if_wrong: String,
+}
+
+/// One job that exists, whether or not it is running.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct CatalogueJob {
+    pub id: String,
+    pub label: String,
+    pub info: JobInfo,
+}
+
+/// One scheduled job and when it next fires.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct ScheduledJob {
+    pub id: String,
+    /// Already in human form — "daily at 03:00". The backend renders it so the
+    /// two ends cannot disagree about what a schedule means.
+    pub schedule: String,
+    /// Epoch ms. The scheduler does not catch up on slots missed while rn was
+    /// down, so this is the only place a skipped run becomes visible.
+    #[serde(rename = "nextRunAt")]
+    pub next_run_at: f64,
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct JobsResponse {
     pub running: Vec<RunningJob>,
     #[serde(default, rename = "restartPending")]
     pub restart_pending: bool,
+    /// Every job that exists. Empty against a backend too old to send it.
+    #[serde(default)]
+    pub catalogue: Vec<CatalogueJob>,
+    /// Whether the backend is disarmed. Drives the banner on the Jobs page:
+    /// a run that changes nothing is the expected outcome while this is true,
+    /// and saying so beats letting the user read "skipped" as a failure.
+    #[serde(default, rename = "dryRun")]
+    pub dry_run: bool,
+    /// What fires on its own. Empty against a backend without a scheduler.
+    #[serde(default)]
+    pub scheduled: Vec<ScheduledJob>,
+}
+
+/// What one run reported. Mirrors JobResult in be/src/jobs/types.ts.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct JobRunResult {
+    pub id: String,
+    /// Counts, sizes and paths — numbers or strings, so the value stays
+    /// `serde_json::Value` rather than forcing every job into one shape.
+    #[serde(default)]
+    pub summary: std::collections::BTreeMap<String, serde_json::Value>,
+    pub changed: bool,
+    /// Why nothing happened, when nothing did.
+    #[serde(default)]
+    pub skipped: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]

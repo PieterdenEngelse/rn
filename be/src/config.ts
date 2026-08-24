@@ -39,6 +39,20 @@ export const config = {
         `${process.env.HOME ?? "."}/.config/rn/history.json`,
 
     /**
+     * Where V8 drops its profiling artifacts, and how long they are kept.
+     *
+     * `--cpu-prof`, `--heap-prof` and `--prof` write into the *current working
+     * directory* — not a temp dir, not anywhere configurable — so the default
+     * is cwd because that is where they provably land. A few runs of the
+     * profiler leave a couple of megabytes behind, and nothing removes them.
+     *
+     * Seven days keeps the artifacts from a session you are still thinking
+     * about and clears the ones you have forgotten. See jobs/prune-profiles.ts.
+     */
+    profileDir: process.env.RN_PROFILE_DIR ?? process.cwd(),
+    profileMaxAgeDays: Number(process.env.RN_PROFILE_MAX_AGE_DAYS ?? 7),
+
+    /**
      * Dev only: the origins the dx dev server may be reached at. Unused in a
      * packaged install, where the launcher serves both halves from one origin.
      *
