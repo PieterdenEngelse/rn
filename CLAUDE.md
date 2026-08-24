@@ -172,7 +172,17 @@ cd fe && cargo check
 cargo check --workspace
 cargo test --workspace
 cargo clippy --workspace --all-targets
+
+# Everything, Rust and Node together — run this before committing
+./scripts/check.sh                    # Windows: .\scripts\check.ps1
 ```
+
+**Run `./scripts/check.sh` rather than a subset.** The Rust crates and the Node
+backend have separate runners, and a subset passing tells you nothing about the
+half you did not run — that is not hypothetical, it is how the launcher's suite
+went unchecked for a whole session while `cargo test` in `fe/` reported green.
+The script runs `cargo test --workspace`, `cargo clippy --workspace`, `npm test`
+and `npm run typecheck`, names any step that fails, and exits non-zero.
 
 **The Rust crates are a Cargo workspace.** `fe`, `launcher` and `shared` share
 one `Cargo.lock` and one `target/` at the repo root, not per-crate ones. That
