@@ -221,7 +221,11 @@ export interface Bucket {
      * lie than claiming the whole bucket belongs to the runtime that happened
      * to open it.
      */
-    rt?: string;
+    // `| undefined` explicitly: with exactOptionalPropertyTypes this field is
+    // assigned a possibly-undefined value, and since JSON.stringify drops
+    // undefined keys, absent and present-but-undefined are the same on the
+    // wire. Saying so beats contorting the assignment.
+    rt?: string | undefined;
 }
 
 const tierData = new Map<string, Bucket[]>(TIERS.map((t) => [t.id, []]));
@@ -361,7 +365,11 @@ export interface Sample {
      * see RUNTIME above for why the same field means different things under
      * different runtimes.
      */
-    rt?: string;
+    // `| undefined` explicitly: with exactOptionalPropertyTypes this field is
+    // assigned a possibly-undefined value, and since JSON.stringify drops
+    // undefined keys, absent and present-but-undefined are the same on the
+    // wire. Saying so beats contorting the assignment.
+    rt?: string | undefined;
 }
 
 /**

@@ -174,8 +174,10 @@ export interface NodeMetrics {
      * objects rather than spaces, and Deno is the only one with permissions to
      * report at all.
      */
-    bun?: BunMetrics;
-    deno?: DenoMetrics;
+    // See the note on Sample.rt in node_history.ts: optional on the wire, and
+    // assigned a possibly-undefined value at the one place it is built.
+    bun?: BunMetrics | undefined;
+    deno?: DenoMetrics | undefined;
 }
 
 export interface BunMetrics {

@@ -4,6 +4,15 @@
     "module": "nodenext",
     "moduleResolution": "nodenext",
     "strict": true,
+    // Not implied by "strict", and both close holes that reach runtime.
+    // noUncheckedIndexedAccess: xs[99] types as the element type but is
+    // undefined at runtime — the classic "undefined surprise" in an
+    // automation that indexes a parsed payload.
+    "noUncheckedIndexedAccess": true,
+    // exactOptionalPropertyTypes: without it, `skipped?: string` accepts an
+    // explicit `undefined`, so "absent" and "present but undefined" become the
+    // same thing — which matters when the value is serialised to JSON.
+    "exactOptionalPropertyTypes": true,
     "noEmit": true,
     "erasableSyntaxOnly": true,
     "verbatimModuleSyntax": true,
