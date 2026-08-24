@@ -1,0 +1,13 @@
+# Workspace root.
+#
+# Exists for one reason: `shared` is depended on by more than one crate, and
+# separate lockfiles let each resolve a shared dependency independently. `fe`
+# and `shared` both pull serde, and nothing would have reported them landing on
+# different versions — which is exactly the drift the shared crate was created
+# to remove, reappearing one level down.
+#
+# One lock, one target directory, and `cargo test` / `cargo clippy` from the
+# root cover every crate rather than needing a cd into each.
+[workspace]
+resolver = "2"
+members = ["fe", "launcher", "shared"]

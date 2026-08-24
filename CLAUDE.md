@@ -166,7 +166,23 @@ cd fe && ./serve.sh
 
 # Frontend compile check
 cd fe && cargo check
+
+# Everything Rust, from the repo root — fe, launcher and shared are one
+# workspace, so these cover all three
+cargo check --workspace
+cargo test --workspace
+cargo clippy --workspace --all-targets
 ```
+
+**The Rust crates are a Cargo workspace.** `fe`, `launcher` and `shared` share
+one `Cargo.lock` and one `target/` at the repo root, not per-crate ones. That
+exists because `shared` is depended on from more than one place, and separate
+lockfiles let each crate resolve a common dependency independently — nothing
+would have reported them drifting, which is the failure `shared/` was created
+to remove, one level down. Two consequences worth knowing: build output is
+`target/`, not `fe/target/` or `launcher/target/`, and `launcher/clippy.toml`
+is still honoured from the root — checked, the `Command::new` ban fires either
+way.
 
 `dx` has no config key for the dev-server port — it defaults to `:8080` and the
 port comes only from the `--port` flag, which `fe/serve.sh` supplies. Running
@@ -333,7 +349,7 @@ because the data looked right.
 timestamp.** Pick a string unique to the change and grep the built wasm:
 
     grep -qa 'items-stretch flex-1 min-h-0' \
-      fe/target/wasm32-unknown-unknown/wasm-dev/fe.wasm
+      target/wasm32-unknown-unknown/wasm-dev/fe.wasm
 
 The mtime answers a different question and answers it misleadingly. The dev
 server here rebuilds intermittently — a change can sit unbuilt for ten minutes
@@ -372,5 +388,5 @@ process took it.
   process holding a port is often not the one you started.
 
 The backend on **:3010** is different: it is launcher-supervised, and
-`./launcher/target/debug/rn` with `--stop` and `--status` is the way to manage
+`./target/debug/rn` with `--stop` and `--status` is the way to manage
 it. Restarting it to pick up a registry change is normal and expected.

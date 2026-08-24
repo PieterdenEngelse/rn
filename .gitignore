@@ -14,3 +14,9 @@ scr-*.png
 # LibreOffice writes these beside an open document and removes them on close.
 # One was committed by accident, which is what it takes to notice them.
 .~lock.*#
+
+# Cargo, now that the workspace root owns the build directory. The per-crate
+# .gitignore files still carry their own /target for anyone building a crate
+# outside the workspace.
+/target
+/Cargo.lock.bak
