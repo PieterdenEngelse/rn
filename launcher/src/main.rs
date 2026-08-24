@@ -48,8 +48,38 @@ fn run() -> Result<(), String> {
     }
 
     if args.iter().any(|a| a == "--status") {
-        match pidfile::running_pid() {
-            Some(pid) => println!("rn: running (pid {pid})"),
+        match pidfile::running() {
+            Some(rec) => {
+                print!("rn: running (pid {})", rec.pid);
+                if rec.started_at > 0 {
+                    print!(", up {}", format_uptime(rec.started_at));
+                }
+                // Two different reasons the question cannot be answered, and
+                // they send the reader to different places: a pidfile written
+                // before provenance existed, versus a platform that will never
+                // report it. Saying "this platform" for the first would be a
+                // lie that survives until the next restart.
+                if rec.parent_pid == 0 {
+                    println!(
+                        " (started before rn recorded provenance — restart it and \
+                         `--status` will say who started it)"
+                    );
+                    return Ok(());
+                }
+                match pidfile::is_orphaned(&rec) {
+                    // The case this exists for: whatever started rn has since
+                    // exited, so nobody at the keyboard now has any reason to
+                    // know this is running — and it will keep supervising the
+                    // backend until someone stops it by name.
+                    Some(true) => println!(
+                        ", ORPHANED — the process that started it (pid {}) is gone. \
+                         Stop it with `rn --stop` if you did not expect it.",
+                        rec.parent_pid
+                    ),
+                    Some(false) => println!(", started by pid {}", rec.parent_pid),
+                    None => println!(" (cannot tell what started it on this platform)"),
+                }
+            }
             None => println!("rn: not running"),
         }
         return Ok(());
@@ -79,6 +109,15 @@ fn run() -> Result<(), String> {
     shutdown::install()?;
     pidfile::write_own()?;
 
+    // Provenance in the log as well as the pidfile: the log is what survives in
+    // a task output file or a journal, and "who started this" is the question
+    // asked long after the fact.
+    println!(
+        "rn: pid {} started by pid {}",
+        std::process::id(),
+        pidfile::live_parent_of(std::process::id() as i32).unwrap_or(0),
+    );
+
     let result = supervise(&layout, &params);
     pidfile::remove();
     result
@@ -90,7 +129,7 @@ fn print_help() {
 
 Usage: rn [options]
 
-  --status      is rn running?
+  --status      is rn running? Reports uptime and what started it.
   --stop        stop a running rn (and its Node process)
   --print-env   show the environment the Node process would get, and exit
   -h, --help    this text
@@ -328,5 +367,22 @@ fn supervise(layout: &Layout, params: &[settings::RuntimeParam]) -> Result<(), S
                 std::thread::sleep(Duration::from_millis(500));
             }
         }
+    }
+}
+
+/// "21h 34m", from an epoch-millisecond start time.
+fn format_uptime(started_at_ms: u128) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let secs = now.saturating_sub(started_at_ms) / 1000;
+    let (d, h, m) = (secs / 86_400, (secs % 86_400) / 3600, (secs % 3600) / 60);
+    if d > 0 {
+        format!("{d}d {h}h")
+    } else if h > 0 {
+        format!("{h}h {m}m")
+    } else {
+        format!("{m}m")
     }
 }

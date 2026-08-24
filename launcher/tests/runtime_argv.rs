@@ -99,3 +99,69 @@ fn bind_address_reads_the_env_file() {
     std::fs::remove_dir_all(&dir).ok();
     assert_eq!((host.as_str(), port), ("0.0.0.0", 9999));
 }
+
+// ---- pidfile provenance -------------------------------------------------
+
+/// The record is what makes an orphaned launcher visible. A bare pid cannot
+/// answer "who started this, and are they still there?", which is the question
+/// that matters when you find rn running and did not start it yourself.
+#[test]
+fn a_bare_pid_file_is_still_read() {
+    // Written by a version before provenance existed. Reading it as "stopped"
+    // would let a second copy start and crash-loop on the bound port.
+    let dir = std::env::temp_dir().join(format!("rn-pidfile-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("bare.pid");
+    std::fs::write(&file, format!("{}", std::process::id())).unwrap();
+
+    std::env::set_var("RN_PID_FILE", &file);
+    let rec = rn::pidfile::running().expect("a live bare pid must still read as running");
+    assert_eq!(rec.pid, std::process::id() as i32);
+    assert_eq!(rec.started_at, 0, "an old file has no start time to report");
+    std::env::remove_var("RN_PID_FILE");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_written_record_round_trips_with_its_provenance() {
+    let dir = std::env::temp_dir().join(format!("rn-pidfile-rt-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("rn.pid");
+
+    std::env::set_var("RN_PID_FILE", &file);
+    rn::pidfile::write_own().unwrap();
+    let rec = rn::pidfile::running().expect("just written, so alive");
+
+    assert_eq!(rec.pid, std::process::id() as i32);
+    assert!(rec.started_at > 0, "a start time is recorded");
+    // Not orphaned: this test process's parent is still whatever ran it.
+    assert_eq!(rn::pidfile::is_orphaned(&rec), Some(false));
+
+    std::env::remove_var("RN_PID_FILE");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_record_whose_parent_has_changed_reads_as_orphaned() {
+    // The 21-hour case, simulated: the recorded parent is not the live one.
+    let rec = rn::pidfile::Record {
+        pid: std::process::id() as i32,
+        started_at: 1,
+        parent_pid: -1, // cannot be a real ppid
+    };
+    assert_eq!(rn::pidfile::is_orphaned(&rec), Some(true));
+}
+
+#[test]
+fn a_legacy_record_is_unknown_rather_than_orphaned() {
+    // A pidfile written before provenance existed records no parent. Saying
+    // "orphaned" on the strength of a missing field would fire on every
+    // healthy launcher for one upgrade, and a warning that cries wolf once is
+    // a warning nobody reads again.
+    let rec = rn::pidfile::Record {
+        pid: std::process::id() as i32,
+        started_at: 0,
+        parent_pid: 0,
+    };
+    assert_eq!(rn::pidfile::is_orphaned(&rec), None);
+}

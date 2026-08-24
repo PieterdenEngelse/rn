@@ -404,3 +404,16 @@ process took it.
 The backend on **:3010** is different: it is launcher-supervised, and
 `./target/debug/rn` with `--stop` and `--status` is the way to manage
 it. Restarting it to pick up a registry change is normal and expected.
+
+**But it can still be orphaned, and has been.** The launcher runs in the
+foreground — it does not daemonize — so a session that starts it in the
+background leaves it running after that session ends. One survived 21 hours
+that way, supervising the backend while invisible to everyone: no tty, a parent
+that had exited, and `--status` reporting only `running (pid 40776)`. Note that
+`POST /api/restart` does not help, because it cycles the *Node child* and leaves
+the launcher itself untouched.
+
+`--status` now reports uptime and what started it, and says `ORPHANED` when that
+parent is gone. Check it before assuming a backend on :3010 is one you or the
+user started, and prefer a tracked background task over a bare detached start,
+so it shows up in the user's own tooling rather than only in yours.
