@@ -137,9 +137,13 @@ The button sits inline next to the thing it explains, carries a `title` for the
 hover case, and toggles a signal that renders the panel (`bg-gray-800`, rounded,
 `border border-gray-600`, generous padding).
 
-Setup docs live in `docs/`. Start with `docs/setup-js.md` — the Node driver in
-`be/` and the reasoning behind each setting. `docs/packaging.md` covers shipping
-this as an installable app. `docs/node-parameters.md` is generated — see below.
+Docs live in `docs/`. Start with `docs/setup-js.md` — the Node driver in `be/`
+and the reasoning behind each setting. `docs/jobs.md` is the one to read before
+adding an automation: what the categories of work are, how a job gets triggered,
+and why there is one runner with several front doors rather than several
+runners. `docs/n8n.md` lists what is worth borrowing from n8n and what is not,
+with the steps for each. `docs/packaging.md` covers shipping this as an
+installable app. `docs/node-parameters.md` is generated — see below.
 
 ## Build, Test, and Development Commands
 
