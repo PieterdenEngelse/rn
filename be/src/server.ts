@@ -25,7 +25,7 @@ import {
     needsRestart,
     type Settings,
 } from "./settings.ts";
-import { config } from "./config.ts";
+import { config, remoteBindRefusal } from "./config.ts";
 import * as secrets from "./secrets.ts";
 import { display as displayPath } from "./paths.ts";
 
@@ -574,6 +574,15 @@ function installSignalHandlers(srv: ReturnType<typeof createApp>): void {
             setTimeout(() => process.exit(0), 3000).unref();
         });
     }
+}
+
+// Fail closed before a socket exists, not after. A refusal that arrives once
+// the port is already open has already published what it was refusing.
+const refusal = remoteBindRefusal(config.host, process.env["RN_ALLOW_REMOTE"]);
+if (refusal !== null) {
+    step("bind-refused", { host: config.host, port: config.port });
+    console.error(refusal);
+    process.exit(1);
 }
 
 const server = createApp();

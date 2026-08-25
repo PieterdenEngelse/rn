@@ -143,11 +143,11 @@ adding an automation: what the categories of work are, how a job gets triggered,
 and why there is one runner with several front doors rather than several
 runners. `docs/n8n.md` lists what is worth borrowing from n8n and what is not,
 with the steps for each. `docs/sec.md` covers credentials — where they live, what
-redaction covers, and what none of it protects against. `docs/sec.md` is the one to read before making rn
-reachable from another machine — the API has no authentication, so the bind
-address is the whole security position, and that document is the ordered list
-of safer answers. `docs/packaging.md` covers shipping this as an
-installable app. `docs/node-parameters.md` is generated — see below.
+redaction covers, and what none of it protects against. `docs/network.md` is the
+one to read before making rn reachable from another machine: the API has no
+authentication, so the bind address is the whole of that security position, and
+the document is the ordered list of safer answers. `docs/packaging.md` covers
+shipping this as an installable app. `docs/node-parameters.md` is generated — see below.
 
 ## Build, Test, and Development Commands
 

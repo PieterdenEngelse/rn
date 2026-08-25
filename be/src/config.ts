@@ -16,7 +16,10 @@ export const config = {
      */
     dryRun: process.env.DRY_RUN !== "false",
 
-    /** API server bind address. */
+    /**
+     * API server bind address. Loopback by default, and see
+     * `remoteBindRefusal` below for why widening it is a two-part act.
+     */
     host: process.env.BACKEND_HOST ?? "127.0.0.1",
     port: Number(process.env.BACKEND_PORT ?? 3010),
 
@@ -83,3 +86,49 @@ export const config = {
         .map((o) => o.trim())
         .filter(Boolean),
 } as const;
+
+/**
+ * Addresses that cannot be routed to from another machine.
+ *
+ * The whole of 127.0.0.0/8 is loopback, not just 127.0.0.1 — a host bound to
+ * 127.0.0.2 is every bit as unreachable, and calling it remote would be a
+ * refusal nobody could act on.
+ */
+function isLoopback(host: string): boolean {
+    return host === "localhost" || host === "::1" || host.startsWith("127.");
+}
+
+/**
+ * Why this process must not listen, or `null` when it may.
+ *
+ * There is no authentication on this API. `POST /api/jobs/:id` runs an
+ * automation against the user's filesystem, `/api/stop` and `/api/restart`
+ * control the process, and `/api/jobs/:id/source` reads files back. That is
+ * defensible for exactly as long as the socket cannot be reached from another
+ * machine — so binding wider is refused unless the operator also says, in a
+ * second place, that they meant it.
+ *
+ * Fail closed, and deliberately two-part. Before this, the entire security
+ * position rested on one default that a one-character edit could flip with
+ * nothing reporting it: the Connection page could say "this machine only", and
+ * it was describing a value rather than an invariant. Now it is describing one.
+ *
+ * Pure, and exported for the tests: the rule is the point, and it should be
+ * checkable without opening a socket.
+ */
+export function remoteBindRefusal(
+    host: string,
+    allowRemote: string | undefined,
+): string | null {
+    if (isLoopback(host)) return null;
+    if (allowRemote === "1") return null;
+    return (
+        `rn: refusing to listen on ${host} — this API has no authentication, ` +
+        "and anything that can reach it can run your automations.\n" +
+        "  If you want it reachable from another machine, the safe answer is " +
+        "almost always a tunnel (ssh -L, WireGuard, Tailscale) to the loopback " +
+        "socket, which needs no change here. See docs/network.md.\n" +
+        "  To bind wider anyway, set RN_ALLOW_REMOTE=1 in be/.env beside " +
+        "BACKEND_HOST, and put authentication in front of it."
+    );
+}
