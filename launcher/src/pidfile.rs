@@ -6,8 +6,17 @@
 //! makes `rn --stop` exact.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
+/// Where the record lives, unless a caller names a file itself.
+///
+/// `RN_PID_FILE` is an operator override — a way to run a second copy against
+/// its own state. It is **not** a test seam, and must not be used as one: it is
+/// process-global, cargo runs a binary's tests in parallel threads, and a test
+/// that loses the race falls through to this default and reads *and writes* the
+/// user's real pidfile. That is not hypothetical — two tests here did exactly
+/// that, clobbering a live launcher's record in about a third of runs. Tests
+/// name their file explicitly with [`running_at`] and [`write_own_at`].
 pub fn path() -> PathBuf {
     if let Ok(explicit) = std::env::var("RN_PID_FILE") {
         return PathBuf::from(explicit);
@@ -119,15 +128,23 @@ fn parse(text: &str) -> Option<Record> {
     })
 }
 
-/// The record in the file, if that process is still running. A stale file (the
-/// process died without cleaning up) reads as "not running".
-pub fn running() -> Option<Record> {
-    let rec = parse(&fs::read_to_string(path()).ok()?)?;
+/// The record in `file`, if that process is still running.
+///
+/// Takes the path rather than reading it from the environment so a caller can
+/// be certain which file it touched — see [`path`] for why that matters.
+pub fn running_at(file: &Path) -> Option<Record> {
+    let rec = parse(&fs::read_to_string(file).ok()?)?;
     if is_alive(rec.pid) {
         Some(rec)
     } else {
         None
     }
+}
+
+/// The record in the file, if that process is still running. A stale file (the
+/// process died without cleaning up) reads as "not running".
+pub fn running() -> Option<Record> {
+    running_at(&path())
 }
 
 /// Just the pid, for callers that do not care who started it.
@@ -136,8 +153,16 @@ pub fn running_pid() -> Option<i32> {
 }
 
 pub fn write_own() -> Result<(), String> {
-    let p = path();
-    if let Some(dir) = p.parent() {
+    write_own_at(&path())
+}
+
+/// Write this process's record to `file`, creating its directory.
+///
+/// The explicit-path half of [`write_own`], for the same reason as
+/// [`running_at`] — and more urgently, because getting the file wrong here
+/// overwrites a record rather than merely misreading one.
+pub fn write_own_at(file: &Path) -> Result<(), String> {
+    if let Some(dir) = file.parent() {
         fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     }
     let pid = std::process::id();
@@ -148,7 +173,7 @@ pub fn write_own() -> Result<(), String> {
         "{{\"pid\":{pid},\"startedAt\":{},\"parentPid\":{parent}}}",
         now_ms()
     );
-    fs::write(&p, body).map_err(|e| format!("cannot write {}: {e}", p.display()))
+    fs::write(file, body).map_err(|e| format!("cannot write {}: {e}", file.display()))
 }
 
 pub fn remove() {

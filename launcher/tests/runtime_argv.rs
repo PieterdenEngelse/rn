@@ -101,6 +101,13 @@ fn bind_address_reads_the_env_file() {
 }
 
 // ---- pidfile provenance -------------------------------------------------
+//
+// These name their file with `running_at` / `write_own_at` rather than pointing
+// `RN_PID_FILE` at it. That variable is process-global and cargo runs these
+// tests in parallel threads, so one test's `remove_var` lands inside another's
+// critical section; the loser falls through to the default path and reads —
+// and, via `write_own`, *overwrites* — the user's real pidfile. It failed about
+// a third of the time and clobbered a live launcher's record when it did.
 
 /// The record is what makes an orphaned launcher visible. A bare pid cannot
 /// answer "who started this, and are they still there?", which is the question
@@ -114,11 +121,9 @@ fn a_bare_pid_file_is_still_read() {
     let file = dir.join("bare.pid");
     std::fs::write(&file, format!("{}", std::process::id())).unwrap();
 
-    std::env::set_var("RN_PID_FILE", &file);
-    let rec = rn::pidfile::running().expect("a live bare pid must still read as running");
+    let rec = rn::pidfile::running_at(&file).expect("a live bare pid must still read as running");
     assert_eq!(rec.pid, std::process::id() as i32);
     assert_eq!(rec.started_at, 0, "an old file has no start time to report");
-    std::env::remove_var("RN_PID_FILE");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -128,16 +133,14 @@ fn a_written_record_round_trips_with_its_provenance() {
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("rn.pid");
 
-    std::env::set_var("RN_PID_FILE", &file);
-    rn::pidfile::write_own().unwrap();
-    let rec = rn::pidfile::running().expect("just written, so alive");
+    rn::pidfile::write_own_at(&file).unwrap();
+    let rec = rn::pidfile::running_at(&file).expect("just written, so alive");
 
     assert_eq!(rec.pid, std::process::id() as i32);
     assert!(rec.started_at > 0, "a start time is recorded");
     // Not orphaned: this test process's parent is still whatever ran it.
     assert_eq!(rn::pidfile::is_orphaned(&rec), Some(false));
 
-    std::env::remove_var("RN_PID_FILE");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
