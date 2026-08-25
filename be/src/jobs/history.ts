@@ -48,7 +48,7 @@ export function outcome(run: JobRun): Outcome {
  * and read whole; unbounded history is how a JSON file becomes a performance
  * problem nobody notices until it is one.
  */
-export const CAPACITY = 200;
+export const DEFAULT_CAPACITY = 200;
 
 /**
  * Failures are kept separately, and for longer in effective terms.
@@ -60,7 +60,42 @@ export const CAPACITY = 200;
  * read. 50 failures is a lot of failures; if a job has more than that, the
  * oldest are not what you need.
  */
-export const FAILURE_CAPACITY = 50;
+export const DEFAULT_FAILURE_CAPACITY = 50;
+
+/**
+ * The ceilings in force. Registry parameters move them — see `historyCapacity`
+ * and `failureCapacity` in runtime-params.ts.
+ *
+ * Lowering one trims what is already held, immediately. The alternative is a
+ * number that describes the future but not the present: the page would say 50
+ * while 200 runs sat in the file, and the difference would only resolve on the
+ * next write. A retention setting that does not retain what it says is exactly
+ * the kind of quiet lie this project spends comments avoiding.
+ */
+let capacity = DEFAULT_CAPACITY;
+let failureCapacity = DEFAULT_FAILURE_CAPACITY;
+
+export function capacities(): { runs: number; failures: number } {
+    return { runs: capacity, failures: failureCapacity };
+}
+
+export function setCapacity(n: number): void {
+    if (n === capacity) return;
+    capacity = n;
+    if (runs.length > capacity) {
+        runs = runs.slice(-capacity);
+        save();
+    }
+}
+
+export function setFailureCapacity(n: number): void {
+    if (n === failureCapacity) return;
+    failureCapacity = n;
+    if (failures.length > failureCapacity) {
+        failures = failures.slice(-failureCapacity);
+        save();
+    }
+}
 
 let runs: JobRun[] = [];
 let failures: JobRun[] = [];
@@ -76,8 +111,8 @@ function load(): void {
             ? { runs: raw as JobRun[], failures: (raw as JobRun[]).filter(isFailure) }
             : (raw as { runs?: JobRun[]; failures?: JobRun[] });
 
-        runs = (parsed.runs ?? []).filter(valid).map(normalise).slice(-CAPACITY);
-        failures = (parsed.failures ?? []).filter(valid).map(normalise).slice(-FAILURE_CAPACITY);
+        runs = (parsed.runs ?? []).filter(valid).map(normalise).slice(-capacity);
+        failures = (parsed.failures ?? []).filter(valid).map(normalise).slice(-failureCapacity);
     } catch {
         // Missing is the normal first run; corrupt must not stop the app from
         // starting. Either way we begin with nothing, which is honest.
@@ -122,11 +157,11 @@ function save(): void {
 
 export function record(run: JobRun): void {
     runs.push(run);
-    if (runs.length > CAPACITY) runs = runs.slice(-CAPACITY);
+    if (runs.length > capacity) runs = runs.slice(-capacity);
 
     if (isFailure(run)) {
         failures.push(run);
-        if (failures.length > FAILURE_CAPACITY) failures = failures.slice(-FAILURE_CAPACITY);
+        if (failures.length > failureCapacity) failures = failures.slice(-failureCapacity);
     }
     save();
 }
@@ -152,7 +187,7 @@ export function countsFor(jobId: string): { runs: number; failures: number } {
 }
 
 /** Every run, newest first — the order a reader scans in. */
-export function list(limit = CAPACITY): JobRun[] {
+export function list(limit = capacity): JobRun[] {
     return runs.slice(-limit).reverse();
 }
 
@@ -182,7 +217,7 @@ export const OUTCOMES: readonly Outcome[] = ["changed", "unchanged", "skipped", 
  * it can never disagree.
  */
 export function query(q: RunQuery = {}): { runs: JobRun[]; matched: number; retained: number } {
-    const limit = Math.max(1, Math.min(q.limit ?? 25, CAPACITY));
+    const limit = Math.max(1, Math.min(q.limit ?? 25, capacity));
     const matching = runs.filter((r) => {
         if (q.jobId !== undefined && r.jobId !== q.jobId) return false;
         if (q.since !== undefined && r.startedAt < q.since) return false;

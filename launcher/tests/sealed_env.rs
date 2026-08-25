@@ -170,3 +170,29 @@ fn a_false_boolean_is_omitted_rather_than_passed_as_off() {
     let opts = resolve(&params, &settings, "node").node_options;
     assert!(opts.is_empty(), "there is no --no-trace-warnings form to pass");
 }
+
+#[test]
+fn an_app_kind_param_never_reaches_node_options() {
+    // The trap this guards: resolve() falls through to NODE_OPTIONS for any
+    // kind it does not recognise. An app-kind param has no flag to give away
+    // that it is not one, so an unhandled kind would emit
+    // NODE_OPTIONS="--schedulerTickMs=30000" and Node would refuse to start —
+    // the app would not boot, and the cause would be a settings row.
+    let params = vec![RuntimeParam {
+        id: "schedulerTickMs".to_string(),
+        flag: "schedulerTickMs".to_string(),
+        kind: "app".to_string(),
+        value_type: "int".to_string(),
+        applies_to: None,
+        engine: None,
+    }];
+    let mut settings = Settings::new();
+    settings.insert("schedulerTickMs".to_string(), serde_json::json!(5000));
+
+    let launch = resolve(&params, &settings, "node");
+
+    assert!(launch.node_options.is_empty(), "must not become a Node flag");
+    assert!(launch.env.is_empty(), "must not become an environment variable");
+    assert!(launch.runtime_flags.is_empty());
+    assert!(launch.v8_flags.is_empty());
+}

@@ -39,7 +39,43 @@ import type { Job, Schedule } from "./types.ts";
  * late a run can be, and a page that repeated the number would go on claiming
  * the old one after it changed here.
  */
-export const TICK_MS = 30_000;
+export const DEFAULT_TICK_MS = 30_000;
+
+/**
+ * The cadence in force. A registry parameter now sets it — see
+ * `schedulerTickMs` in runtime-params.ts — so this is a variable rather than a
+ * constant, and callers must ask rather than read a number of their own.
+ */
+let intervalMs = DEFAULT_TICK_MS;
+
+/** The interval actually in force, which is not always the default. */
+export function tickMs(): number {
+    return intervalMs;
+}
+
+/**
+ * Change the cadence, taking effect now rather than at the next restart.
+ *
+ * Deliberately does **not** recompute when anything next fires. `start()`
+ * rebuilds `entries` from every job's schedule, which would move every
+ * `nextRunAt` — so a user nudging the tick would silently reschedule the whole
+ * install. Only the interval that asks the question changes; what is due stays
+ * due at the same moment.
+ *
+ * A no-op when the value is unchanged, so a save that touches other settings
+ * does not restart a live timer for nothing.
+ */
+export function setTickMs(ms: number): void {
+    if (ms === intervalMs) return;
+    intervalMs = ms;
+    step("scheduler-tick-changed", { tickMs: intervalMs, running: timer !== undefined });
+    if (timer === undefined) return;
+    clearInterval(timer);
+    timer = setInterval(() => {
+        void tick();
+    }, intervalMs);
+    timer.unref();
+}
 
 /**
  * The next time a schedule fires, strictly after `from`.
@@ -159,13 +195,13 @@ export function start(jobs: readonly Job[] = JOBS, now = new Date()): void {
 
     timer = setInterval(() => {
         void tick();
-    }, TICK_MS);
+    }, intervalMs);
     // Must not be the reason the process stays alive — the HTTP server is.
     timer.unref();
 
     step("scheduler", {
         scheduled: entries.length,
-        tickMs: TICK_MS,
+        tickMs: intervalMs,
         // The zone this resolved in, so a schedule that fires at an unexpected
         // hour can be traced to the setting rather than to the scheduler.
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,

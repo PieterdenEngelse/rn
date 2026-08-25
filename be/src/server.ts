@@ -38,7 +38,7 @@ import { display as displayPath } from "./paths.ts";
  * launcher/src/lib.rs — the two halves of one protocol.
  */
 const EXIT_RESTART = 75;
-import { step } from "./log.ts";
+import { step, debug, error } from "./log.ts";
 import * as running from "./running.ts";
 import {
     JOBS,
@@ -47,7 +47,7 @@ import {
     runJob,
     scheduler,
     history as jobHistory,
-    DEFAULT_TIMEOUT_MS,
+    defaultTimeoutMs,
 } from "./jobs/index.ts";
 import { collect as collectNodeMetrics, lifetimeDelay } from "./node_metrics.ts";
 import { withDistribution } from "./node_history.ts";
@@ -115,7 +115,7 @@ export function createApp() {
         res.setHeader("access-control-allow-headers", "content-type");
 
         const done = (code: number): void => {
-            step("http", { method: req.method, path: url.pathname, code, ms: Date.now() - started });
+            debug("http", { method: req.method, path: url.pathname, code, ms: Date.now() - started });
         };
 
         if (req.method === "OPTIONS") {
@@ -266,7 +266,7 @@ export function createApp() {
                     // when it fires. Resolved here rather than sent as
                     // "undefined means the default", so the page never has to
                     // know what the default is.
-                    timeoutMs: j.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+                    timeoutMs: j.timeoutMs ?? defaultTimeoutMs(),
                     // Same argument as the schedule above: a failure path
                     // nobody can see is indistinguishable from no failure
                     // path, and the user only finds out which they had when
@@ -310,10 +310,10 @@ export function createApp() {
                 // are constants in be/src/jobs/, and Config → Jobs reports what
                 // this process actually has rather than a copy that drifts.
                 config: {
-                    defaultTimeoutMs: DEFAULT_TIMEOUT_MS,
-                    schedulerTickMs: scheduler.TICK_MS,
-                    historyCapacity: jobHistory.CAPACITY,
-                    failureCapacity: jobHistory.FAILURE_CAPACITY,
+                    defaultTimeoutMs: defaultTimeoutMs(),
+                    schedulerTickMs: scheduler.tickMs(),
+                    historyCapacity: jobHistory.capacities().runs,
+                    failureCapacity: jobHistory.capacities().failures,
                 },
                 // What fires on its own, and when next. Shown on the Jobs page
                 // because a schedule nobody can see is indistinguishable from
@@ -620,7 +620,7 @@ function installSignalHandlers(srv: ReturnType<typeof createApp>): void {
 // the port is already open has already published what it was refusing.
 const refusal = remoteBindRefusal(config.host, process.env["RN_ALLOW_REMOTE"]);
 if (refusal !== null) {
-    step("bind-refused", { host: config.host, port: config.port });
+    error("bind-refused", { host: config.host, port: config.port });
     console.error(refusal);
     process.exit(1);
 }

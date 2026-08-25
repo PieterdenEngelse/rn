@@ -20,7 +20,19 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 export type JsRuntime = "node" | "bun" | "deno";
-export type ParamKind = "env" | "node-option" | "launcher" | "runtime-flag";
+/**
+ * `app` is rn's own setting rather than the runtime's: no flag, no environment
+ * variable, nothing for the launcher to deliver. It lives here anyway because
+ * this registry is what gives a setting validation, an enforced info panel,
+ * restart-pending tracking and a control on Config → Runtime — and a second
+ * registry for "our settings" would be the drift this file exists to prevent.
+ *
+ * The launcher must skip these explicitly. Its `resolve()` falls through to
+ * NODE_OPTIONS for any kind it does not recognise, so an unhandled one would
+ * emit `NODE_OPTIONS="--schedulerTickMs=30000"` and stop Node booting — the
+ * same trap the `launcher` kind carries a comment about.
+ */
+export type ParamKind = "env" | "node-option" | "launcher" | "runtime-flag" | "app";
 export type ParamType = "int" | "string" | "bool" | "enum" | "enum-open";
 export type AppliesAt = "restart" | "runtime";
 export type Category =
@@ -817,6 +829,208 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
             ifWrong:
                 "Large values slow down code that throws frequently, since every Error " +
                 "captures more frames.",
+        },
+    },
+    {
+        id: "schedulerTickMs",
+        // Not a flag and not an environment variable: rn's own setting, applied
+        // in this process. `flag` mirrors the id because the field is required
+        // and there is nothing else truthful to put in it — the same thing the
+        // launcher-kind parameters do.
+        flag: "schedulerTickMs",
+        kind: "app",
+        type: "int",
+        default: 30000,
+        unit: "ms",
+        // A second is already far finer than any schedule here needs, and below
+        // it the process wakes constantly to find nothing due. Five minutes is
+        // the other end: past that a job asking for "every ten minutes" starts
+        // drifting by half its own interval.
+        min: 1000,
+        max: 300000,
+        // One of the two settings on this page that needs no restart. The
+        // interval is replaced in place, and what is already due stays due at
+        // the same moment.
+        appliesAt: "runtime",
+        category: "time",
+        label: "Scheduler tick",
+        info: {
+            what:
+                "How often the scheduler wakes and asks whether any job is due. It is not " +
+                "how often jobs run — a job scheduled daily at 03:00 still runs once a day. " +
+                "This is only the resolution with which \"03:00\" is noticed, so a run can " +
+                "start up to one tick late.\n\nPolling a clock rather than setting a timer " +
+                "per job is deliberate: a long timer is wrong across a laptop suspend, where " +
+                "the machine sleeps at 22:00 and wakes at 09:00. Asking \"is anything due?\" " +
+                "every half minute comes out right whether it slept or not.",
+            why:
+                "It is the worst case for how late a scheduled run can be, and the number to " +
+                "reach for when a schedule looks like it is drifting. Lower it when you have " +
+                "a job on a short interval and the lateness matters; raise it on a laptop " +
+                "where waking twice a minute to find nothing due is battery spent for " +
+                "nothing.\n\nChanging it takes effect immediately and does not reschedule " +
+                "anything — every job's next run stays at the moment it was already due.",
+            ifWrong:
+                "A schedule cannot be finer than the interval that checks it. Set this to " +
+                "five minutes and a job asking to run every two minutes fires every five " +
+                "instead — quietly, because nothing has failed. Config → Jobs shows the " +
+                "cadence beside each job's schedule so the two can be read together.\n\n" +
+                "Very low values do not break anything; they just spend wakeups. The " +
+                "scheduler does no work on a tick when nothing is due.",
+        },
+    },
+    {
+        id: "logLevel",
+        flag: "logLevel",
+        kind: "app",
+        type: "enum",
+        default: "info",
+        // The registry default is only the truth when LOG_LEVEL is unset. This
+        // names the live value so the UI shows what "unset" means on *this*
+        // install rather than what it means on a fresh one.
+        defaultFrom: "logLevel",
+        options: [
+            { value: "error", label: "error — failures only" },
+            { value: "warn", label: "warn — failures and near misses" },
+            { value: "info", label: "info — what the app did (default)" },
+            { value: "debug", label: "debug — every request as well" },
+        ],
+        appliesAt: "runtime",
+        category: "diagnostics",
+        label: "Log level",
+        info: {
+            what:
+                "How much the backend writes to its own output. It filters stdout and " +
+                "nothing else — in particular it does not touch what a run remembers. A " +
+                "job's progress goes to two places, the run record and stdout, and only the " +
+                "second is filtered here. Turning this down makes the terminal quieter and " +
+                "changes the Jobs page not at all.\n\ninfo is what the app did: jobs " +
+                "starting and finishing, settings saved, the scheduler firing. debug adds " +
+                "one line per HTTP request, which on a page that polls is most of the " +
+                "output. warn and error keep only the lines you would act on.",
+            why:
+                "Mainly for reading the log by hand. Under npm run dev the frontend polls " +
+                "several endpoints a second, so debug is unreadable and info is what you " +
+                "actually want; when you are watching for one specific failure, warn cuts " +
+                "everything else away.\n\nIt takes effect on the next line, with no " +
+                "restart, and a change announces itself at error — so a log going quiet is " +
+                "never ambiguous between \"filtered\" and \"stopped\".",
+            ifWrong:
+                "Set to error and you lose the record of ordinary work: a job that ran and " +
+                "changed nothing writes nothing, which reads as an automation that never " +
+                "fired. The Jobs page still has every run, so check there before concluding " +
+                "anything is broken.\n\nSet to debug on a machine that has been running a " +
+                "while and the useful lines are buried under request chatter.",
+        },
+    },
+    {
+        id: "defaultTimeoutMs",
+        flag: "defaultTimeoutMs",
+        kind: "app",
+        type: "int",
+        default: 1800000,
+        unit: "ms",
+        // A second is the floor because anything shorter cannot distinguish a
+        // slow job from a broken one. Twenty-four hours is the ceiling: past
+        // that the ceiling has stopped being a safety net and is just the word
+        // "forever" spelled in milliseconds.
+        min: 1000,
+        max: 86400000,
+        appliesAt: "runtime",
+        category: "time",
+        label: "Default job timeout",
+        info: {
+            what:
+                "The wall-clock ceiling applied to a job that does not name its own. When it " +
+                "passes, the run's AbortSignal fires, the run is recorded as failed with the " +
+                "elapsed time, and the runner stops waiting.\n\n\"Stops waiting\" is the " +
+                "exact wording. A JavaScript promise cannot be killed from outside, so the " +
+                "timeout ends the runner's interest in the job, not the job itself — work " +
+                "that ignores ctx.signal carries on holding whatever it holds until the " +
+                "process restarts.\n\nRead when each run starts, so a change applies to the " +
+                "next job that begins and never to one already counting down.",
+            why:
+                "It is what stops one wedged job from becoming a wedged install. A job that " +
+                "hangs on a socket would otherwise sit in the in-flight list forever, and the " +
+                "backend waits for running jobs before a restart — so a single hung run makes " +
+                "the restart button stop working too.\n\nA job that legitimately needs " +
+                "longer should set timeoutMs in its own definition rather than raising this. " +
+                "Config → Jobs says which of the two each job is doing.",
+            ifWrong:
+                "Too low and a healthy long job is recorded as a failure, repeatedly, with a " +
+                "duration suspiciously close to the ceiling — that similarity is the tell, and " +
+                "its step trace stops mid-work rather than at an error.\n\nToo high and a " +
+                "hung job stays in flight for as long as the ceiling allows, blocking restarts " +
+                "the whole time. Note that the ceiling is per attempt: three retries of a " +
+                "five-minute job can occupy fifteen minutes plus the waits.",
+        },
+    },
+    {
+        id: "historyCapacity",
+        flag: "historyCapacity",
+        kind: "app",
+        type: "int",
+        default: 200,
+        unit: "runs",
+        // Ten is the floor because below it the list stops being a history.
+        // Five thousand is the ceiling: the file is read whole at startup and
+        // rewritten after every run, so this is the number that decides how
+        // much work each run pays for the ones before it.
+        min: 10,
+        max: 5000,
+        appliesAt: "runtime",
+        category: "diagnostics",
+        label: "Runs kept",
+        info: {
+            what:
+                "How many run records are kept before the oldest falls off. They live in " +
+                "~/.config/rn/job-runs.json, which is read whole at startup and rewritten " +
+                "after every run.\n\nLowering it takes effect at once and trims what is " +
+                "already held, rather than describing a future the file does not yet match.",
+            why:
+                "It decides how far back you can answer \"has this been failing all week, or " +
+                "only today?\". A job on a fifteen-minute schedule fills 200 records in about " +
+                "two days, so anyone running more than a couple of automations outgrows the " +
+                "default quickly — and the evidence is gone before they think to look for " +
+                "it.\n\nThe ceiling exists because the file is rewritten on every run. " +
+                "Unbounded history is how a JSON file becomes a performance problem nobody " +
+                "notices until it is one.",
+            ifWrong:
+                "Too small and the run you want has already been evicted. Nothing announces " +
+                "the loss — the list simply starts later than you expected, which reads as " +
+                "\"it never ran\" rather than \"it was forgotten\".\n\nToo large and " +
+                "startup slows and every run pays to rewrite a bigger file. Failures are kept " +
+                "in their own list, so raising this is not how you keep failures longer.",
+        },
+    },
+    {
+        id: "failureCapacity",
+        flag: "failureCapacity",
+        kind: "app",
+        type: "int",
+        default: 50,
+        unit: "failures",
+        min: 5,
+        max: 1000,
+        appliesAt: "runtime",
+        category: "diagnostics",
+        label: "Failures kept",
+        info: {
+            what:
+                "How many failed runs are kept, in a list of their own, separate from the run " +
+                "history above.",
+            why:
+                "Because a single bounded list gets this exactly backwards. Failures are the " +
+                "rare, valuable entries, and they are precisely the ones a run of successes " +
+                "evicts: a job that failed twice in March and has succeeded nightly since " +
+                "would have no trace of March left — which is the history someone opens an " +
+                "error log to read.\n\nSo failures are kept separately, and for longer in " +
+                "effective terms. Fifty failures is a lot of failures; if a job has more than " +
+                "that, the oldest are not the ones you need.",
+            ifWrong:
+                "Too small and an intermittent fault older than the last few failures is " +
+                "invisible, which is the fault most worth seeing. Too large and the same " +
+                "rewrite cost as the run list, for records that are rarer.",
         },
     },
     {

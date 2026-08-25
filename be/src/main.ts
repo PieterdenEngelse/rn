@@ -24,7 +24,6 @@ function main(): void {
         node: process.version,
         execPath: displayPath(process.execPath),
         sealed: process.env.RN_ENV_SEALED === "1",
-        logLevel: config.logLevel,
         dryRun: config.dryRun,
     });
 

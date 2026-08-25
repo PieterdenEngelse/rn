@@ -70,7 +70,22 @@ function markdown(): string {
     lines.push("| Setting | Set via | Default | Range | Takes effect |");
     lines.push("|---|---|---|---|---|");
     for (const p of RUNTIME_PARAMS) {
-        const via = p.kind === "env" ? `\`${p.flag}\`` : `\`${p.flag}\` (NODE_OPTIONS)`;
+        // How the value actually reaches the process, which is the whole point
+        // of the column. Saying NODE_OPTIONS for everything that is not an env
+        // var was true while those were the only two kinds; a launcher-kind
+        // param is read by the launcher and an app-kind one never leaves
+        // settings.json, and labelling either as a Node flag is a lie the
+        // reader has no way to catch.
+        const via =
+            p.kind === "env"
+                ? `\`${p.flag}\``
+                : p.kind === "app"
+                  ? `\`${p.id}\` (settings.json)`
+                  : p.kind === "launcher"
+                    ? `\`${p.id}\` (launcher)`
+                    : p.kind === "runtime-flag"
+                      ? `\`${p.flag}\` (runtime flag)`
+                      : `\`${p.flag}\` (NODE_OPTIONS)`;
         const when = p.appliesAt === "runtime" ? "immediately" : "on restart";
         lines.push(
             `| **${p.label}** | ${via} | ${defaultText(p)} | ${rangeText(p)} | ${when} |`,

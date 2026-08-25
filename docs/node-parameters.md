@@ -11,24 +11,29 @@ scales with installed RAM, so expect a different number elsewhere.
 
 | Setting | Set via | Default | Range | Takes effect |
 |---|---|---|---|---|
-| **JavaScript runtime** | `runtime` (NODE_OPTIONS) | node | — | on restart |
-| **Extra network hosts** | `netAllowlist` (NODE_OPTIONS) | unset (system default) | — | on restart |
-| **Node version line** | `nodeVersion` (NODE_OPTIONS) | unset (system default) | — | on restart |
+| **JavaScript runtime** | `jsRuntime` (launcher) | node | — | on restart |
+| **Extra network hosts** | `netAllowlist` (launcher) | unset (system default) | — | on restart |
+| **Node version line** | `nodeVersion` (launcher) | unset (system default) | — | on restart |
 | **Heap memory limit** | `--max-old-space-size` (NODE_OPTIONS) | unset (system default) | 64 … 32768 MB | on restart |
 | **libuv thread pool** | `UV_THREADPOOL_SIZE` | 4 | 1 … 1024 | on restart |
 | **New-space size (advanced)** | `--max-semi-space-size` (NODE_OPTIONS) | unset (system default) | 1 … 1024 MB | on restart |
-| **Bun low-memory mode** | `--smol` (NODE_OPTIONS) | off | — | on restart |
-| **Bun kill orphans** | `--no-orphans` (NODE_OPTIONS) | off | — | on restart |
-| **Bun no auto-install** | `--no-install` (NODE_OPTIONS) | off | — | on restart |
-| **Deno V8 flags** | `--v8-flags` (NODE_OPTIONS) | unset (system default) | — | on restart |
+| **Bun low-memory mode** | `--smol` (runtime flag) | off | — | on restart |
+| **Bun kill orphans** | `--no-orphans` (runtime flag) | off | — | on restart |
+| **Bun no auto-install** | `--no-install` (runtime flag) | off | — | on restart |
+| **Deno V8 flags** | `--v8-flags` (runtime flag) | unset (system default) | — | on restart |
 | **Block native addons** | `--no-addons` (NODE_OPTIONS) | off | — | on restart |
-| **Deno no remote modules** | `--no-remote` (NODE_OPTIONS) | off | — | on restart |
+| **Deno no remote modules** | `--no-remote` (runtime flag) | off | — | on restart |
 | **Unhandled rejection policy** | `--unhandled-rejections` (NODE_OPTIONS) | unset (system default) | — | on restart |
 | **Time zone** | `TZ` | unset (system default) | — | on restart |
 | **Extra CA certificates** | `NODE_EXTRA_CA_CERTS` | unset (system default) | — | on restart |
 | **Trace warnings** | `--trace-warnings` (NODE_OPTIONS) | off | — | on restart |
 | **Trace deprecations** | `--trace-deprecation` (NODE_OPTIONS) | off | — | on restart |
 | **Stack trace depth** | `--stack-trace-limit` (NODE_OPTIONS) | 10 | 0 … 200 | immediately |
+| **Scheduler tick** | `schedulerTickMs` (settings.json) | 30000 ms | 1000 … 300000 ms | immediately |
+| **Log level** | `logLevel` (settings.json) | info | — | immediately |
+| **Default job timeout** | `defaultTimeoutMs` (settings.json) | 1800000 ms | 1000 … 86400000 ms | immediately |
+| **Runs kept** | `historyCapacity` (settings.json) | 200 runs | 10 … 5000 runs | immediately |
+| **Failures kept** | `failureCapacity` (settings.json) | 50 failures | 5 … 1000 failures | immediately |
 | **Heap snapshot signal** | `--heapsnapshot-signal` (NODE_OPTIONS) | unset (system default) | — | on restart |
 | **Disable colored output** | `NO_COLOR` | off | — | on restart |
 
@@ -238,6 +243,50 @@ Default: off · Takes effect: on restart · Settings key: `traceDeprecation`
 
 Default: 10 · Takes effect: immediately · Settings key: `stackTraceLimit`
 
+### Log level — `logLevel`
+
+**What it does.** How much the backend writes to its own output. It filters stdout and nothing else — in particular it does not touch what a run remembers. A job's progress goes to two places, the run record and stdout, and only the second is filtered here. Turning this down makes the terminal quieter and changes the Jobs page not at all.
+
+info is what the app did: jobs starting and finishing, settings saved, the scheduler firing. debug adds one line per HTTP request, which on a page that polls is most of the output. warn and error keep only the lines you would act on.
+
+**Why you would change it.** Mainly for reading the log by hand. Under npm run dev the frontend polls several endpoints a second, so debug is unreadable and info is what you actually want; when you are watching for one specific failure, warn cuts everything else away.
+
+It takes effect on the next line, with no restart, and a change announces itself at error — so a log going quiet is never ambiguous between "filtered" and "stopped".
+
+**If it's wrong.** Set to error and you lose the record of ordinary work: a job that ran and changed nothing writes nothing, which reads as an automation that never fired. The Jobs page still has every run, so check there before concluding anything is broken.
+
+Set to debug on a machine that has been running a while and the useful lines are buried under request chatter.
+
+Default: info · Takes effect: immediately · Settings key: `logLevel`
+
+### Runs kept — `historyCapacity`
+
+**What it does.** How many run records are kept before the oldest falls off. They live in ~/.config/rn/job-runs.json, which is read whole at startup and rewritten after every run.
+
+Lowering it takes effect at once and trims what is already held, rather than describing a future the file does not yet match.
+
+**Why you would change it.** It decides how far back you can answer "has this been failing all week, or only today?". A job on a fifteen-minute schedule fills 200 records in about two days, so anyone running more than a couple of automations outgrows the default quickly — and the evidence is gone before they think to look for it.
+
+The ceiling exists because the file is rewritten on every run. Unbounded history is how a JSON file becomes a performance problem nobody notices until it is one.
+
+**If it's wrong.** Too small and the run you want has already been evicted. Nothing announces the loss — the list simply starts later than you expected, which reads as "it never ran" rather than "it was forgotten".
+
+Too large and startup slows and every run pays to rewrite a bigger file. Failures are kept in their own list, so raising this is not how you keep failures longer.
+
+Default: 200 runs · Takes effect: immediately · Settings key: `historyCapacity`
+
+### Failures kept — `failureCapacity`
+
+**What it does.** How many failed runs are kept, in a list of their own, separate from the run history above.
+
+**Why you would change it.** Because a single bounded list gets this exactly backwards. Failures are the rare, valuable entries, and they are precisely the ones a run of successes evicts: a job that failed twice in March and has succeeded nightly since would have no trace of March left — which is the history someone opens an error log to read.
+
+So failures are kept separately, and for longer in effective terms. Fifty failures is a lot of failures; if a job has more than that, the oldest are not the ones you need.
+
+**If it's wrong.** Too small and an intermittent fault older than the last few failures is invisible, which is the fault most worth seeing. Too large and the same rewrite cost as the run list, for records that are rarer.
+
+Default: 50 failures · Takes effect: immediately · Settings key: `failureCapacity`
+
 ### Heap snapshot signal — `--heapsnapshot-signal`
 
 **What it does.** Writes a V8 heap snapshot when the process receives this signal, e.g. SIGUSR2.
@@ -259,6 +308,40 @@ Default: unset (system default) · Takes effect: on restart · Settings key: `he
 **If it's wrong.** Nothing errors. Timestamps are quietly wrong and scheduled jobs fire at the wrong hour — usually noticed only after a daylight-saving change.
 
 Default: unset (system default) · Takes effect: on restart · Settings key: `timezone`
+
+### Scheduler tick — `schedulerTickMs`
+
+**What it does.** How often the scheduler wakes and asks whether any job is due. It is not how often jobs run — a job scheduled daily at 03:00 still runs once a day. This is only the resolution with which "03:00" is noticed, so a run can start up to one tick late.
+
+Polling a clock rather than setting a timer per job is deliberate: a long timer is wrong across a laptop suspend, where the machine sleeps at 22:00 and wakes at 09:00. Asking "is anything due?" every half minute comes out right whether it slept or not.
+
+**Why you would change it.** It is the worst case for how late a scheduled run can be, and the number to reach for when a schedule looks like it is drifting. Lower it when you have a job on a short interval and the lateness matters; raise it on a laptop where waking twice a minute to find nothing due is battery spent for nothing.
+
+Changing it takes effect immediately and does not reschedule anything — every job's next run stays at the moment it was already due.
+
+**If it's wrong.** A schedule cannot be finer than the interval that checks it. Set this to five minutes and a job asking to run every two minutes fires every five instead — quietly, because nothing has failed. Config → Jobs shows the cadence beside each job's schedule so the two can be read together.
+
+Very low values do not break anything; they just spend wakeups. The scheduler does no work on a tick when nothing is due.
+
+Default: 30000 ms · Takes effect: immediately · Settings key: `schedulerTickMs`
+
+### Default job timeout — `defaultTimeoutMs`
+
+**What it does.** The wall-clock ceiling applied to a job that does not name its own. When it passes, the run's AbortSignal fires, the run is recorded as failed with the elapsed time, and the runner stops waiting.
+
+"Stops waiting" is the exact wording. A JavaScript promise cannot be killed from outside, so the timeout ends the runner's interest in the job, not the job itself — work that ignores ctx.signal carries on holding whatever it holds until the process restarts.
+
+Read when each run starts, so a change applies to the next job that begins and never to one already counting down.
+
+**Why you would change it.** It is what stops one wedged job from becoming a wedged install. A job that hangs on a socket would otherwise sit in the in-flight list forever, and the backend waits for running jobs before a restart — so a single hung run makes the restart button stop working too.
+
+A job that legitimately needs longer should set timeoutMs in its own definition rather than raising this. Config → Jobs says which of the two each job is doing.
+
+**If it's wrong.** Too low and a healthy long job is recorded as a failure, repeatedly, with a duration suspiciously close to the ceiling — that similarity is the tell, and its step trace stops mid-work rather than at an error.
+
+Too high and a hung job stays in flight for as long as the ceiling allows, blocking restarts the whole time. Note that the ceiling is per attempt: three retries of a five-minute job can occupy fifteen minutes plus the waits.
+
+Default: 1800000 ms · Takes effect: immediately · Settings key: `defaultTimeoutMs`
 
 ## Output
 

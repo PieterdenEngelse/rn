@@ -21,7 +21,7 @@
  */
 
 import { config } from "../config.ts";
-import { step } from "../log.ts";
+import { step, warn, error } from "../log.ts";
 import { track, isRunning } from "../running.ts";
 // The catalogue, for looking up a job's `onFailure` handler by id. This is a
 // cycle — index.ts re-exports runJob from here — and it is deliberate: the
@@ -58,6 +58,24 @@ import type { Job, JobContext, JobResult } from "./types.ts";
  * longer says so in its own definition.
  */
 export const DEFAULT_TIMEOUT_MS = 30 * 60_000;
+
+/**
+ * The ceiling in force, which a registry parameter can move — see
+ * `defaultTimeoutMs` in runtime-params.ts. Read per run rather than captured,
+ * so a change applies to the next job that starts and never to one already
+ * counting down against the number it began with.
+ */
+let timeoutMs = DEFAULT_TIMEOUT_MS;
+
+export function defaultTimeoutMs(): number {
+    return timeoutMs;
+}
+
+export function setDefaultTimeoutMs(ms: number): void {
+    if (ms === timeoutMs) return;
+    step("default-timeout-changed", { ms });
+    timeoutMs = ms;
+}
 
 /**
  * How many of a run's steps are kept, at each end.
@@ -219,7 +237,7 @@ async function runFailureHandler(job: Job, failure: JobRun, isHandler: boolean):
     if (job.onFailure === undefined) return;
 
     if (isHandler) {
-        step("on-failure-refused", {
+        warn("on-failure-refused", {
             id: job.id,
             handler: job.onFailure,
             reason: "one hop only — this run is already a failure handler",
@@ -231,7 +249,7 @@ async function runFailureHandler(job: Job, failure: JobRun, isHandler: boolean):
     if (handler === undefined) {
         // A typo in an id must never be silent. Nothing else would ever
         // report it: the job it names does not exist, so it cannot fail.
-        step("on-failure-missing", { id: job.id, handler: job.onFailure });
+        warn("on-failure-missing", { id: job.id, handler: job.onFailure });
         return;
     }
 
@@ -256,7 +274,7 @@ export async function runJob(
     // authoritative one, and it is here so no trigger can get past it.
     const resolved = resolveInput(job, rawInput);
     if (!resolved.ok) {
-        step("job-input-rejected", { id: job.id, errors: resolved.errors });
+        warn("job-input-rejected", { id: job.id, errors: resolved.errors });
         throw new Error(`${job.id} input: ${resolved.errors.join("; ")}`);
     }
     const input = resolved.input;
@@ -270,7 +288,7 @@ export async function runJob(
         const wanted = missing.map((n) => `${n} (${secrets.envVarFor(n)})`).join(", ");
         // Names and variables, never values — and these are the names of the
         // ones that are *absent*, so there is nothing to leak.
-        step("job-credentials-missing", { id: job.id, missing });
+        warn("job-credentials-missing", { id: job.id, missing });
         throw new Error(`${job.id} needs credentials that are not configured: ${wanted}`);
     }
 
@@ -322,7 +340,7 @@ export async function runJob(
 
     return track(job.id, async () => {
         const started = Date.now();
-        const limitMs = job.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+        const limitMs = job.timeoutMs ?? timeoutMs;
         // Attempts, not extra attempts. A policy is optional and a missing one
         // means exactly one try; a declared 0 or 1 is clamped rather than
         // treated as "never run", which would be a very quiet way to disable a
@@ -519,7 +537,7 @@ export async function runJob(
             // a credential to surface — inside a URL an HTTP client echoed back
             // into its message, most often.
             const message = secrets.redact(err instanceof Error ? err.message : String(err));
-            step("job-failed", {
+            error("job-failed", {
                 id: job.id,
                 ms: Date.now() - started,
                 attempts,

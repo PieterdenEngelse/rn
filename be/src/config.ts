@@ -6,7 +6,10 @@
  * defaults below.
  */
 export const config = {
-    /** error | warn | info | debug */
+    /**
+     * error | warn | info | debug. Read once here; `log.ts` owns the live value
+     * because the registry parameter can move it without a restart.
+     */
     logLevel: process.env.LOG_LEVEL ?? "info",
 
     /**

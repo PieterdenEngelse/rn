@@ -13,6 +13,13 @@ import { availableParallelism } from "node:os";
 import { dirname } from "node:path";
 import { RUNTIME_PARAMS, paramById, type RuntimeParam } from "./runtime-params.ts";
 import { display as displayPath } from "./paths.ts";
+// Safe despite the layering it implies: nothing under jobs/ imports this
+// module, so there is no cycle to fall into. Checked rather than assumed —
+// jobs/run.ts already carries a deferred import for exactly that hazard.
+import * as scheduler from "./jobs/scheduler.ts";
+import * as history from "./jobs/history.ts";
+import { setDefaultTimeoutMs, DEFAULT_TIMEOUT_MS } from "./jobs/run.ts";
+import * as log from "./log.ts";
 
 export type SettingValue = string | number | boolean | null;
 export type Settings = Record<string, SettingValue>;
@@ -98,17 +105,78 @@ export function resolveLaunch(settings: Settings): {
     return { env, nodeOptions };
 }
 
-/** Apply the settings that can take effect without a relaunch. */
+/**
+ * How each runtime-applied setting is actually applied.
+ *
+ * A table rather than a chain of `if (p.id === ...)`, because there are five of
+ * them now and adding the sixth should be one line in one place. A parameter
+ * declaring `appliesAt: "runtime"` and appearing nowhere here would silently do
+ * nothing until a restart — the opposite of what it promised — so "every
+ * runtime-applied parameter has an applier" is a test.
+ */
+const RUNTIME_APPLIERS: Record<string, (value: SettingValue | undefined) => void> = {
+    // Each applier is handed the saved value or `undefined`, and decides for
+    // itself what absence means. Only it knows: for most of these it is the
+    // compiled default, but `logLevel` also has an environment variable behind
+    // it, and substituting the registry default there would apply "info" over
+    // a LOG_LEVEL=warn the user set in be/.env — at boot, on every start,
+    // silently.
+    stackTraceLimit: (v) => {
+        Error.stackTraceLimit = typeof v === "number" ? v : 10;
+    },
+    schedulerTickMs: (v) => {
+        scheduler.setTickMs(typeof v === "number" ? v : scheduler.DEFAULT_TICK_MS);
+    },
+    defaultTimeoutMs: (v) => {
+        setDefaultTimeoutMs(typeof v === "number" ? v : DEFAULT_TIMEOUT_MS);
+    },
+    historyCapacity: (v) => {
+        history.setCapacity(typeof v === "number" ? v : history.DEFAULT_CAPACITY);
+    },
+    failureCapacity: (v) => {
+        history.setFailureCapacity(
+            typeof v === "number" ? v : history.DEFAULT_FAILURE_CAPACITY,
+        );
+    },
+    logLevel: (v) => {
+        log.setLevel(log.isLevel(v) ? v : log.BASELINE);
+    },
+};
+
+/** Whether this id has an applier — the seam the registry test checks. */
+export function appliesAtRuntime(id: string): boolean {
+    return RUNTIME_APPLIERS[id] !== undefined;
+}
+
+/**
+ * Apply the settings that can take effect without a relaunch.
+ *
+ * **Absent means the default, not "leave it alone."** A save replaces the whole
+ * settings file, so clearing a value is how a user says "go back to normal" —
+ * and a runtime-applied setting that ignored the clearing would leave the
+ * process on the old number with nothing to say so. It cannot even show up in
+ * the restart banner: `appliesAt: "runtime"` is precisely the promise that no
+ * restart is pending. So the setting would sit there, wrong, until something
+ * else happened to restart the process.
+ */
 export function applyRuntimeSettings(settings: Settings): string[] {
     const applied: string[] = [];
     for (const p of RUNTIME_PARAMS) {
         if (p.appliesAt !== "runtime") continue;
-        const value = settings[p.id];
-        if (value === undefined || value === null) continue;
-        if (p.id === "stackTraceLimit" && typeof value === "number") {
-            Error.stackTraceLimit = value;
-            applied.push(p.id);
-        }
+        const apply = RUNTIME_APPLIERS[p.id];
+        if (apply === undefined) continue;
+
+        const raw = settings[p.id];
+        // `null` is how `validate` spells "use the default", so it and absence
+        // are the same thing here. What that default *is* belongs to the
+        // applier, not to this loop — see the table above.
+        const value = raw === null ? undefined : raw;
+
+        apply(value);
+        // Reported only when the user set something. `applied` drives the UI's
+        // confirmation, and confirming a value nobody typed reads as an edit
+        // they did not make.
+        if (raw !== undefined && raw !== null) applied.push(p.id);
     }
     return applied;
 }
@@ -193,6 +261,11 @@ export function effectiveValues(): Record<string, string | number> {
         availableParallelism: availableParallelism(),
         stackTraceLimit: Error.stackTraceLimit,
         timezone: process.env.TZ ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+        // What "unset" actually means for the log level on this process — see
+        // `defaultFrom` on the parameter. LOG_LEVEL in be/.env moves it, so the
+        // registry's "info" is not always the truth, and a page saying so would
+        // be wrong on exactly the installs that had configured it.
+        logLevel: log.BASELINE,
     };
 }
 

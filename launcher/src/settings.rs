@@ -91,6 +91,15 @@ pub fn resolve(params: &[RuntimeParam], settings: &Settings, runtime: &str) -> L
             continue;
         }
 
+        // An app-kind param is rn's own setting, applied inside the backend.
+        // Same trap as the line above and worse, because it has no flag to
+        // give away that it is not one: falling through would emit
+        // NODE_OPTIONS="--schedulerTickMs=30000" and Node would refuse to
+        // start. The backend reads it from settings.json directly.
+        if p.kind == "app" {
+            continue;
+        }
+
         if let Some(list) = &p.applies_to {
             if !list.iter().any(|r| r == runtime) {
                 continue;

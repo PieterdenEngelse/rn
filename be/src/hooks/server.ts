@@ -27,7 +27,7 @@
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { step } from "../log.ts";
+import { step, debug, warn } from "../log.ts";
 import { jobById, runJob } from "../jobs/index.ts";
 import * as secrets from "../secrets.ts";
 import { readRaw, verify, makeDeliveryLog, type DeliveryLog } from "./verify.ts";
@@ -82,7 +82,7 @@ export function handle(deliveries: DeliveryLog) {
         // One shape of request exists here. Everything else is 404 — including
         // GET on the right path, so the URL cannot be probed with a browser.
         if (req.method !== "POST" || !url.pathname.startsWith("/api/hooks/")) {
-            step("hook-not-found", { method: req.method, path: url.pathname });
+            debug("hook-not-found", { method: req.method, path: url.pathname });
             return refuse(res, 404);
         }
 
@@ -94,7 +94,7 @@ export function handle(deliveries: DeliveryLog) {
         // that does not exist at all, or this endpoint becomes a way to
         // enumerate the catalogue by timing the difference between answers.
         if (job?.webhook === undefined) {
-            step("hook-not-found", { id });
+            debug("hook-not-found", { id });
             return refuse(res, 404);
         }
 
@@ -108,7 +108,7 @@ export function handle(deliveries: DeliveryLog) {
         // from a wrong secret, and this is the only place that difference shows.
         const secret = secrets.read(cfg.credential);
         if (secret === undefined) {
-            step("hook-secret-missing", { id, credential: cfg.credential });
+            warn("hook-secret-missing", { id, credential: cfg.credential });
             return refuse(res, 401);
         }
 
@@ -116,7 +116,7 @@ export function handle(deliveries: DeliveryLog) {
         try {
             raw = await readRaw(req);
         } catch (err) {
-            step("hook-body-rejected", {
+            warn("hook-body-rejected", {
                 id,
                 reason: err instanceof Error ? err.message : String(err),
             });
@@ -126,7 +126,7 @@ export function handle(deliveries: DeliveryLog) {
         const offered = req.headers[header];
         const signature = Array.isArray(offered) ? offered[0] : offered;
         if (!verify(raw, signature, secret, prefix)) {
-            step("hook-signature-rejected", { id, header, bytes: raw.length });
+            warn("hook-signature-rejected", { id, header, bytes: raw.length });
             return refuse(res, 401);
         }
 
@@ -134,7 +134,7 @@ export function handle(deliveries: DeliveryLog) {
         // cannot fill the delivery log with ids of their choosing.
         const delivery = headerValue(req.headers, cfg.deliveryHeader);
         if (!deliveries.accept(delivery)) {
-            step("hook-replayed", { id, delivery });
+            warn("hook-replayed", { id, delivery });
             return refuse(res, 409);
         }
 
@@ -145,7 +145,7 @@ export function handle(deliveries: DeliveryLog) {
         try {
             payload = raw.length === 0 ? {} : JSON.parse(raw.toString("utf8"));
         } catch {
-            step("hook-payload-unparseable", { id, bytes: raw.length });
+            warn("hook-payload-unparseable", { id, bytes: raw.length });
             return refuse(res, 400);
         }
 
