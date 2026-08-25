@@ -56,6 +56,45 @@ export const pruneProfiles: Job = {
     // answering mid-scan. Five minutes of that is plenty of evidence.
     timeoutMs: 5 * 60_000,
 
+    // The retention window belongs to the install *and* to a run, so it is
+    // both: the default is whatever RN_PROFILE_MAX_AGE_DAYS resolved to at
+    // startup, and a run can say otherwise for that run only.
+    //
+    // Read once here, at module load, which is when config is read anyway — so
+    // Config → Jobs shows the effective default rather than a number invented
+    // in this file. The scheduled 03:00 run supplies nothing and therefore
+    // takes it, which is the whole reason a scheduled job's inputs must have
+    // defaults.
+    inputs: [
+        {
+            id: "maxAgeDays",
+            label: "Delete artifacts older than (days)",
+            type: "number",
+            default: config.profileMaxAgeDays,
+            info: {
+                what:
+                    "The age past which a V8 artifact is deleted, for this run only. Nothing " +
+                    "is saved: the next run — including the scheduled one at 03:00 — goes back " +
+                    "to the installed default, which is RN_PROFILE_MAX_AGE_DAYS in be/.env and " +
+                    "is shown as the value already in this box.",
+                why:
+                    "Because 'clear out anything older than 30 days' is a thing you say once, " +
+                    "not a policy you change. Editing the setting to do it would leave the new " +
+                    "number in force for every run afterwards, and nothing would remind you it " +
+                    "was you who changed it.\n\nWhat the run actually used is recorded, so two " +
+                    "runs with different windows are told apart in Recent runs rather than " +
+                    "looking identical.",
+                ifWrong:
+                    "Too small and a profile you are still reading disappears — these are " +
+                    "artifacts you asked V8 to write, so the only copy is the one being " +
+                    "deleted. Dry run is on by default precisely for this: it reports exactly " +
+                    "which files it would remove, and you arm it once you have read that list." +
+                    "\n\n0 deletes every artifact regardless of age. That is a legitimate " +
+                    "thing to ask for and not a mistake the job will second-guess.",
+            },
+        },
+    ],
+
     info: {
         what:
             "Scans the runtime's working directory for the files V8 leaves behind — " +
@@ -79,7 +118,9 @@ export const pruneProfiles: Job = {
 
     async run(ctx: JobContext): Promise<JobResult> {
         const dir = config.profileDir;
-        const maxAgeDays = config.profileMaxAgeDays;
+        // From the run, not from config — the runner has already filled in the
+        // installed default when nobody asked for anything else.
+        const maxAgeDays = ctx.input.maxAgeDays as number;
         const cutoff = Date.now() - maxAgeDays * DAY_MS;
 
         let names: string[];

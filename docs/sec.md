@@ -22,6 +22,9 @@ than a reassuring one.
 - **The file is not encrypted.** Anyone who can read your home directory can
   read your tokens. That is the same protection as an SSH private key with no
   passphrase.
+- **Encrypting it is not the most useful next step.** The API has no
+  authentication, so any local process can ask rn to *use* a credential without
+  reading it. See *What to strengthen first*.
 
 ---
 
@@ -144,19 +147,115 @@ than none.
 
 ---
 
+## What to strengthen first
+
+The storage question is the one people ask, and it is not the one that decides
+how safe the credentials are. This section is the ordering, and the reasoning
+for it, so that effort goes where it reduces risk rather than where it feels
+like it should.
+
+### The threat model, honestly
+
+| Adversary | `~/.config/rn/credentials` at 0600 | An OS keychain |
+|---|---|---|
+| Another user on the machine | blocked | blocked |
+| **A process running as you** | reads the file | **asks the keyring and is given it** |
+| The disk at rest, machine off | plaintext | encrypted under your login password |
+| Backups, rsync, cloud sync | swept up as plaintext | an opaque blob |
+| macOS specifically | — | per-app ACLs tied to code signing |
+
+The second row is the important one and the least intuitive. On Linux the
+freedesktop Secret Service has no per-application isolation: any process in an
+unlocked session can request any secret, exactly as rn does. So against the
+adversary a keychain is usually imagined to stop, a keychain and a 0600 file are
+equivalent.
+
+Where it does win is narrower than its reputation: an encrypted blob is not
+swept into a backup or a sync folder as readable text, and it is unreadable
+while you are logged out. Full-disk or home-directory encryption dominates the
+second of those. macOS is the exception across the whole table — its ACLs are
+real, because they are tied to code signing.
+
+### The bigger hole is upstream of storage
+
+**There is no authentication on this API.** `docs/network.md` says so at length
+for the remote case; the local consequence belongs here, because it is what
+decides the ordering.
+
+Any process running as you can open a connection to the port and
+`POST /api/jobs/:id`. It never reads the credential at all — it asks rn to use
+it. That is a confused deputy, and while it stands, every storage choice is
+equivalent against the adversary the keychain was meant to stop. Strengthening
+the vault while the doorman takes instructions from anyone is the wrong order.
+
+The browser half of this *is* closed, and deliberately: the CORS allowlist is
+strict, `access-control-allow-credentials` is never set, and a JSON `POST`
+preflights — so a page you happen to have open cannot drive the API. CORS is a
+browser mechanism and does nothing about `curl`, which is the case above.
+
+### A consequence of how values reach the backend
+
+Credentials are passed to the Node process in its environment, so they are
+visible in `/proc/<pid>/environ` to the same user, can land in a core dump, and
+would be inherited by anything a job spawns. That is no worse than the file
+against a same-user process — it could read either — but a keychain does not fix
+it, because the value still ends up in the child's environment. Passing them
+over a pipe at startup would close it, independently of where they are stored.
+
+### The order
+
+1. **Scope and expiry of the tokens themselves.** A read-only token that expires
+   in a week shrinks every other question on this list, and costs no code.
+2. **Authenticate the API.** A per-install token the frontend holds, or — cleaner
+   — a unix domain socket at 0600 instead of a TCP port, which makes filesystem
+   permissions the authentication and removes the localhost-TCP path outright.
+   This is the structural win. See *What rn would need before it could safely
+   listen on its own* in `docs/network.md`.
+3. **Redaction, and never putting a value on the wire.** Already done. The most
+   common way a credential actually leaks is a log line, a screenshot or a bug
+   report — not disk forensics.
+4. **Full-disk or home-directory encryption.** An operating-system decision, and
+   it dominates the at-rest argument above.
+5. **An encrypted store.** Buys the backup-sweep row and, on macOS, the ACLs.
+
+**The ordering compounds.** Doing 2 raises the value of 5: once nothing can drive
+the deputy, reading the credential becomes the easiest remaining path, and that
+is the path a keychain narrows. Doing 5 first buys little while 2 is open.
+
 ## Why there is no encrypted store (yet)
 
 The conventional shape is an encrypted file with the key held in the OS keychain.
 It is not built, and the reasoning is worth writing down so the decision can be
 revisited rather than rediscovered.
 
+- **It is fifth on the list above, not first.** While the API takes instructions
+  from any local process, a stronger store does not change what an attacker in
+  that position can do.
 - **Nothing needs it yet.** No job here authenticates to anything. A store with
   no consumer is the solution-looking-for-a-problem this project's rules reject.
+- **It costs three times the launcher's dependency graph.** Measured, not
+  guessed: adding `keyring` with `sync-secret-service` and `crypto-rust` — the
+  combination that avoids an OpenSSL system dependency and, unlike
+  `linux-native`, survives a reboot — takes `cargo tree -p rn` from 18 crates to
+  53, mostly D-Bus and crypto. The launcher's own `Cargo.toml` says
+  "deliberately tiny: it must run before Node exists".
+- **It would not replace the file, only add to it.** The crate cannot enumerate
+  entries portably, and the launcher has to know which names to look up before
+  it can start the Node process that knows them — so a plaintext index of
+  *names* would have to sit beside the store. With the file still needed as the
+  fallback for a machine with no Secret Service, the result is three artifacts
+  where there is now one.
 - **Reaching a keychain from Node means a native addon**, and the runtime rules
   in `CLAUDE.md` prefer a Rust component to an addon. So the real option is a
-  small Rust component over the documented CLI boundary — which is also the one
-  place in this design with a genuine argument for Rust, since a buffer that
-  zeroes on drop is something Node cannot offer at all.
+  small Rust component over the documented CLI boundary.
+
+  It is worth being precise about what that would and would not buy, because
+  "Rust can zero a buffer on drop and JavaScript cannot" is true and mostly
+  beside the point here: the value still has to cross into Node as a string to
+  reach `fetch`, and it is unerasable from that moment. A Rust component would
+  protect the value at rest and inside the launcher, not inside the runtime
+  where jobs actually use it. The case for it rests on encryption at rest, not
+  on memory hygiene.
 - **A keychain is a dependency on the machine.** On Linux the usual crates talk
   to the D-Bus Secret Service, which a minimal desktop, a headless box or a
   systemd unit may not have. rn ships its own Node runtime precisely so it does
@@ -172,6 +271,15 @@ revisited rather than rediscovered.
 behind it without any job changing, which is why jobs go through it rather than
 reading `process.env` themselves.
 
-**The trigger to revisit** is the first job that actually authenticates to
-something, together with an answer to "what happens on a Linux box with no
-Secret Service". At that point the justification writes itself.
+**The trigger to revisit** is three things together, and the first is the one
+that changes the most:
+
+1. The API is authenticated, so a stronger store is the weakest link rather than
+   the fifth-weakest.
+2. A job actually authenticates to something.
+3. There is an answer to "what happens on a Linux box with no Secret Service".
+
+At that point the justification writes itself, and the work is only the store —
+reference-by-name, redaction, the declaration on the catalogue and `read()` as
+the seam are all in place already, which is what makes deferring it cheap rather
+than merely postponed.

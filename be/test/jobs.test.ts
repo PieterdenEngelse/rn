@@ -8,7 +8,7 @@ import { JOBS, jobById, resolveInput } from "../src/jobs/index.ts";
 import * as scheduler from "../src/jobs/scheduler.ts";
 import * as history from "../src/jobs/history.ts";
 import { isArtifact, pruneProfiles } from "../src/jobs/prune-profiles.ts";
-import type { Job, JobInput } from "../src/jobs/types.ts";
+import type { Job, JobContext, JobInput } from "../src/jobs/types.ts";
 import type { JobRun } from "../src/generated/wire.ts";
 import * as running from "../src/running.ts";
 import * as secrets from "../src/secrets.ts";
@@ -156,6 +156,27 @@ function setDryRun(on: boolean): void {
     (config as unknown as { dryRun: boolean }).dryRun = on;
 }
 
+/**
+ * A context for calling the job directly, without going through runJob.
+ *
+ * `input` carries the configured window because that is what the runner would
+ * have filled in — the job's declared default is `config.profileMaxAgeDays`,
+ * read at module load. Calling `run()` with an empty input is not a shortcut
+ * for "use the default"; nothing but the runner applies defaults, which is
+ * exactly the property that keeps a trigger from bypassing validation.
+ */
+function bare(dryRun: boolean): JobContext {
+    return {
+        dryRun,
+        step: () => {},
+        signal: new AbortController().signal,
+        input: { maxAgeDays: config.profileMaxAgeDays },
+        secret: () => {
+            throw new Error("prune-profiles declares no credentials");
+        },
+    };
+}
+
 const realDryRun = config.dryRun;
 
 beforeEach(async () => {
@@ -179,24 +200,21 @@ async function artifact(name: string, ageDays: number, body = "x"): Promise<void
 
 test("an empty directory is reported as skipped, not as a failure", async () => {
     setDryRun(false);
-    const r = await pruneProfiles.run({ dryRun: false, step: () => {}, signal: new AbortController().signal, input: {},
-        secret: () => { throw new Error("no credentials declared"); } });
+    const r = await pruneProfiles.run(bare(false));
     assert.equal(r.changed, false);
     assert.match(r.skipped ?? "", /No profiling artifacts/);
 });
 
 test("an unreadable directory is skipped with the reason attached", async () => {
     setConfig(join(dir, "does-not-exist"), 7);
-    const r = await pruneProfiles.run({ dryRun: false, step: () => {}, signal: new AbortController().signal, input: {},
-        secret: () => { throw new Error("no credentials declared"); } });
+    const r = await pruneProfiles.run(bare(false));
     assert.equal(r.changed, false);
     assert.match(r.skipped ?? "", /Could not read/);
 });
 
 test("artifacts younger than the window are kept, and the reason says so", async () => {
     await artifact("jit-1.dump", 2);
-    const r = await pruneProfiles.run({ dryRun: false, step: () => {}, signal: new AbortController().signal, input: {},
-        secret: () => { throw new Error("no credentials declared"); } });
+    const r = await pruneProfiles.run(bare(false));
     assert.equal(r.changed, false);
     assert.equal(r.summary.stale, 0);
     assert.match(r.skipped ?? "", /younger than 7 days/);
@@ -208,8 +226,7 @@ test("dry run deletes nothing but reports exactly what it would delete", async (
     await artifact("isolate-0xabc-1-v8.log", 30, "bb");
     await artifact("recent.cpuprofile", 1, "c");
 
-    const r = await pruneProfiles.run({ dryRun: true, step: () => {}, signal: new AbortController().signal, input: {},
-        secret: () => { throw new Error("no credentials declared"); } });
+    const r = await pruneProfiles.run(bare(true));
 
     assert.equal(r.changed, false, "a dry run never reports a change");
     assert.equal(r.summary.stale, 2);
@@ -225,8 +242,7 @@ test("armed, it deletes only the stale artifacts", async () => {
     await artifact("recent.cpuprofile", 1);
     await artifact("notes.txt", 400);
 
-    const r = await pruneProfiles.run({ dryRun: false, step: () => {}, signal: new AbortController().signal, input: {},
-        secret: () => { throw new Error("no credentials declared"); } });
+    const r = await pruneProfiles.run(bare(false));
 
     assert.equal(r.changed, true);
     assert.equal(r.summary.deleted, 2);
@@ -240,20 +256,56 @@ test("dry run and armed run agree on which files are stale", async () => {
     await artifact("jit-2.dump", 8);
     await artifact("jit-3.dump", 6);
 
-    const dry = await pruneProfiles.run({ dryRun: true, step: () => {}, signal: new AbortController().signal, input: {},
-        secret: () => { throw new Error("no credentials declared"); } });
-    const armed = await pruneProfiles.run({ dryRun: false, step: () => {}, signal: new AbortController().signal, input: {},
-        secret: () => { throw new Error("no credentials declared"); } });
+    const dry = await pruneProfiles.run(bare(true));
+    const armed = await pruneProfiles.run(bare(false));
 
     // If these ever disagree the dry run is worthless as a preview.
     assert.equal(dry.summary.stale, armed.summary.deleted);
     assert.equal(dry.summary.stale, 2);
 });
 
+test("the declared default is the installed window, not a number invented here", () => {
+    // Read from config at module load, so Config → Jobs shows the effective
+    // value rather than a constant in the job file that could drift from it.
+    const field = pruneProfiles.inputs?.[0];
+    assert.equal(field?.id, "maxAgeDays");
+    assert.equal(field?.default, realMaxAge);
+});
+
+test("a run can name its own window without changing the installed one", async () => {
+    setDryRun(false);
+    await artifact("jit-1.dump", 3);
+    await artifact("jit-2.dump", 10);
+
+    // The installed window is 7, so only the older one would normally go.
+    const r = await runJob(pruneProfiles, "manual", undefined, { maxAgeDays: 2 });
+    assert.equal(r.summary.deleted, 2, "both, because this run said 2 days");
+    assert.equal(await readdir(dir).then((f) => f.length), 0);
+
+    // Said once, not saved: nothing about the install moved.
+    assert.equal(config.profileMaxAgeDays, 7);
+    assert.equal(pruneProfiles.inputs?.[0]?.default, realMaxAge);
+    // And the run says which window it used, so it is not mistaken for a
+    // normal one when read back.
+    assert.deepEqual(history.list()[0]?.input, { maxAgeDays: 2 });
+});
+
+test("the scheduled run takes the installed window, having supplied none", async () => {
+    setDryRun(false);
+    await artifact("jit-old.dump", 30);
+
+    // The scheduler passes no input at all; the default is what stands between
+    // that and a job reading undefined.
+    scheduler.start([pruneProfiles], new Date(Date.now() - 25 * 3_600_000));
+    await scheduler.tick();
+    scheduler.stop();
+
+    assert.deepEqual(history.list()[0]?.input, { maxAgeDays: realMaxAge });
+});
+
 test("the job reports facts, never the word done", async () => {
     await artifact("jit-1.dump", 30);
-    const r = await pruneProfiles.run({ dryRun: false, step: () => {}, signal: new AbortController().signal, input: {},
-        secret: () => { throw new Error("no credentials declared"); } });
+    const r = await pruneProfiles.run(bare(false));
     // log.ts: "a line that says 'done' cannot become an explanation".
     assert.ok(typeof r.summary.dir === "string");
     assert.ok(typeof r.summary.scanned === "number");
