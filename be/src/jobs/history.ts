@@ -48,7 +48,7 @@ export function outcome(run: JobRun): Outcome {
  * and read whole; unbounded history is how a JSON file becomes a performance
  * problem nobody notices until it is one.
  */
-const CAPACITY = 200;
+export const CAPACITY = 200;
 
 /**
  * Failures are kept separately, and for longer in effective terms.
@@ -60,7 +60,7 @@ const CAPACITY = 200;
  * read. 50 failures is a lot of failures; if a job has more than that, the
  * oldest are not what you need.
  */
-const FAILURE_CAPACITY = 50;
+export const FAILURE_CAPACITY = 50;
 
 let runs: JobRun[] = [];
 let failures: JobRun[] = [];

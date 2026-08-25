@@ -32,8 +32,14 @@ import { JOBS } from "./index.ts";
 import { runJob } from "./run.ts";
 import type { Job, Schedule } from "./types.ts";
 
-/** How often to ask whether anything is due. */
-const TICK_MS = 30_000;
+/**
+ * How often to ask whether anything is due.
+ *
+ * Exported because Config → Jobs shows it: the cadence is what decides how
+ * late a run can be, and a page that repeated the number would go on claiming
+ * the old one after it changed here.
+ */
+export const TICK_MS = 30_000;
 
 /**
  * The next time a schedule fires, strictly after `from`.

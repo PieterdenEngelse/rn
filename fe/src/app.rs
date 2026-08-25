@@ -1,8 +1,6 @@
 use crate::components::header::Header;
 use crate::components::SubNav;
-use crate::pages::{
-    Config, Home, MonitorJobs, MonitorRuntime, PageNotFound,
-};
+use crate::pages::{Config, ConfigJobs, Home, MonitorJobs, MonitorRuntime, PageNotFound};
 use dioxus::prelude::*;
 use dioxus_router::{Outlet, Routable, Router};
 
@@ -23,6 +21,11 @@ pub enum Route {
         MonitorJobs {},
         #[route("/config")]
         Config {},
+        // A second page under Config, not a tab inside the first: what a job
+        // is configured to do is declared in code, and mixing it into a board
+        // of editable settings would imply it is one.
+        #[route("/config/jobs")]
+        ConfigJobs {},
         #[route("/:..segments")]
         PageNotFound { segments: Vec<String> },
 }

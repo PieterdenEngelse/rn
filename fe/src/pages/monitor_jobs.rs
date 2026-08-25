@@ -759,7 +759,7 @@ fn FailureRow(run: JobRun, alt: bool) -> Element {
 }
 
 /// "5m", "30m", "2h" — a ceiling stated the way a person would say it.
-fn duration(ms: f64) -> String {
+pub(crate) fn duration(ms: f64) -> String {
     let secs = (ms / 1000.0).round() as i64;
     if secs < 60 {
         return format!("{secs}s");

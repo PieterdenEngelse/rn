@@ -200,6 +200,38 @@ wire! {
 }
 
 wire! {
+    /// The settings that govern every run, whichever job it is.
+    ///
+    /// Sent rather than known by the frontend, for the same reason
+    /// `CatalogueJob::timeout_ms` is resolved on the backend: these are
+    /// constants in `be/src/jobs/`, and a page that repeated them would go on
+    /// claiming the old number for as long as nobody noticed. `dry_run` is
+    /// deliberately not here — it is already on [`JobsResponse`], and two
+    /// copies of one switch is exactly the drift this crate exists to remove.
+    // `Default` so [`JobsResponse`] can carry it behind `#[serde(default)]`
+    // like every other field there — a payload from an older backend deserialises
+    // to zeroes rather than failing the whole response.
+    #[derive(Default)]
+    #[serde(rename_all = "camelCase")]
+    pub struct JobsConfig {
+        /// Ceiling applied to a job that does not name its own, in ms.
+        #[serde(default)]
+        pub default_timeout_ms: f64,
+        /// How often the scheduler asks whether anything is due, in ms. Not
+        /// when jobs run — the gap between one look and the next.
+        #[serde(default)]
+        pub scheduler_tick_ms: f64,
+        /// How many runs the history keeps before the oldest falls off.
+        #[serde(default)]
+        pub history_capacity: u32,
+        /// How many failures are kept, in their own list, so a run of
+        /// successes cannot push the last failure out of view.
+        #[serde(default)]
+        pub failure_capacity: u32,
+    }
+}
+
+wire! {
     /// GET /api/jobs.
     #[serde(rename_all = "camelCase")]
     pub struct JobsResponse {
@@ -213,6 +245,9 @@ wire! {
         /// expected outcome while this is true.
         #[serde(default)]
         pub dry_run: bool,
+        /// The settings that govern every run, whichever job it is.
+        #[serde(default)]
+        pub config: JobsConfig,
         #[serde(default)]
         pub scheduled: Vec<ScheduledJob>,
         /// The most recent run of each job that has ever run.

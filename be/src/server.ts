@@ -219,6 +219,16 @@ export function createApp() {
                     ...(j.onFailure === undefined ? {} : { onFailure: j.onFailure }),
                 })),
                 dryRun: config.dryRun,
+                // The knobs every run is subject to, whichever job it is.
+                // Resolved here for the same reason `timeoutMs` above is: they
+                // are constants in be/src/jobs/, and Config → Jobs reports what
+                // this process actually has rather than a copy that drifts.
+                config: {
+                    defaultTimeoutMs: DEFAULT_TIMEOUT_MS,
+                    schedulerTickMs: scheduler.TICK_MS,
+                    historyCapacity: jobHistory.CAPACITY,
+                    failureCapacity: jobHistory.FAILURE_CAPACITY,
+                },
                 // What fires on its own, and when next. Shown on the Jobs page
                 // because a schedule nobody can see is indistinguishable from
                 // no schedule at all — and this one deliberately does not

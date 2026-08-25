@@ -277,6 +277,36 @@ at: number,
 detail: { [key in string]: JsonValue }, };
 
 /**
+ * The settings that govern every run, whichever job it is.
+ *
+ * Sent rather than known by the frontend, for the same reason
+ * `CatalogueJob::timeout_ms` is resolved on the backend: these are
+ * constants in `be/src/jobs/`, and a page that repeated them would go on
+ * claiming the old number for as long as nobody noticed. `dry_run` is
+ * deliberately not here — it is already on [`JobsResponse`], and two
+ * copies of one switch is exactly the drift this crate exists to remove.
+ */
+export type JobsConfig = { 
+/**
+ * Ceiling applied to a job that does not name its own, in ms.
+ */
+defaultTimeoutMs: number, 
+/**
+ * How often the scheduler asks whether anything is due, in ms. Not
+ * when jobs run — the gap between one look and the next.
+ */
+schedulerTickMs: number, 
+/**
+ * How many runs the history keeps before the oldest falls off.
+ */
+historyCapacity: number, 
+/**
+ * How many failures are kept, in their own list, so a run of
+ * successes cannot push the last failure out of view.
+ */
+failureCapacity: number, };
+
+/**
  * GET /api/jobs.
  */
 export type JobsResponse = { running: Array<RunningJob>, restartPending: boolean, 
@@ -288,7 +318,11 @@ catalogue: Array<CatalogueJob>,
  * Whether the backend is disarmed. A run that changes nothing is the
  * expected outcome while this is true.
  */
-dryRun: boolean, scheduled: Array<ScheduledJob>, 
+dryRun: boolean, 
+/**
+ * The settings that govern every run, whichever job it is.
+ */
+config: JobsConfig, scheduled: Array<ScheduledJob>, 
 /**
  * The most recent run of each job that has ever run.
  */

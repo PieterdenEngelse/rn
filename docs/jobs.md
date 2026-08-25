@@ -172,3 +172,25 @@ skipped, and what the next run will do.
 
 A job whose completion is reported as "done" has failed the product
 requirement, however correct its output.
+
+## 5. Where a job's configuration is visible
+
+A job declares its schedule, its timeout and its failure handler in its own
+file, and exists at all because it is in the `JOBS` array in
+`be/src/jobs/index.ts`. **Config → Jobs** reads those back from the running
+backend, beside the settings every run is subject to whatever the job:
+`DEFAULT_TIMEOUT_MS` from `run.ts`, `TICK_MS` from `scheduler.ts`, the two
+history capacities from `history.ts`, and the `DRY_RUN` switch.
+
+It is deliberately a page of readings rather than inputs. A schedule that lives
+in TypeScript shows up in a diff and can be asserted on by a test; the same
+schedule in `settings.json` is a value somebody changed at some point, with no
+record of who or why. Config → Runtime edits settings because those are
+properties of the process; this page reports, because these are properties of
+the code.
+
+The numbers reach it over `GET /api/jobs` as `JobsConfig` and `CatalogueJob`,
+both defined in `shared/src/jobs.rs` — so a constant renamed in `be/src/jobs/`
+breaks a build rather than leaving the page quietly claiming the old value.
+That is also why the constants are exported: a page that repeated them would go
+on being wrong for as long as nobody checked.

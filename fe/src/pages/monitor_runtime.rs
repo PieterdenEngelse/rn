@@ -9,7 +9,7 @@ use dioxus::prelude::*;
 /// Monitor → Runtime. What the runtime is actually doing.
 ///
 /// Every board here is either something a user can act on, or the measured
-/// counterpart of a setting they can change under Config → Settings. A metric
+/// counterpart of a setting they can change under Config → Runtime. A metric
 /// with neither connection is noise, and is left out.
 #[component]
 pub fn MonitorRuntime() -> Element {
@@ -714,7 +714,7 @@ fn MonitorBoards(
                                     }
                                     InfoButton {
                                         title: "Heap limit".to_string(),
-                                        what: format!("The ceiling {heap_engine_short} will not grow past, and the dashed rule across the chart above. It is the only figure on this board that is a limit rather than a reading — everything else here is what the process is using, this is what it may not exceed.\n\nChosen from installed RAM unless the Heap memory limit setting under Config → Settings overrides it."),
+                                        what: format!("The ceiling {heap_engine_short} will not grow past, and the dashed rule across the chart above. It is the only figure on this board that is a limit rather than a reading — everything else here is what the process is using, this is what it may not exceed.\n\nChosen from installed RAM unless the Heap memory limit setting under Config → Runtime overrides it."),
                                         why: concat!(
                                             "It is the line the heap series is worth reading against: a heap at ",
                                             "14 MB under a 2240 MB ceiling is idle, the same 14 MB under a 16 MB ",
@@ -750,7 +750,7 @@ fn MonitorBoards(
                                             "Exceeding it ends the process rather than slowing it: V8 prints ",
                                             "\"Reached heap limit\" and aborts, with no JavaScript error to catch.\n\n",
 
-                                            "If this does not match what you set under Config → Settings, the ",
+                                            "If this does not match what you set under Config → Runtime, the ",
                                             "setting is not reaching the process — check `rn --print-env`.\n\n",
 
                                             "Raising it above the machine's free memory does not buy room. It only ",
@@ -1365,7 +1365,7 @@ fn MonitorBoards(
                                 "Node has all four of its own.",
                             ).to_string(),
                             why: concat!(
-                                "Switching the runtime under Config → Settings changes ",
+                                "Switching the runtime under Config → Runtime changes ",
                                 "what this page can measure, not just what the numbers ",
                                 "say. Keeping the runtime-specific boards in a panel ",
                                 "named after the runtime makes that visible: boards ",
@@ -1762,7 +1762,7 @@ fn MonitorBoards(
                             "is nobody to start the replacement.\n\n",
 
                             "The name a process reports is not proof of what it is running. ",
-                            "The path is: the Active runtime board on Config → Settings shows ",
+                            "The path is: the Active runtime board on Config → Runtime shows ",
                             "the executable this pid was launched from, and it is inside the ",
                             "app rather than anywhere on PATH — which is the whole point of ",
                             "the app carrying its own runtime.",
@@ -1780,7 +1780,7 @@ fn MonitorBoards(
                             value: m.concurrency.threadpool_size.to_string(),
                             what: "Threads libuv uses for file system, DNS, zlib and some crypto work.".to_string(),
                             why: "The measured counterpart of the libuv thread pool setting. Read it with event-loop utilisation: low utilisation plus a slow file job means this is the bottleneck.".to_string(),
-                            if_wrong: "If it does not match what you set, the setting has not been applied — it needs a restart, and the banner on Config → Settings will say so.".to_string(),
+                            if_wrong: "If it does not match what you set, the setting has not been applied — it needs a restart, and the banner on Config → Runtime will say so.".to_string(),
                         }
                         }
                         Metric {
@@ -2279,7 +2279,7 @@ fn component_what(key: &str) -> Option<&'static str> {
             "reading beside them is its pool of worker threads — the loop itself is ",
             "one thread, so file reads, DNS lookups, zlib and some crypto are handed ",
             "to that pool to keep from blocking it. The libuv thread pool setting on ",
-            "Config → Settings sizes exactly that pool.",
+            "Config → Runtime sizes exactly that pool.",
         )),
         _ => None,
     }

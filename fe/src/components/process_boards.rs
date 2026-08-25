@@ -81,7 +81,7 @@ pub fn ProcessBoards(status: StatusResponse) -> Element {
                     value: if status.pending_count == 0 { "none".to_string() } else { format!("{}", status.pending_count) },
                     what: "Saved settings that this process was not started with, found by comparing the settings file against the live environment."
                         .to_string(),
-                    why: "It is the difference between what you asked for and what is running. Config → Settings names them and offers the restart."
+                    why: "It is the difference between what you asked for and what is running. Config → Runtime names them and offers the restart."
                         .to_string(),
                     if_wrong: "If this stays above zero after a restart, the launcher is not applying a setting — check `rn --print-env`."
                         .to_string(),

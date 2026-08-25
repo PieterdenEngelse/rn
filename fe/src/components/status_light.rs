@@ -197,7 +197,7 @@ impl Health {
                 "rather than waiting for the schedule to come round again.",
             ),
             Health::Pending => concat!(
-                "Restart the backend, from the banner on Config → Settings. Nearly every ",
+                "Restart the backend, from the banner on Config → Runtime. Nearly every ",
                 "setting is read once when the process starts, so nothing short of a ",
                 "restart will apply them.",
             ),
