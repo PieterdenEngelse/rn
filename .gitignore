@@ -6,6 +6,16 @@
 # the backend's dependencies live in be/, the Tailwind build's in fe/.
 node_modules/
 
+# What that same stray install leaves behind once node_modules/ is gone —
+# the part that is easy to commit by accident, because four small text files
+# do not look like a mistake the way 273 MB does. Root-anchored on purpose:
+# be/package.json and fe/package.json are real and tracked, and a bare
+# `package.json` here would be claiming to ignore those too.
+/package.json
+/package-lock.json
+/pnpm-lock.yaml
+/pnpm-workspace.yaml
+
 # Screenshots taken while checking a page — see "Checking the page" in
 # CLAUDE.md. They accumulate fast and are working files, not documentation.
 # Anything worth keeping belongs in docs/ under a name that says what it shows.
