@@ -1,35 +1,41 @@
-use crate::api::{fetch_connection, ConnectionResponse};
-use crate::components::param::PARAM_INPUT_ROW_CLASS;
+use crate::api::{fetch_connection, fetch_jobs, ConnectionResponse, JobsResponse};
 use crate::components::{InfoButton, Panel};
 use dioxus::prelude::*;
 
-/// Config → Connection. Which socket is open, who may talk to it, and what it
-/// may reach.
+/// Config → Connection. How this install meets the world.
 ///
-/// These three facts were spread across `be/src/config.ts`, the CORS block at
-/// the top of the request handler, and an environment variable the launcher
-/// echoes back — none of them visible anywhere in the app. They belong on one
-/// page because they are asked together: "backend unreachable" is answered by
-/// exactly one of the three, and until you can see all three you cannot tell
-/// which.
+/// Three panels for the shape of it and one for the setting. The shape is the
+/// part that is otherwise invisible: rn listens on loopback and nothing outside
+/// can reach in, so every automation here begins by *asking* rather than by
+/// being told, and answers to a failure are jobs rather than notifications.
+/// That is a real design position with real costs, and a user who does not know
+/// it will keep looking for the webhook page.
 ///
-/// Readings, not inputs, with one exception noted on the page: the outbound
-/// allowlist is an editable setting and lives on Config → Runtime. What is
-/// shown here is what the launcher actually granted, which is a different
-/// value until the next restart.
+/// Readings, not inputs. The one editable value behind them is the browser
+/// origin list, read once at startup from `RN_CORS_ORIGIN`.
 #[component]
 pub fn ConfigConnection() -> Element {
     let conn = use_resource(fetch_connection);
+    // The cadence and the failure handlers live on the jobs payload. Fetched
+    // separately rather than duplicated into /api/connection: the same numbers
+    // in two endpoints is the drift the shared crate exists to remove, one
+    // level up.
+    let jobs = use_resource(fetch_jobs);
 
     rsx! {
         div { class: "p-6 w-full space-y-4",
             match &*conn.read_unchecked() {
                 Some(Ok(c)) => {
                     let c: ConnectionResponse = c.clone();
+                    let j = match &*jobs.read_unchecked() {
+                        Some(Ok(j)) => Some(j.clone()),
+                        _ => None,
+                    };
                     rsx! {
-                        Inbound { conn: c.clone() }
-                        Origins { conn: c.clone() }
-                        Outbound { conn: c.clone() }
+                        Connection { conn: c.clone() }
+                        PushAndPoll { conn: c.clone(), jobs: j.clone() }
+                        Reaction { jobs: j }
+                        Origins { conn: c }
                     }
                 }
                 Some(Err(e)) => rsx! {
@@ -38,12 +44,9 @@ pub fn ConfigConnection() -> Element {
                         p { class: "text-gray-300 mt-1", "{e}" }
                         p { class: "max-w-3xl text-gray-400 mt-2",
                             "This is the page that would explain why, which is not much help \
-                             while it is the page that cannot load. The three candidates are \
-                             the same three it lists: the backend is not listening, it is \
-                             listening on a different address than this build was compiled \
-                             to call, or it is refusing this origin. Check the first with \
-                             `./target/debug/rn --status`, and the other two with \
-                             `./target/debug/rn --print-env`."
+                             while it is the page that cannot load. Check that the backend is \
+                             listening with `./target/debug/rn --status`, and what it was \
+                             given with `./target/debug/rn --print-env`."
                         }
                     }
                 },
@@ -57,14 +60,14 @@ pub fn ConfigConnection() -> Element {
     }
 }
 
-/// One labelled value with its info button, in the aligned column.
+/// One labelled fact with its info button, in the aligned column.
 #[component]
-fn Row(label: String, value: String, note: Option<String>, info: Element) -> Element {
+fn Fact(label: String, value: String, note: Option<String>, info: Element) -> Element {
     rsx! {
-        div { class: "{PARAM_INPUT_ROW_CLASS} border-b border-gray-700 pb-2",
+        div { class: "param-row flex items-end gap-2 w-full border-b border-gray-700 pb-2",
             div { class: "flex items-baseline gap-3 flex-wrap",
                 span { class: "text-gray-200 font-medium", "{label}" }
-                span { class: "text-gray-300 font-mono", "{value}" }
+                span { class: "text-gray-300", "{value}" }
                 if let Some(note) = note {
                     span { class: "text-gray-400 text-xs", "{note}" }
                 }
@@ -74,77 +77,191 @@ fn Row(label: String, value: String, note: Option<String>, info: Element) -> Ele
     }
 }
 
+/// What a connection is here: outward only.
 #[component]
-fn Inbound(conn: ConnectionResponse) -> Element {
-    let reach = if conn.loopback_only {
-        "this machine only"
+fn Connection(conn: ConnectionResponse) -> Element {
+    let direction = if conn.loopback_only {
+        "outward only"
     } else {
-        "reachable from the network"
+        "outward, and reachable inward"
     };
+    let granted = conn.net_granted.len();
 
     rsx! {
         Panel {
-            title: "Inbound".to_string(),
-            subtitle: Some("the socket the API listens on".to_string()),
+            title: "Connection".to_string(),
+            subtitle: Some(direction.to_string()),
+            info: Some(rsx! {
+                InfoButton {
+                    title: "Connection".to_string(),
+                    what: CONN_WHAT.to_string(),
+                    why: CONN_WHY.to_string(),
+                    if_wrong: CONN_IF_WRONG.to_string(),
+                }
+            }),
             div { class: "space-y-2",
-                Row {
-                    label: "Bind address".to_string(),
-                    value: format!("{}:{}", conn.host, conn.port),
-                    note: Some(format!("{reach} — BACKEND_HOST / BACKEND_PORT")),
+                Fact {
+                    label: "Inbound".to_string(),
+                    value: if conn.loopback_only {
+                        "this machine only".to_string()
+                    } else {
+                        format!("{}:{} — reachable from the network", conn.host, conn.port)
+                    },
+                    // Conditional, because the reassuring half is the one that
+                    // stops being true. A widened bind makes POST /api/jobs/:id
+                    // reachable, and there is no authentication on it — nothing
+                    // asserts this claim, it only follows from the address.
+                    note: Some(if conn.loopback_only {
+                        "nothing outside can start an automation".to_string()
+                    } else {
+                        "POST /api/jobs/:id is reachable, and nothing authenticates it"
+                            .to_string()
+                    }),
                     info: rsx! {
                         InfoButton {
-                            title: "Bind address".to_string(),
-                            what: BIND_WHAT.to_string(),
-                            why: BIND_WHY.to_string(),
-                            if_wrong: BIND_IF_WRONG.to_string(),
+                            title: "Inbound".to_string(),
+                            what: INBOUND_WHAT.to_string(),
+                            why: INBOUND_WHY.to_string(),
+                            if_wrong: INBOUND_IF_WRONG.to_string(),
                         }
                     },
                 }
-                Row {
-                    label: "Base URL".to_string(),
-                    value: conn.url.clone(),
-                    note: Some("what the process reports for itself".to_string()),
+                Fact {
+                    label: "Outbound".to_string(),
+                    value: match granted {
+                        0 => "nothing granted".to_string(),
+                        1 => "its own socket only".to_string(),
+                        n => format!("{} hosts", n),
+                    },
+                    note: Some(if conn.net_enforced {
+                        format!("enforced by {}", conn.runtime)
+                    } else {
+                        format!("recorded — {} enforces nothing", conn.runtime)
+                    }),
                     info: rsx! {
                         InfoButton {
-                            title: "Base URL".to_string(),
-                            what: URL_WHAT.to_string(),
-                            why: URL_WHY.to_string(),
-                            if_wrong: URL_IF_WRONG.to_string(),
+                            title: "Outbound".to_string(),
+                            what: OUTBOUND_WHAT.to_string(),
+                            why: OUTBOUND_WHY.to_string(),
+                            if_wrong: OUTBOUND_IF_WRONG.to_string(),
                         }
                     },
                 }
-                Row {
-                    label: "This page calls".to_string(),
-                    value: crate::api::API_BASE.to_string(),
-                    note: Some("compiled into the wasm, not read at runtime".to_string()),
-                    info: rsx! {
-                        InfoButton {
-                            title: "This page calls".to_string(),
-                            what: API_BASE_WHAT.to_string(),
-                            why: API_BASE_WHY.to_string(),
-                            if_wrong: API_BASE_IF_WRONG.to_string(),
-                        }
-                    },
+            }
+        }
+    }
+}
+
+/// The two ways an automation can learn that something changed.
+#[component]
+fn PushAndPoll(conn: ConnectionResponse, jobs: Option<JobsResponse>) -> Element {
+    let tick = jobs
+        .as_ref()
+        .map(|j| format!("every {}s", (j.config.scheduler_tick_ms / 1000.0).round() as i64))
+        .unwrap_or_else(|| "unknown — jobs payload unavailable".to_string());
+    let scheduled = jobs.as_ref().map(|j| j.scheduled.len()).unwrap_or(0);
+
+    rsx! {
+        Panel {
+            title: "Push & Poll".to_string(),
+            subtitle: Some("how a job learns something happened".to_string()),
+            info: Some(rsx! {
+                InfoButton {
+                    title: "Push & Poll".to_string(),
+                    what: PP_WHAT.to_string(),
+                    why: PP_WHY.to_string(),
+                    if_wrong: PP_IF_WRONG.to_string(),
                 }
-                Row {
-                    label: "Supervised".to_string(),
-                    value: (if conn.supervised { "yes" } else { "no" }).to_string(),
+            }),
+            div { class: "space-y-2",
+                Fact {
+                    label: "Push".to_string(),
+                    value: if conn.loopback_only {
+                        "not available".to_string()
+                    } else {
+                        "no inbound route exists".to_string()
+                    },
                     note: Some(
-                        if conn.supervised {
-                            "the launcher built this process's environment".to_string()
-                        } else {
-                            "started by hand — nothing below was applied by rn".to_string()
-                        },
+                        "a webhook needs an address the sender can reach, and this one is not"
+                            .to_string(),
                     ),
                     info: rsx! {
                         InfoButton {
-                            title: "Supervised".to_string(),
-                            what: SUPERVISED_WHAT.to_string(),
-                            why: SUPERVISED_WHY.to_string(),
-                            if_wrong: SUPERVISED_IF_WRONG.to_string(),
+                            title: "Push".to_string(),
+                            what: PUSH_WHAT.to_string(),
+                            why: PUSH_WHY.to_string(),
+                            if_wrong: PUSH_IF_WRONG.to_string(),
                         }
                     },
                 }
+                Fact {
+                    label: "Poll".to_string(),
+                    value: tick,
+                    note: Some(match scheduled {
+                        0 => "no job is scheduled — nothing is due to be asked about".to_string(),
+                        1 => "1 scheduled job".to_string(),
+                        n => format!("{n} scheduled jobs"),
+                    }),
+                    info: rsx! {
+                        InfoButton {
+                            title: "Poll".to_string(),
+                            what: POLL_WHAT.to_string(),
+                            why: POLL_WHY.to_string(),
+                            if_wrong: POLL_IF_WRONG.to_string(),
+                        }
+                    },
+                }
+            }
+        }
+    }
+}
+
+/// What answers a failure. Composed of jobs, not of a notifier.
+#[component]
+fn Reaction(jobs: Option<JobsResponse>) -> Element {
+    let handlers: Vec<(String, String)> = jobs
+        .as_ref()
+        .map(|j| {
+            j.catalogue
+                .iter()
+                .filter_map(|c| c.on_failure.clone().map(|h| (c.label.clone(), h)))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    rsx! {
+        Panel {
+            title: "Reaction".to_string(),
+            subtitle: Some("what answers a failure".to_string()),
+            info: Some(rsx! {
+                InfoButton {
+                    title: "Reaction".to_string(),
+                    what: REACT_WHAT.to_string(),
+                    why: REACT_WHY.to_string(),
+                    if_wrong: REACT_IF_WRONG.to_string(),
+                }
+            }),
+            if handlers.is_empty() {
+                p { class: "max-w-3xl text-gray-400",
+                    "No job names a handler. A failure is recorded — it lands in the run \
+                     history and turns the header light red — and stops there. Nothing sends \
+                     anything, because there is nothing to send it: rn has no notifier, and \
+                     the handler is what it has instead."
+                }
+            } else {
+                ul { class: "space-y-1",
+                    for (label, handler) in handlers.iter() {
+                        li { key: "{label}", class: "flex items-baseline gap-3",
+                            span { class: "text-gray-300", "{label}" }
+                            span { class: "text-gray-400", "on failure →" }
+                            code { class: "text-gray-300", "{handler}" }
+                        }
+                    }
+                }
+            }
+            p { class: "max-w-3xl text-gray-400 mt-3",
+                "A handler is an ordinary job, so it is timed, recorded and readable from its \
+                 own row on Monitor → Jobs — and it goes one hop, never two."
             }
         }
     }
@@ -192,161 +309,6 @@ fn Origins(conn: ConnectionResponse) -> Element {
     }
 }
 
-#[component]
-fn Outbound(conn: ConnectionResponse) -> Element {
-    let enforcement = if conn.net_enforced {
-        "enforced by Deno".to_string()
-    } else {
-        format!("recorded, not enforced — {} has no permission model", conn.runtime)
-    };
-
-    rsx! {
-        Panel {
-            title: "Outbound".to_string(),
-            subtitle: Some("what job code may reach".to_string()),
-            info: Some(rsx! {
-                InfoButton {
-                    title: "Outbound network grant".to_string(),
-                    what: NET_WHAT.to_string(),
-                    why: NET_WHY.to_string(),
-                    if_wrong: NET_IF_WRONG.to_string(),
-                }
-            }),
-            div { class: "space-y-2",
-                Row {
-                    label: "Enforcement".to_string(),
-                    value: conn.runtime.clone(),
-                    note: Some(enforcement),
-                    info: rsx! {
-                        InfoButton {
-                            title: "Enforcement".to_string(),
-                            what: ENFORCE_WHAT.to_string(),
-                            why: ENFORCE_WHY.to_string(),
-                            if_wrong: ENFORCE_IF_WRONG.to_string(),
-                        }
-                    },
-                }
-            }
-
-            div { class: "mt-3",
-                p { class: "text-gray-200 font-medium mb-1", "Granted" }
-                if conn.net_granted.is_empty() {
-                    p { class: "text-gray-400",
-                        "Nothing recorded. The launcher always grants the bind address, so an \
-                         empty list means this process was not started by it — see Supervised \
-                         above."
-                    }
-                } else {
-                    ul { class: "space-y-1",
-                        for (i, host) in conn.net_granted.iter().enumerate() {
-                            li { key: "{host}", class: "flex items-baseline gap-3",
-                                span { class: "text-gray-300 font-mono", "{host}" }
-                                if i == 0 {
-                                    span { class: "text-gray-400 text-xs",
-                                        "the app's own socket — always granted, or it could not listen"
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            p { class: "max-w-3xl text-gray-400 mt-3",
-                if conn.net_extra.is_empty() {
-                    "Nothing has been added beyond the bind address. Hosts are added under "
-                } else {
-                    "Everything after the first entry came from the Extra network hosts setting under "
-                }
-                "Config → Runtime; what is listed here is what the launcher actually passed to \
-                 the runtime, which differs from the saved setting until the next restart."
-            }
-        }
-    }
-}
-
-const BIND_WHAT: &str =
-    "The interface and port the API server accepts connections on, from BACKEND_HOST and \
-     BACKEND_PORT in be/.env. 127.0.0.1 is the loopback interface — traffic that never leaves \
-     the machine — so binding there means the only clients that can reach the API are programs \
-     running on this computer. Binding 0.0.0.0 means every interface, including whatever \
-     network the machine is attached to.\n\nThe value is read once at startup. It is also one \
-     of the five variables the launcher allowlists into the sealed child environment, alongside \
-     TERM, RN_SETTINGS_PATH, RN_CORS_ORIGIN and BACKEND_PORT — see the Runtime Rules in \
-     CLAUDE.md for why that list is short.";
-
-const BIND_WHY: &str =
-    "It is the line between an app and a service, and it is one string. rn is an installed \
-     desktop app: the loopback default means a laptop on a café network is not quietly serving \
-     a control API — one that can restart processes and run automations — to everyone on it. \
-     There is no authentication on this API, and that is defensible only for as long as the \
-     socket cannot be reached from elsewhere.\n\nThe port matters for a duller reason: 3010 is \
-     what the frontend build is compiled to call, and what the launcher grants outbound so the \
-     server can bind at all.";
-
-const BIND_IF_WRONG: &str =
-    "Bound too widely, nothing appears to go wrong at all — that is the problem. The app works \
-     exactly as before, and the only visible difference is one that shows up on someone else's \
-     screen.\n\nA port already in use fails at startup rather than silently: the process exits \
-     with EADDRINUSE and the launcher reports it. A port changed without rebuilding the \
-     frontend gives you a running backend and a page that says \"backend unreachable\", because \
-     the address this page calls is compiled in — see the row below.";
-
-const URL_WHAT: &str =
-    "The base URL assembled from the host and port above, as the process reports it. It is the \
-     same string /api/status returns and the launcher prints at startup.";
-
-const URL_WHY: &str =
-    "Because it is the one value that comes from the running process rather than from a file. \
-     If it disagrees with what be/.env says, the process is running with an environment \
-     somebody else built — a stale launcher, a shell variable, a systemd unit — and that \
-     difference is otherwise invisible.";
-
-const URL_IF_WRONG: &str =
-    "If this does not match the address in your browser's address bar for the API, you are \
-     looking at two different backends. Check `./target/debug/rn --status` for which one the \
-     launcher thinks it owns, and note that an orphaned launcher can be supervising a backend \
-     nobody remembers starting.";
-
-const API_BASE_WHAT: &str =
-    "The address this page's own JavaScript calls, which is a constant compiled into the wasm \
-     bundle — API_BASE in fe/src/api/client.rs. It is not read from a config file, not fetched, \
-     and not derived from the address bar.\n\nIt is absolute because in development the two \
-     halves are served separately: dx serve on :1790 draws the page, the backend on :3010 \
-     answers it. A packaged install serves both from one origin and this becomes a relative \
-     path — see docs/packaging.md.";
-
-const API_BASE_WHY: &str =
-    "Because it is the one number here that a restart cannot change. Every other value on this \
-     page is read at startup and fixed by editing a file; this one is fixed by rebuilding the \
-     frontend. Changing BACKEND_PORT without rebuilding leaves the two disagreeing, and the \
-     symptom — \"backend unreachable\" on a backend that is plainly running — points at the \
-     wrong half.";
-
-const API_BASE_IF_WRONG: &str =
-    "If this row and the Base URL above are not the same address, that is the whole \
-     explanation for a page that cannot reach a healthy backend. Nothing else has to be wrong \
-     for it to happen, and no error message names it.";
-
-const SUPERVISED_WHAT: &str =
-    "Whether the launcher started this process, reported by RN_ENV_SEALED being set in the \
-     child. The launcher clears the environment and allowlists variables back in one at a \
-     time, so a sealed process is one whose entire environment rn constructed.";
-
-const SUPERVISED_WHY: &str =
-    "It decides whether anything else on this page is a rule or a description. The outbound \
-     grant, the CORS list and the bind address all come from the launcher building the child's \
-     environment; a backend started by hand with npdm start has whatever the shell gave it, \
-     which is usually nothing.\n\nThat is also why the grant list is empty in an unsupervised \
-     process rather than showing a default: there was no grant.";
-
-const SUPERVISED_IF_WRONG: &str =
-    "An unsupervised backend cannot restart itself either — /api/restart answers 409 rather \
-     than exiting into nothing, because nothing would start it again.\n\nIn development that is \
-     normal and expected. In an installed app it means the launcher is not in the picture, and \
-     the Runtime Rules it enforces — the bundled runtime, the cleared environment — are not \
-     being enforced by anything.";
-
 const CORS_WHAT: &str =
     "The browser origins the API will answer, from RN_CORS_ORIGIN. A browser refuses to hand a \
      page the response to a cross-origin request unless the server said that origin was \
@@ -368,47 +330,157 @@ const CORS_WHY: &str =
 const CORS_IF_WRONG: &str =
     "A refused origin fails in the browser, not on the server: the request is sent and \
      answered, and the browser then discards the response. So the backend's own log shows a \
-     200 while the page shows nothing, which is the most misleading pair of signals on this \
-     page. The browser console is where it says so, naming the origin it wanted.\n\n\
+     200 while the page shows nothing, which is the most misleading pair of signals here. The \
+     browser console is where it says so, naming the origin it wanted.\n\n\
      RN_CORS_ORIGIN replaces the list rather than extending it, so setting it to one origin \
      silently drops the other spelling.";
 
-const NET_WHAT: &str =
-    "Every host the runtime was permitted to reach, in the order the launcher assembled them: \
-     the app's own bind address first, then whatever the Extra network hosts setting adds. It \
-     is passed on the command line — --allow-net=host,host under Deno — and echoed back to the \
-     backend in RN_NET_ALLOWLIST so this page can show what was actually granted.";
+const CONN_WHAT: &str =
+    "Which direction traffic can travel here, and it is one direction. The API binds loopback, \
+     so the only clients that can reach it are programs on this machine — the browser showing \
+     this page, and the launcher. Outbound is the side that does open connections: job code \
+     calling an API, fetching a page, talking to a database.\n\nThe outbound figure is the \
+     grant the launcher assembled, not a count of connections. It always contains the app's own \
+     socket, because without it the server could not listen at all.";
 
-const NET_WHY: &str =
-    "The bind address is always first because without it the server cannot listen at all, \
-     which is why an empty list here means the launcher was not involved rather than that \
-     everything is denied.\n\nWhat is shown is the grant, not the setting. Those differ for as \
-     long as it takes to restart: saving a host adds it to settings.json, and it reaches the \
-     runtime on the next launch. The restart banner on Config → Runtime exists to make that gap \
-     visible, and this list is the other end of it.";
+const CONN_WHY: &str =
+    "Because it decides the shape of every automation you can write here, and it is invisible \
+     until someone tells you. An integration that expects to be called — a webhook from Stripe, \
+     a GitHub hook, a callback URL — has nowhere to land. One that goes and asks works fine. \
+     That is not a missing feature to be filled in later; it is what an installed desktop app \
+     on a laptop is, and the two panels below are the consequences.\n\nThere is also no \
+     authentication on this API. That is defensible exactly as long as the socket cannot be \
+     reached from anywhere else, which is why the direction matters more than it looks.";
 
-const NET_IF_WRONG: &str =
-    "Too narrow, under Deno, and the job fails with a permission error naming the exact host it \
-     wanted — which tells you what to add. Too wide and you have given back the guarantee you \
-     switched runtimes for.\n\nUnder Node or Bun neither happens, because nothing is checked. \
-     See Enforcement.";
+const CONN_IF_WRONG: &str =
+    "Bound wider than loopback, the backend now refuses to start rather than quietly working: \
+     an unauthenticated API that can restart processes and run automations, offered to whatever \
+     network the machine is on, used to look identical to a healthy one from the inside. \
+     RN_ALLOW_REMOTE=1 overrides the refusal, and docs/network.md is the order to try things in \
+     before you reach for it.\n\nThe outbound half has no such guard: under Node and Bun the \
+     list is recorded and enforced by nothing at all. See Config → Runtime to change which \
+     runtime that is.";
 
-const ENFORCE_WHAT: &str =
-    "Which runtime is executing the backend, and therefore whether the list above is a \
-     permission or a note. Deno denies everything by default and grants what the command line \
-     names, so the check happens inside the runtime, below any library. Node and Bun have no \
-     network permission model at all: the list is recorded, passed along, and consulted by \
-     nothing.";
+const INBOUND_WHAT: &str =
+    "Whether anything outside this machine can open a connection to rn. Loopback means no: the \
+     address is not routable off the host, so there is no path for an inbound request to take, \
+     firewall or not.\n\nThe default is set twice, once per language, because both halves need \
+     it before either can ask the other: be/src/config.ts reads BACKEND_HOST for the server, \
+     and launcher/src/layout.rs reads it again in bind_address() to know which address to grant \
+     outbound. A test pins the two together rather than trusting them to stay equal.";
 
-const ENFORCE_WHY: &str =
-    "It is the whole argument for running under Deno, and it is worth being precise about \
-     because the alternative is a false sense of one. A dependency that quietly calls home is \
-     stopped by a runtime check; it is not stopped by a list a runtime never reads. The same \
-     configuration means two different things depending on the row above it.\n\nSwitch runtimes \
-     under Config → Runtime. What this page says will change with it.";
+const INBOUND_WHY: &str =
+    "It is the reason the Push row below says what it says. Nothing external can start a job \
+     here, which removes a whole category of automation and a whole category of exposure at the \
+     same time.\n\nWorth being exact about what carries it: the bind address, and now a \
+     guard. There is still no authentication on this API — POST /api/jobs/:id is an ordinary \
+     endpoint that happens to sit on an address the outside cannot route to — so the backend \
+     refuses to start at all on a non-loopback host unless RN_ALLOW_REMOTE=1 says you meant it. \
+     Widening the bind is a deliberate act in two places rather than a one-character edit, \
+     which is what lets this row report an invariant instead of a default.";
 
-const ENFORCE_IF_WRONG: &str =
-    "The failure mode is believing the allowlist is doing something it is not. Under Node and \
-     Bun this page shows exactly the same list, granted in exactly the same words, and nothing \
-     enforces a line of it — which is why the runtime is named beside it rather than left for \
-     you to remember.";
+const INBOUND_IF_WRONG: &str =
+    "If this reads as reachable from the network, two things were changed on purpose: \
+     BACKEND_HOST was widened — 0.0.0.0 is every interface — and RN_ALLOW_REMOTE=1 was set to \
+     let the process start anyway. Nothing authenticates the API in that state, so whatever \
+     stands in front of it is doing the whole job.\n\nThe safer shape is almost always a \
+     tunnel to the loopback socket, which needs no change here at all. docs/network.md has the \
+     options in order.";
+
+const OUTBOUND_WHAT: &str =
+    "How many hosts the runtime was permitted to reach, and whether the permission is real. The \
+     launcher assembles the list — the bind address plus whatever the Extra network hosts \
+     setting adds — and passes it on the command line.";
+
+const OUTBOUND_WHY: &str =
+    "Only Deno checks it. Deno denies everything by default and grants what the command line \
+     names, so a dependency that quietly calls home is stopped by the runtime, below any \
+     library. Node and Bun have no network permission model: the same list is assembled, passed \
+     and consulted by nothing.\n\nThat difference is the whole argument for running under Deno, \
+     and it is worth stating plainly because the alternative is a false sense of one.";
+
+const OUTBOUND_IF_WRONG: &str =
+    "Under Deno, too narrow and a job fails with a permission error naming the host it wanted — \
+     which tells you what to add. Under Node or Bun neither happens, because nothing is checked.";
+
+const PP_WHAT: &str =
+    "The two ways any automation can find out that something changed. Push: the other side \
+     calls you, the moment it happens. Poll: you ask, on a cadence you choose, and learn about \
+     it on the next ask.\n\nrn does one of them. Nothing can call in — see the panel above — so \
+     every trigger here is either the scheduler asking whether a job is due, or you pressing \
+     Run now.";
+
+const PP_WHY: &str =
+    "Because the choice is usually made for you by reachability, not by preference, and knowing \
+     which one you are on tells you what your automation's latency actually is. A polled job \
+     does not react in real time; it reacts within one interval, and the interval is a number \
+     you can read on this page rather than a property you have to infer.\n\nIt is also the \
+     honest answer to \"why is there no webhook page\". Not an omission — a consequence.";
+
+const PP_IF_WRONG: &str =
+    "The mistake is expecting push latency from a polled job. A job on a fifteen-minute \
+     schedule learns about a change up to fifteen minutes late, plus up to one scheduler tick, \
+     and nothing about that is a fault to debug.\n\nThe other mistake is polling faster to \
+     compensate. That multiplies requests against someone else's rate limit to shorten a window \
+     that a person usually cannot perceive anyway.";
+
+const PUSH_WHAT: &str =
+    "Something outside calls rn to say a thing happened — a webhook. It needs two things this \
+     install does not have: a route that accepts it, and an address the sender can actually \
+     reach. The API binds loopback, so a request from the internet has no path here even if a \
+     route existed.";
+
+const PUSH_WHY: &str =
+    "Worth knowing because it is the first thing people look for, and looking for it is time \
+     spent on a page that is not there. Push would mean a tunnel or a public host, an \
+     authenticated endpoint, and replay and signature handling — a service's problem set, \
+     adopted by a desktop app to save an interval of latency.\n\nIf you need it, the shape that \
+     fits is a small forwarder you do control, writing somewhere a polled job reads.";
+
+const PUSH_IF_WRONG: &str =
+    "Nothing fails visibly. You configure a webhook on the other side, it fires, nothing here \
+     ever receives it, and the sender's delivery log is the only place the failure appears.";
+
+const POLL_WHAT: &str =
+    "The scheduler wakes on this cadence and asks whether any job is due. It is not how often \
+     jobs run — a daily job still runs once a day — only the resolution with which \"due\" is \
+     noticed, so a run can start up to one tick late.\n\nPolling a clock rather than setting a \
+     timer per job is deliberate: a long timer is wrong across a laptop suspend, and asking \
+     \"is anything due?\" every half minute comes out right whether the machine slept or not.";
+
+const POLL_WHY: &str =
+    "It is the worst case for how late a scheduled run can be, and the number to reach for when \
+     a schedule looks like it is drifting.\n\nMissed slots are not caught up. If rn is down at \
+     03:00 the 03:00 run does not happen and is not queued for startup — which is defensible \
+     only because the next fire time is visible on Monitor → Jobs.";
+
+const POLL_IF_WRONG: &str =
+    "A schedule cannot be finer than the interval that checks it, so a job asking for every two \
+     minutes on a thirty-second tick is fine, and one asking for every ten seconds is not — it \
+     fires at the tick's cadence instead, quietly.\n\nWith no scheduled jobs at all, the \
+     scheduler still ticks and finds nothing. Nothing is wrong; there is simply nothing to ask \
+     about yet.";
+
+const REACT_WHAT: &str =
+    "What runs when a job fails. A job can name another job's id, and the runner catches the \
+     failure, records it, then runs that handler — handing it the whole failed run: the error, \
+     the duration, and the steps it got through before it broke.\n\nThe handler is an ordinary \
+     job. It is tracked, timed and recorded like any other, and you can read its source from \
+     its own row.";
+
+const REACT_WHY: &str =
+    "It is what rn has instead of a notification system. Rather than SMTP settings, a template \
+     and a delivery log, you write a job — and that job can do anything a job can do: write a \
+     file, call a webhook, open a ticket, clean up after the run that broke. The failure path \
+     becomes something you can read the code of, which nothing built into a settings page ever \
+     is.\n\nIt is also the honest counterpart to the Push panel. Nothing pushes *to* rn; this \
+     is how rn pushes outward when something goes wrong.";
+
+const REACT_IF_WRONG: &str =
+    "It goes one hop and no further. A handler run never starts a handler of its own, so a job \
+     naming itself — or a pair naming each other — stops after one extra run rather than \
+     recursing.\n\nTwo mistakes announce themselves poorly. Naming an id that does not exist \
+     fails silently by nature, since the job it names cannot fail; the runner logs \
+     on-failure-missing instead. And a handler that throws is recorded as its own failed run, \
+     but deliberately does not replace the original error — the answer to \"why did my job \
+     fail\" must not become a message about a different job.";
