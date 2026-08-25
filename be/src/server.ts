@@ -212,6 +212,11 @@ export function createApp() {
                     // "undefined means the default", so the page never has to
                     // know what the default is.
                     timeoutMs: j.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+                    // Same argument as the schedule above: a failure path
+                    // nobody can see is indistinguishable from no failure
+                    // path, and the user only finds out which they had when
+                    // the job fails.
+                    ...(j.onFailure === undefined ? {} : { onFailure: j.onFailure }),
                 })),
                 dryRun: config.dryRun,
                 // What fires on its own, and when next. Shown on the Jobs page

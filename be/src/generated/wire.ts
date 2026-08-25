@@ -22,7 +22,15 @@ source: string,
  * Wall-clock ceiling for one run, already resolved to the effective
  * value so no consumer needs to know the default.
  */
-timeoutMs: number, };
+timeoutMs: number, 
+/**
+ * The id of the job that runs when this one fails, if it names one.
+ *
+ * Sent so the row can say `on failure → notify-me`. A failure path
+ * nobody can see is indistinguishable from no failure path at all,
+ * which is the same argument the schedule is surfaced on.
+ */
+onFailure?: string | null, };
 
 /**
  * GET /api/jobs/:id/errors.
@@ -89,6 +97,27 @@ export type JobRun = { jobId: string, startedAt: number, ms: number, trigger: Tr
  */
 dryRun: boolean, changed: boolean, skipped?: string | null, error?: string | null, summary: { [key in string]: JsonValue }, 
 /**
+ * What the run did on the way, oldest first. Bounded by the runner —
+ * a job that steps once per file over ten thousand files would
+ * otherwise write ten thousand entries into a record that is read
+ * whole on every request. When entries are dropped the runner leaves a
+ * `steps-truncated` entry in their place saying how many, because a
+ * silent cap is worse than none.
+ *
+ * Empty for a run recorded before steps were kept, which is not the
+ * same as a run that reported none.
+ */
+steps: Array<JobStep>, 
+/**
+ * For a run triggered by a failure, the id of the job that failed.
+ *
+ * Without it the second record reads as an unexplained run that
+ * happened to start at the same moment as a failure. With it the page
+ * can say which failure it answers, which is the difference between
+ * two records being correct and being confusing.
+ */
+causedBy?: string | null, 
+/**
  * Absent in the stored record, present when served.
  */
 outcome?: Outcome | null, };
@@ -102,6 +131,33 @@ export type JobRunResult = { id: string, summary: { [key in string]: JsonValue }
  * GET /api/jobs/:id/source.
  */
 export type JobSource = { id: string, path: string, content: string, };
+
+/**
+ * One thing a job did on the way, as `ctx.step()` reported it.
+ *
+ * The names and details are the same ones `log.ts` writes to stdout, which
+ * the launcher inherits rather than captures — from a `.desktop` launcher
+ * those lines go nowhere at all. Keeping them on the run turns "deliberate
+ * failure" into the five steps that ran before it and what each one saw,
+ * which is the difference between a record and a verdict.
+ */
+export type JobStep = { 
+/**
+ * Job-local: `scanned`, not `prune-profiles:scanned`. The prefix
+ * exists on the stdout line to say which job spoke; here the run
+ * already says that.
+ */
+name: string, 
+/**
+ * Epoch ms, when the step was reported.
+ */
+at: number, 
+/**
+ * Counts, sizes, paths — the same free-form shape as `summary`, for
+ * the same reason: a step that reports facts can become an
+ * explanation, and one that reports prose cannot.
+ */
+detail: { [key in string]: JsonValue }, };
 
 /**
  * GET /api/jobs.
@@ -167,4 +223,4 @@ nextRunAt: number, };
 /**
  * How a run was started.
  */
-export type Trigger = "manual" | "schedule";
+export type Trigger = "manual" | "schedule" | "failure";

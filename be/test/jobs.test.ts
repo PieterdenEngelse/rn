@@ -3,12 +3,13 @@ import assert from "node:assert/strict";
 import { mkdtemp, writeFile, utimes, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, isAbsolute } from "node:path";
-import { runJob } from "../src/jobs/run.ts";
+import { runJob, STEP_HEAD, STEP_TAIL, STEP_TRUNCATED } from "../src/jobs/run.ts";
 import { JOBS, jobById } from "../src/jobs/index.ts";
 import * as scheduler from "../src/jobs/scheduler.ts";
 import * as history from "../src/jobs/history.ts";
 import { isArtifact, pruneProfiles } from "../src/jobs/prune-profiles.ts";
 import type { Job } from "../src/jobs/types.ts";
+import type { JobRun } from "../src/generated/wire.ts";
 import * as running from "../src/running.ts";
 import { config } from "../src/config.ts";
 
@@ -439,10 +440,94 @@ test("a scheduled run is recorded as scheduled", async () => {
     assert.equal(history.list()[0]?.trigger, "schedule");
 });
 
+test("what a job reported on the way is kept, not only written to stdout", async () => {
+    const job = probe({
+        async run(ctx) {
+            ctx.step("scanned", { files: 412 });
+            ctx.step("deleted", { files: 3, bytes: 900 });
+            return { summary: {}, changed: true };
+        },
+    });
+    await runJob(job);
+
+    const [run] = history.list();
+    assert.deepEqual(run!.steps.map((s) => s.name), ["scanned", "deleted"]);
+    assert.equal(run!.steps[0]!.detail.files, 412);
+    assert.ok(run!.steps[0]!.at >= run!.startedAt, "each step is stamped");
+});
+
+test("a failed run keeps the steps that ran before it broke", async () => {
+    // The payoff: an error log that says only "boom" cannot be read, and this
+    // is the run nobody was watching.
+    const job = probe({
+        async run(ctx) {
+            ctx.step("scanned", { files: 412 });
+            throw new Error("boom");
+        },
+    });
+    await assert.rejects(runJob(job));
+
+    const [failure] = history.failuresFor("probe");
+    assert.equal(failure?.error, "boom");
+    assert.deepEqual(failure!.steps.map((s) => s.name), ["scanned"]);
+});
+
+test("a job that steps in a loop is capped, and says how many it dropped", async () => {
+    const total = STEP_HEAD + STEP_TAIL + 500;
+    const job = probe({
+        async run(ctx) {
+            for (let i = 0; i < total; i += 1) ctx.step("file", { i });
+            return { summary: {}, changed: true };
+        },
+    });
+    await runJob(job);
+
+    const { steps } = history.list()[0]!;
+    assert.equal(steps.length, STEP_HEAD + STEP_TAIL + 1, "both ends, plus the marker");
+
+    // The ends are the two things a trace is read for: how it started, how it
+    // ended. Neither may be the part that was thrown away.
+    assert.equal(steps[0]!.detail.i, 0);
+    assert.equal(steps.at(-1)!.detail.i, total - 1);
+
+    const marker = steps[STEP_HEAD]!;
+    assert.equal(marker.name, STEP_TRUNCATED, "the gap is marked, never silent");
+    assert.equal(marker.detail.dropped, 500);
+    // Chronological: the marker stands where the omitted steps were.
+    assert.ok(marker.at >= steps[STEP_HEAD - 1]!.at);
+    assert.ok(marker.at <= steps[STEP_HEAD + 1]!.at);
+});
+
+test("a run at the cap is not marked as truncated", async () => {
+    const job = probe({
+        async run(ctx) {
+            for (let i = 0; i < STEP_HEAD + STEP_TAIL; i += 1) ctx.step("file", { i });
+            return { summary: {}, changed: true };
+        },
+    });
+    await runJob(job);
+
+    const { steps } = history.list()[0]!;
+    assert.equal(steps.length, STEP_HEAD + STEP_TAIL);
+    assert.equal(steps.some((s) => s.name === STEP_TRUNCATED), false);
+});
+
+test("a record written before steps existed reads as an empty trace, not undefined", async () => {
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(config.jobRunsPath, JSON.stringify({
+        runs: [{ jobId: "old", startedAt: 1, ms: 1, trigger: "manual", dryRun: false,
+                 changed: true, summary: {} }],
+        failures: [],
+    }));
+    const fresh = await import(`../src/jobs/history.ts?steps=${Date.now()}`);
+    // The wire type says every run has a trace; what is served has to agree.
+    assert.deepEqual(fresh.list()[0].steps, []);
+});
+
 test("outcome separates a skip from a run that changed nothing", () => {
     const base = {
         jobId: "x", startedAt: 0, ms: 1, trigger: "manual" as const,
-        dryRun: false, summary: {},
+        dryRun: false, summary: {}, steps: [],
     };
     // Both changed nothing; only one of them has a reason worth reading.
     assert.equal(history.outcome({ ...base, changed: false }), "unchanged");
@@ -492,6 +577,228 @@ test("a job's source path is absolute, so reading it never depends on cwd", () =
     for (const job of JOBS) {
         assert.ok(isAbsolute(job.source), `${job.id}: ${job.source}`);
     }
+});
+
+// ---- failure handlers ---------------------------------------------------
+
+/**
+ * Put jobs in the catalogue for the duration of one test.
+ *
+ * `runJob` looks a handler up with `jobById`, which reads the real registry —
+ * deliberately, so there cannot be a second list of jobs that disagrees with
+ * the first. That leaves a test with nowhere to put a job, so it borrows the
+ * real one and gives it back. Same shape as the config casts above.
+ */
+async function registered<T>(jobs: Job[], fn: () => Promise<T>): Promise<T> {
+    const registry = JOBS as Job[];
+    const before = registry.length;
+    registry.push(...jobs);
+    try {
+        return await fn();
+    } finally {
+        registry.length = before;
+    }
+}
+
+/** Collect the structured log lines written while `fn` runs. */
+async function logged(fn: () => Promise<void>): Promise<Record<string, unknown>[]> {
+    const lines: Record<string, unknown>[] = [];
+    const real = console.log;
+    console.log = (...args: unknown[]) => {
+        try {
+            lines.push(JSON.parse(String(args[0])));
+        } catch {
+            // Not one of ours; ignore rather than fail the test on it.
+        }
+    };
+    try {
+        await fn();
+    } finally {
+        console.log = real;
+    }
+    return lines;
+}
+
+test("a failing job runs the handler it names, and hands it the failure", async () => {
+    let seen: JobRun | undefined;
+    const handler: Job = {
+        id: "notify-me", label: "Notify me",
+        info: { what: "w", why: "y", ifWrong: "i" },
+        source: import.meta.filename,
+        async run(ctx) {
+            seen = ctx.cause;
+            return { summary: {}, changed: true };
+        },
+    };
+    const failing = probe({
+        id: "breaks",
+        onFailure: "notify-me",
+        async run(ctx) {
+            ctx.step("scanned", { files: 7 });
+            throw new Error("boom");
+        },
+    });
+
+    await registered([handler, failing], async () => {
+        await assert.rejects(runJob(failing), /boom/);
+    });
+
+    // Not "something failed": the handler can say which job, how long it ran,
+    // and what it had already seen — which is the point of passing the run.
+    assert.equal(seen?.jobId, "breaks");
+    assert.equal(seen?.error, "boom");
+    assert.deepEqual(seen?.steps.map((s) => s.name), ["scanned"]);
+});
+
+test("the handler's run is recorded as its own, and says which failure it answers", async () => {
+    const handler: Job = {
+        id: "notify-me", label: "Notify me",
+        info: { what: "w", why: "y", ifWrong: "i" },
+        source: import.meta.filename,
+        async run() {
+            return { summary: {}, changed: true };
+        },
+    };
+    const failing = probe({
+        id: "breaks",
+        onFailure: "notify-me",
+        async run() {
+            throw new Error("boom");
+        },
+    });
+
+    await registered([handler, failing], async () => {
+        await assert.rejects(runJob(failing));
+    });
+
+    // Two records, which is correct — and only readable because the second
+    // says why it exists.
+    const runs = history.list();
+    assert.equal(runs.length, 2);
+    assert.equal(runs[0]?.jobId, "notify-me", "newest first");
+    assert.equal(runs[0]?.trigger, "failure");
+    assert.equal(runs[0]?.causedBy, "breaks");
+    assert.equal(runs[1]?.jobId, "breaks");
+    assert.equal(runs[1]?.causedBy, undefined, "an ordinary run answers nothing");
+});
+
+test("a job that succeeds never runs its handler", async () => {
+    let ran = false;
+    const handler: Job = {
+        id: "notify-me", label: "Notify me",
+        info: { what: "w", why: "y", ifWrong: "i" },
+        source: import.meta.filename,
+        async run() {
+            ran = true;
+            return { summary: {}, changed: true };
+        },
+    };
+    const fine = probe({ id: "fine", onFailure: "notify-me" });
+
+    await registered([handler, fine], async () => {
+        await runJob(fine);
+    });
+    assert.equal(ran, false);
+    assert.equal(history.list().length, 1);
+});
+
+test("a job whose handler is itself terminates instead of recursing", async () => {
+    let calls = 0;
+    const loop = probe({
+        id: "loop",
+        onFailure: "loop",
+        async run() {
+            calls += 1;
+            throw new Error("boom");
+        },
+    });
+
+    await registered([loop], async () => {
+        await assert.rejects(runJob(loop));
+    });
+
+    // One hop: the original, and the handler run. The handler run is already a
+    // handler, so it starts nothing.
+    assert.equal(calls, 2);
+    assert.equal(history.list().length, 2);
+});
+
+test("two jobs that name each other terminate", async () => {
+    const calls: string[] = [];
+    const a = probe({
+        id: "ping", onFailure: "pong",
+        async run() { calls.push("ping"); throw new Error("boom"); },
+    });
+    const b = probe({
+        id: "pong", onFailure: "ping",
+        async run() { calls.push("pong"); throw new Error("boom"); },
+    });
+
+    await registered([a, b], async () => {
+        await assert.rejects(runJob(a));
+    });
+    assert.deepEqual(calls, ["ping", "pong"]);
+});
+
+test("a refusal to go a second hop is logged, never silent", async () => {
+    const loop = probe({
+        id: "loop", onFailure: "loop",
+        async run() { throw new Error("boom"); },
+    });
+
+    const lines = await logged(async () => {
+        await registered([loop], async () => {
+            await assert.rejects(runJob(loop));
+        });
+    });
+    const refusal = lines.find((l) => l.step === "on-failure-refused");
+    assert.ok(refusal, "the guard says it fired");
+    assert.equal(refusal!.handler, "loop");
+});
+
+test("an onFailure naming a job that does not exist is reported, not swallowed", async () => {
+    // Nothing else would ever report this: the job it names does not exist, so
+    // it cannot fail. The user would believe something was watching.
+    const failing = probe({
+        id: "breaks", onFailure: "typo-in-this-id",
+        async run() { throw new Error("boom"); },
+    });
+
+    const lines = await logged(async () => {
+        await registered([failing], async () => {
+            await assert.rejects(runJob(failing), /boom/);
+        });
+    });
+    const missing = lines.find((l) => l.step === "on-failure-missing");
+    assert.ok(missing, "the typo is named");
+    assert.equal(missing!.handler, "typo-in-this-id");
+    assert.equal(history.list().length, 1, "and nothing extra was recorded");
+});
+
+test("a handler that fails does not replace the error the caller asked about", async () => {
+    const handler: Job = {
+        id: "broken-handler", label: "Broken handler",
+        info: { what: "w", why: "y", ifWrong: "i" },
+        source: import.meta.filename,
+        async run() {
+            throw new Error("the handler is broken too");
+        },
+    };
+    const failing = probe({
+        id: "breaks", onFailure: "broken-handler",
+        async run() { throw new Error("boom"); },
+    });
+
+    await registered([handler, failing], async () => {
+        // The original message survives — a broken handler must not rewrite
+        // the answer to "why did my job fail".
+        await assert.rejects(runJob(failing), /^Error: boom$/);
+    });
+
+    // It is still recorded as its own failed run, so the handler being broken
+    // is itself visible rather than only inferable.
+    assert.equal(history.failuresFor("broken-handler").length, 1);
+    assert.equal(history.failuresFor("breaks").length, 1);
 });
 
 // ---- the error log ------------------------------------------------------

@@ -1,6 +1,6 @@
 use crate::api::{
     fetch_job_errors, fetch_job_source, fetch_jobs, run_job, CatalogueJob, JobErrors, JobRun,
-    JobRunResult, JobSource, JobsResponse, Outcome, ScheduledJob, Trigger,
+    JobRunResult, JobSource, JobStep, JobsResponse, Outcome, ScheduledJob, Trigger,
 };
 use crate::components::param::PARAM_INPUT_ROW_CLASS;
 use crate::components::{InfoButton, Panel};
@@ -33,6 +33,14 @@ pub fn MonitorJobs() -> Element {
                         Panel {
                             title: "Recent runs".to_string(),
                             subtitle: Some("including the ones nobody was watching".to_string()),
+                            info: Some(rsx! {
+                                InfoButton {
+                                    title: "Recent runs".to_string(),
+                                    what: STEPS_WHAT.to_string(),
+                                    why: STEPS_WHY.to_string(),
+                                    if_wrong: STEPS_IF_WRONG.to_string(),
+                                }
+                            }),
                             RecentRuns { runs: j.recent.clone() }
                         }
                     }
@@ -52,6 +60,63 @@ pub fn MonitorJobs() -> Element {
         }
     }
 }
+
+const ON_FAILURE_WHAT: &str =
+    "The id of another job that runs when this one fails. The runner catches the failure, \
+     records it, then looks that id up in the same catalogue this page lists and runs it — \
+     handing it the whole failed run: the error, how long it ran, and the steps it got through \
+     before it broke. The handler is an ordinary job, so it is tracked, timed and recorded like \
+     any other, and you can read its source from its own row.";
+
+const ON_FAILURE_WHY: &str =
+    "It is what rn has instead of a notification system. Rather than SMTP settings, a template \
+     and a delivery log, you write a job — and that job can do anything a job can do: write a \
+     file, call a webhook, open a ticket, run a second automation that cleans up after the \
+     first. The failure path becomes something you can read the code of, which nothing built \
+     into a settings page ever is.\n\nOne failure therefore produces two run records: the job \
+     that broke, and the handler answering it. Recent runs distinguishes them — the second says \
+     \"on failure of <the job that broke>\" rather than looking like an unexplained run that \
+     started at the same moment.";
+
+const ON_FAILURE_IF_WRONG: &str =
+    "It goes one hop and no further. A handler run never starts a handler of its own, so a job \
+     that names itself, or a pair that name each other, stops after one extra run instead of \
+     recursing. The refusal is written to the log rather than swallowed.\n\nTwo mistakes are \
+     worth knowing about because neither announces itself. Naming a job id that does not exist \
+     fails silently by nature — the job it names cannot fail, so nothing would ever report it; \
+     the runner logs on-failure-missing instead. And a handler that throws is recorded as its \
+     own failed run, but is deliberately not allowed to replace the original error: the answer \
+     to \"why did my job fail\" must not become a message about a different job.";
+
+const STEPS_WHAT: &str =
+    "Every run of every job, newest first, with what it did on the way. A job reports its \
+     progress by calling ctx.step(\"scanned\", { files: 412 }) — a name and a bag of facts. \
+     Those calls used to go only to stdout, which the launcher inherits rather than captures, \
+     so from a desktop launcher they went nowhere at all. They are now kept on the run itself: \
+     open a run's steps and you see each one, how long after the start it happened, and what it \
+     reported. The shape is JobStep in shared/src/jobs.rs, so this list and the backend's \
+     record cannot disagree about it.\n\nThe trigger column says how each run started: manual, \
+     schedule, or \"on failure of <a job>\" for a run that exists because another job failed \
+     and named this one as its handler. See the on-failure button on that job's row.";
+
+const STEPS_WHY: &str =
+    "It is the difference between a verdict and a record. A failed run's message says the last \
+     thing that went wrong; the steps before it say what the job had already seen when it did — \
+     how many files it found, which path it was on, whether it had changed anything yet. That \
+     is the question you actually have at 03:00 the next morning, and stdout cannot answer it \
+     because nobody was there to read it.\n\nThe list is bounded on purpose. A job that steps \
+     once per file over ten thousand files would otherwise write ten thousand entries into a \
+     record that is read whole on every request. The runner keeps the first fifty and the last \
+     fifty — how a run started and how it ended, which are the two things a trace is read for.";
+
+const STEPS_IF_WRONG: &str =
+    "When steps were dropped you will see a row named steps-truncated with a dropped count, \
+     standing where they were. That is deliberate: a silently shortened trace is worse than a \
+     marked one, because a reader cannot tell a short run from a trimmed one.\n\nA run showing \
+     no steps at all means one of two things — the job never called ctx.step(), or the run was \
+     recorded before traces were kept. Older records read as an empty trace rather than as \
+     missing data.\n\nRuns are capped at 200 and failures kept separately at 50, so this list \
+     is what is retained, never a lifetime total.";
 
 const DRY_RUN_WHAT: &str =
     "A global safety switch, read once at startup from DRY_RUN in be/.env. The backend hands \
@@ -181,6 +246,21 @@ fn JobRow(
                         None => rsx! {
                             span { class: "text-gray-400 text-xs", "on request only" }
                         },
+                    }
+                    // Only when there is one. A row that said "on failure →
+                    // nothing" would be noise on every job that has no handler,
+                    // which today is all of them.
+                    if let Some(handler) = job.on_failure.as_ref() {
+                        span { class: "text-gray-300 text-xs", "on failure → {handler}" }
+                        // Inline beside its subject rather than in the info
+                        // column — the exception CLAUDE.md names for a button
+                        // that belongs to one control rather than to a row.
+                        InfoButton {
+                            title: "On failure → {handler}".to_string(),
+                            what: ON_FAILURE_WHAT.to_string(),
+                            why: ON_FAILURE_WHY.to_string(),
+                            if_wrong: ON_FAILURE_IF_WRONG.to_string(),
+                        }
                     }
                 }
                 div { class: "flex items-center gap-3",
@@ -410,6 +490,20 @@ fn trigger_label(t: &Trigger) -> &'static str {
     match t {
         Trigger::Manual => "manual",
         Trigger::Schedule => "schedule",
+        Trigger::Failure => "on failure",
+    }
+}
+
+/// How a run was started, naming the failure it answers when it has one.
+///
+/// A failure produces two records — the job that broke, and the handler it
+/// named — and the second is only readable if it says which failure it is
+/// about. "on failure of prune-profiles" is that sentence; a bare "on failure"
+/// beside a timestamp is a run the reader has to correlate by hand.
+fn trigger_cell(run: &JobRun) -> String {
+    match run.caused_by.as_ref() {
+        Some(cause) => format!("{} of {cause}", trigger_label(&run.trigger)),
+        None => trigger_label(&run.trigger).to_string(),
     }
 }
 
@@ -429,24 +523,119 @@ fn RecentRuns(runs: Vec<JobRun>) -> Element {
     rsx! {
         div { class: "rounded border border-gray-600 overflow-hidden",
             for (i, run) in runs.iter().enumerate() {
-                div {
-                    class: if i % 2 == 1 { "flex items-center gap-3 px-3 py-2 bg-gray-800" } else { "flex items-center gap-3 px-3 py-2 bg-gray-700" },
-                    span { class: "text-gray-400 text-xs w-24 shrink-0", "{ago(run.started_at)}" }
-                    code { class: "text-gray-200 text-xs w-48 shrink-0", "{run.job_id}" }
-                    span { class: "text-gray-400 text-xs w-20 shrink-0", "{trigger_label(&run.trigger)}" }
-                    span { class: "text-xs w-24 shrink-0", OutcomeBadge { outcome: run.outcome.clone() } }
-                    span { class: "text-gray-400 text-xs w-16 shrink-0", "{run.ms as i64}ms" }
-                    span { class: "text-gray-300 text-xs flex-1 truncate",
-                        if let Some(e) = run.error.as_ref() {
-                            "{e}"
-                        } else if let Some(sk) = run.skipped.as_ref() {
-                            "{sk}"
-                        }
+                RunRow { key: "{run.job_id}-{run.started_at}", run: run.clone(), alt: i % 2 == 1 }
+            }
+        }
+    }
+}
+
+/// One run in the list, with its trace behind a toggle.
+///
+/// Its own component because the toggle is per-row state, and a signal declared
+/// in the list would be one signal shared by every row. Collapsed by default:
+/// the list is for scanning, and a trace opened for one run is a question about
+/// that run.
+#[component]
+fn RunRow(run: JobRun, alt: bool) -> Element {
+    let mut open = use_signal(|| false);
+
+    rsx! {
+        div { class: if alt { "px-3 py-2 bg-gray-800" } else { "px-3 py-2 bg-gray-700" },
+            div { class: "flex items-center gap-3",
+                span { class: "text-gray-400 text-xs w-24 shrink-0", "{ago(run.started_at)}" }
+                code { class: "text-gray-200 text-xs w-48 shrink-0", "{run.job_id}" }
+                span { class: "text-gray-400 text-xs w-40 shrink-0", "{trigger_cell(&run)}" }
+                span { class: "text-xs w-24 shrink-0", OutcomeBadge { outcome: run.outcome.clone() } }
+                span { class: "text-gray-400 text-xs w-16 shrink-0", "{run.ms as i64}ms" }
+                span { class: "text-gray-300 text-xs flex-1 truncate",
+                    if let Some(e) = run.error.as_ref() {
+                        "{e}"
+                    } else if let Some(sk) = run.skipped.as_ref() {
+                        "{sk}"
                     }
+                }
+                if !run.steps.is_empty() {
+                    // Cyan: a secondary action, per the colour rules.
+                    button {
+                        class: "cursor-pointer text-xs shrink-0",
+                        style: "color: #22d3ee;",
+                        onclick: move |_| {
+                            let was = open();
+                            open.set(!was);
+                        },
+                        if open() { "Hide steps" } else { "{step_count(run.steps.len())}" }
+                    }
+                }
+            }
+            if open() {
+                div { class: "mt-2", StepTrace { steps: run.steps.clone() } }
+            }
+        }
+    }
+}
+
+/// "1 step", "12 steps" — a count that reads as English at one.
+fn step_count(n: usize) -> String {
+    if n == 1 { "1 step".to_string() } else { format!("{n} steps") }
+}
+
+/// What a run reported on the way, oldest first.
+///
+/// The offsets are measured from the first step rather than shown as clock
+/// times: the question a trace answers is "where did the run spend itself", and
+/// three absolute timestamps to the millisecond make the reader do that
+/// subtraction by hand.
+///
+/// A `steps-truncated` row is rendered like any other step, because it is one —
+/// the runner writes it into the record where the dropped entries were, with a
+/// `dropped` count. That keeps the record self-describing rather than requiring
+/// this page to know a magic name.
+#[component]
+fn StepTrace(steps: Vec<JobStep>) -> Element {
+    if steps.is_empty() {
+        return rsx! {
+            p { class: "text-gray-400 text-xs max-w-3xl",
+                "No steps on record — either the job reported none, or this run predates the "
+                "trace being kept."
+            }
+        };
+    }
+
+    let first = steps.first().map(|s| s.at).unwrap_or_default();
+
+    rsx! {
+        div { class: "rounded border border-gray-600 overflow-hidden",
+            for (i, s) in steps.iter().enumerate() {
+                div {
+                    class: if i % 2 == 1 { "flex items-start gap-3 px-3 py-1.5 bg-gray-900" } else { "flex items-start gap-3 px-3 py-1.5 bg-gray-800" },
+                    span { class: "text-gray-400 text-xs w-16 shrink-0 text-right", "+{offset(s.at - first)}" }
+                    code { class: "text-gray-200 text-xs w-48 shrink-0", "{s.name}" }
+                    span { class: "text-gray-300 text-xs flex-1 break-words", "{detail_line(&s.detail)}" }
                 }
             }
         }
     }
+}
+
+/// "0ms", "240ms", "4.2s" — how far into the run a step happened.
+fn offset(ms: f64) -> String {
+    if ms < 1000.0 {
+        return format!("{}ms", ms.max(0.0).round() as i64);
+    }
+    format!("{:.1}s", ms / 1000.0)
+}
+
+/// A step's facts on one line: `files=412 bytes=900`.
+///
+/// Same rule as the run summary — the backend reports counts, durations and
+/// paths rather than prose, and flattening them into a sentence here would
+/// throw away the reason for the rule.
+fn detail_line(detail: &std::collections::BTreeMap<String, serde_json::Value>) -> String {
+    detail
+        .iter()
+        .map(|(k, v)| format!("{k}={}", render_value(v)))
+        .collect::<Vec<_>>()
+        .join("  ")
 }
 
 /// "4m ago", from an epoch-millisecond instant in the past.
@@ -521,18 +710,49 @@ fn ErrorLog(errors: JobErrors) -> Element {
             }
             div { class: "rounded border border-gray-600 overflow-hidden",
                 for (i, run) in errors.failures.iter().enumerate() {
-                    div {
-                        class: if i % 2 == 1 { "flex items-start gap-3 px-3 py-2 bg-gray-800" } else { "flex items-start gap-3 px-3 py-2 bg-gray-700" },
-                        span { class: "text-gray-400 w-24 shrink-0", "{ago(run.started_at)}" }
-                        span { class: "text-gray-400 w-20 shrink-0", "{trigger_label(&run.trigger)}" }
-                        span { class: "text-gray-400 w-16 shrink-0", "{run.ms as i64}ms" }
-                        // The message wraps rather than truncating: a truncated
-                        // error is no error.
-                        span { class: "text-red-400 flex-1 break-words",
-                            {run.error.clone().unwrap_or_default()}
-                        }
+                    FailureRow { key: "{run.started_at}", run: run.clone(), alt: i % 2 == 1 }
+                }
+            }
+        }
+    }
+}
+
+/// One failure, with the steps that ran before it.
+///
+/// Expanded by default, unlike a row in Recent runs. The reason is the whole
+/// point of keeping steps: a message alone says what broke, and the trace says
+/// what the job had already seen when it did. Someone who opened the error log
+/// is already asking that question, so making them click again to see the
+/// answer would be hiding it.
+#[component]
+fn FailureRow(run: JobRun, alt: bool) -> Element {
+    let mut open = use_signal(|| true);
+
+    rsx! {
+        div { class: if alt { "px-3 py-2 bg-gray-800" } else { "px-3 py-2 bg-gray-700" },
+            div { class: "flex items-start gap-3",
+                span { class: "text-gray-400 w-24 shrink-0", "{ago(run.started_at)}" }
+                span { class: "text-gray-400 w-40 shrink-0", "{trigger_cell(&run)}" }
+                span { class: "text-gray-400 w-16 shrink-0", "{run.ms as i64}ms" }
+                // The message wraps rather than truncating: a truncated
+                // error is no error.
+                span { class: "text-red-400 flex-1 break-words",
+                    {run.error.clone().unwrap_or_default()}
+                }
+                if !run.steps.is_empty() {
+                    button {
+                        class: "cursor-pointer text-xs shrink-0",
+                        style: "color: #22d3ee;",
+                        onclick: move |_| {
+                            let was = open();
+                            open.set(!was);
+                        },
+                        if open() { "Hide steps" } else { "{step_count(run.steps.len())}" }
                     }
                 }
+            }
+            if open() {
+                div { class: "mt-2", StepTrace { steps: run.steps.clone() } }
             }
         }
     }

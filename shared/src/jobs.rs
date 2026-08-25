@@ -61,6 +61,13 @@ wire! {
         /// Wall-clock ceiling for one run, already resolved to the effective
         /// value so no consumer needs to know the default.
         pub timeout_ms: f64,
+        /// The id of the job that runs when this one fails, if it names one.
+        ///
+        /// Sent so the row can say `on failure → notify-me`. A failure path
+        /// nobody can see is indistinguishable from no failure path at all,
+        /// which is the same argument the schedule is surfaced on.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub on_failure: Option<String>,
     }
 }
 
@@ -84,6 +91,10 @@ wire! {
     pub enum Trigger {
         Manual,
         Schedule,
+        /// Another job failed and named this one as its handler. A distinct
+        /// trigger rather than a flag, because a failure produces two run
+        /// records and the second is only readable if it says why it exists.
+        Failure,
     }
 }
 
@@ -123,6 +134,30 @@ wire! {
 }
 
 wire! {
+    /// One thing a job did on the way, as `ctx.step()` reported it.
+    ///
+    /// The names and details are the same ones `log.ts` writes to stdout, which
+    /// the launcher inherits rather than captures — from a `.desktop` launcher
+    /// those lines go nowhere at all. Keeping them on the run turns "deliberate
+    /// failure" into the five steps that ran before it and what each one saw,
+    /// which is the difference between a record and a verdict.
+    #[serde(rename_all = "camelCase")]
+    pub struct JobStep {
+        /// Job-local: `scanned`, not `prune-profiles:scanned`. The prefix
+        /// exists on the stdout line to say which job spoke; here the run
+        /// already says that.
+        pub name: String,
+        /// Epoch ms, when the step was reported.
+        pub at: f64,
+        /// Counts, sizes, paths — the same free-form shape as `summary`, for
+        /// the same reason: a step that reports facts can become an
+        /// explanation, and one that reports prose cannot.
+        #[serde(default)]
+        pub detail: BTreeMap<String, Value>,
+    }
+}
+
+wire! {
     /// One completed run, as recorded on disk.
     #[serde(rename_all = "camelCase")]
     pub struct JobRun {
@@ -139,6 +174,25 @@ wire! {
         pub error: Option<String>,
         #[serde(default)]
         pub summary: BTreeMap<String, Value>,
+        /// What the run did on the way, oldest first. Bounded by the runner —
+        /// a job that steps once per file over ten thousand files would
+        /// otherwise write ten thousand entries into a record that is read
+        /// whole on every request. When entries are dropped the runner leaves a
+        /// `steps-truncated` entry in their place saying how many, because a
+        /// silent cap is worse than none.
+        ///
+        /// Empty for a run recorded before steps were kept, which is not the
+        /// same as a run that reported none.
+        #[serde(default)]
+        pub steps: Vec<JobStep>,
+        /// For a run triggered by a failure, the id of the job that failed.
+        ///
+        /// Without it the second record reads as an unexplained run that
+        /// happened to start at the same moment as a failure. With it the page
+        /// can say which failure it answers, which is the difference between
+        /// two records being correct and being confusing.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub caused_by: Option<String>,
         /// Absent in the stored record, present when served.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub outcome: Option<Outcome>,

@@ -23,6 +23,11 @@ export interface JobContext {
      * Structured logging, namespaced to this job. Same rule as log.ts: facts,
      * not prose. `ctx.step("scanned", { files: 412 })`, never
      * `ctx.step("scanning files")`.
+     *
+     * Each call lands on the run record as well as on stdout, and the Jobs page
+     * renders the trace under the run — so this is what the error log shows
+     * instead of only a message. The runner keeps the first and last fifty and
+     * says how many it dropped; see STEP_HEAD in run.ts.
      */
     step(name: string, detail?: Record<string, unknown>): void;
 
@@ -37,6 +42,17 @@ export interface JobContext {
      * job passes it on.
      */
     signal: AbortSignal;
+
+    /**
+     * The failure this run is answering, when it is running as another job's
+     * `onFailure` handler. Absent on every ordinary run.
+     *
+     * It is the whole recorded run — the error, the duration, and the steps
+     * that ran before it broke — so a handler can report *what* went wrong
+     * rather than only that something did. A handler that ignores it is a
+     * handler that could not have said which job it was about.
+     */
+    cause?: JobRun;
 }
 
 /**
@@ -51,7 +67,7 @@ export interface JobContext {
  * callback, which are behaviour and cannot cross a process boundary at all.
  */
 export type { JobResult, JobInfo, Schedule } from "../generated/wire.ts";
-import type { JobInfo, Schedule } from "../generated/wire.ts";
+import type { JobInfo, JobRun, Schedule } from "../generated/wire.ts";
 import type { JobResult } from "../generated/wire.ts";
 
 export interface Job {
@@ -94,5 +110,23 @@ export interface Job {
      * which is worth having on the record.
      */
     timeoutMs?: number;
+
+    /**
+     * The id of another job to run when this one fails.
+     *
+     * The answer to "nothing pushes" that does not require building a
+     * notification system: instead of SMTP settings and a template, you write a
+     * job, and that job can do whatever you want. It runs through `runJob` like
+     * anything else, so it is tracked, timed and recorded — a failure produces
+     * two run records, and the second says `trigger: "failure"` and carries
+     * `causedBy` so the pair reads as one story.
+     *
+     * The handler is given the failed run as `ctx.cause`.
+     *
+     * **One hop only.** A handler's own failure starts nothing, so a job that
+     * names itself, or a pair that name each other, terminates rather than
+     * recursing. The refusal is logged, never swallowed — see `runJob`.
+     */
+    onFailure?: string;
     run(ctx: JobContext): Promise<JobResult>;
 }

@@ -33,6 +33,7 @@ pub fn export_all(cfg: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     Trigger::export_all(cfg)?;
     Outcome::export_all(cfg)?;
     JobResult::export_all(cfg)?;
+    JobStep::export_all(cfg)?;
     JobRun::export_all(cfg)?;
     JobsResponse::export_all(cfg)?;
     JobRunResult::export_all(cfg)?;

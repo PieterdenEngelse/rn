@@ -76,12 +76,23 @@ function load(): void {
             ? { runs: raw as JobRun[], failures: (raw as JobRun[]).filter(isFailure) }
             : (raw as { runs?: JobRun[]; failures?: JobRun[] });
 
-        runs = (parsed.runs ?? []).filter(valid).slice(-CAPACITY);
-        failures = (parsed.failures ?? []).filter(valid).slice(-FAILURE_CAPACITY);
+        runs = (parsed.runs ?? []).filter(valid).map(withSteps).slice(-CAPACITY);
+        failures = (parsed.failures ?? []).filter(valid).map(withSteps).slice(-FAILURE_CAPACITY);
     } catch {
         // Missing is the normal first run; corrupt must not stop the app from
         // starting. Either way we begin with nothing, which is honest.
     }
+}
+
+/**
+ * A record written before steps were kept has no `steps` at all, and the wire
+ * type says every run has one. Filled in here rather than left undefined, so
+ * what is served matches what is declared — the frontend would read the absence
+ * as an empty trace either way, and a shape that is only *usually* right is the
+ * drift the shared crate exists to stop.
+ */
+function withSteps(r: JobRun): JobRun {
+    return r.steps === undefined ? { ...r, steps: [] } : r;
 }
 
 function valid(r: JobRun): boolean {
