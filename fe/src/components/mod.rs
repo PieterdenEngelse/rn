@@ -15,6 +15,8 @@ pub mod sub_nav;
 pub use sub_nav::SubNav;
 pub use status_light::StatusLight;
 pub use restart_banner::RestartBanner;
+pub mod board;
+pub use board::{Board, Metric};
 pub mod param;
 pub mod runtime_board;
 pub use runtime_board::{runtime_name, RuntimeBoard};
