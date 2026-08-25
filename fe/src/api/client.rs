@@ -5,7 +5,7 @@
 //! `web-sys`, neither of which belongs anywhere near a shared type crate.
 
 use super::wire::{
-    JobErrors, JobRunResult, JobSource, JobsResponse, NodeHistory, NodeMetrics,
+    ConnectionResponse, JobErrors, JobRunResult, JobSource, JobsResponse, NodeHistory, NodeMetrics,
     ParamsResponse, RestartOutcome, SaveResponse, StatusResponse, StopOutcome,
 };
 
@@ -44,6 +44,17 @@ pub async fn fetch_jobs() -> Result<JobsResponse, String> {
         .await
         .map_err(|e| format!("{e}"))?;
     resp.json::<JobsResponse>().await.map_err(|e| format!("{e}"))
+}
+
+/// What is listening, who may talk to it, and what it may reach.
+pub async fn fetch_connection() -> Result<ConnectionResponse, String> {
+    let resp = gloo_net::http::Request::get(&format!("{API_BASE}/api/connection"))
+        .send()
+        .await
+        .map_err(|e| format!("{e}"))?;
+    resp.json::<ConnectionResponse>()
+        .await
+        .map_err(|e| format!("{e}"))
 }
 
 /// Ask the backend to restart. `now = false` waits for running work to finish.

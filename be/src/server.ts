@@ -8,6 +8,7 @@
  * POST /api/jobs/:id  run one job now
  * GET  /api/jobs/:id/source   the job's own source file
  * GET  /api/jobs/:id/errors   the job's recorded failures
+ * GET  /api/connection  what is listening, who may talk to it, what it may reach
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -166,6 +167,47 @@ export function createApp() {
                     const last = jobHistory.lastFor(j.id);
                     return last !== undefined && jobHistory.outcome(last) === "failed";
                 }).length,
+            });
+            return done(200);
+        }
+
+        // What is listening, who may talk to it, and what it may reach. One
+        // request rather than three, because the three questions behind
+        // "backend unreachable" are always asked together.
+        if (url.pathname === "/api/connection" && req.method === "GET") {
+            const granted = (process.env["RN_NET_ALLOWLIST"] ?? "")
+                .split(",")
+                .map((h) => h.trim())
+                .filter(Boolean);
+            const extra = (process.env["RN_NET_EXTRA"] ?? "")
+                .split(",")
+                .map((h) => h.trim())
+                .filter(Boolean);
+            const versions = process.versions as Record<string, string | undefined>;
+            const runtime = versions.bun ? "bun" : versions.deno ? "deno" : "node";
+            send(res, 200, {
+                host: config.host,
+                port: config.port,
+                url: `http://${config.host}:${config.port}`,
+                // Named rather than derived on the page: what counts as
+                // loopback is a property of the address, and the frontend
+                // guessing at it would be a second implementation to keep
+                // right.
+                loopbackOnly:
+                    config.host === "127.0.0.1" ||
+                    config.host === "::1" ||
+                    config.host === "localhost",
+                corsOrigins: config.corsOrigins,
+                runtime,
+                // What the launcher passed, not what was saved — the two differ
+                // until a restart, which is exactly when someone looks here.
+                netGranted: granted,
+                netExtra: extra,
+                // Only Deno checks it. Under Node and Bun the list is recorded
+                // and nothing enforces it, and a page that implied otherwise
+                // would be describing a guarantee this process does not have.
+                netEnforced: runtime === "deno",
+                supervised: isSupervised(),
             });
             return done(200);
         }

@@ -13,9 +13,11 @@
 //! business logic, no `dioxus` or `tokio`. `fe` compiles this to wasm, so
 //! anything heavy lands in the browser bundle.
 
+pub mod connection;
 pub mod jobs;
 pub mod monitor;
 
+pub use connection::*;
 pub use jobs::*;
 pub use monitor::*;
 
@@ -62,6 +64,8 @@ pub fn export_all(cfg: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     HistoryTier::export_all(cfg)?;
     NodeHistory::export_all(cfg)?;
     JobSource::export_all(cfg)?;
+
+    ConnectionResponse::export_all(cfg)?;
     Ok(())
 }
 

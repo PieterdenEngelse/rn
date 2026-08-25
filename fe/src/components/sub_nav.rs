@@ -70,6 +70,7 @@ fn sections() -> Vec<Section> {
             // runtime it restarts, which is where it is actually useful.
             items: vec![
                 SubNavItem { label: "Runtime", route: Route::Config {} },
+                SubNavItem { label: "Connection", route: Route::ConfigConnection {} },
                 SubNavItem { label: "Jobs", route: Route::ConfigJobs {} },
             ],
         },

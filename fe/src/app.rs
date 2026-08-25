@@ -1,6 +1,8 @@
 use crate::components::header::Header;
 use crate::components::SubNav;
-use crate::pages::{Config, ConfigJobs, Home, MonitorJobs, MonitorRuntime, PageNotFound};
+use crate::pages::{
+    Config, ConfigConnection, ConfigJobs, Home, MonitorJobs, MonitorRuntime, PageNotFound,
+};
 use dioxus::prelude::*;
 use dioxus_router::{Outlet, Routable, Router};
 
@@ -21,6 +23,11 @@ pub enum Route {
         MonitorJobs {},
         #[route("/config")]
         Config {},
+        // What is listening, who may talk to it, and what it may reach. Its
+        // own page rather than a board on Config, because the three facts are
+        // read together and none of them is a runtime parameter.
+        #[route("/config/connection")]
+        ConfigConnection {},
         // A second page under Config, not a tab inside the first: what a job
         // is configured to do is declared in code, and mixing it into a board
         // of editable settings would imply it is one.

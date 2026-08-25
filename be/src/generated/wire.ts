@@ -80,6 +80,55 @@ timeoutMs: number,
 onFailure?: string | null, };
 
 /**
+ * GET /api/connection.
+ */
+export type ConnectionResponse = { 
+/**
+ * The interface the API is bound to, as configured.
+ */
+host: string, port: number, 
+/**
+ * Rendered by the backend, so the page cannot assemble a URL that
+ * differs from the one the process actually reports.
+ */
+url: string, 
+/**
+ * True when `host` accepts connections from this machine only. The
+ * difference between an app and a service, and it is one string.
+ */
+loopbackOnly: boolean, 
+/**
+ * Browser origins the API answers, in order. The first stands in when
+ * a request's own Origin is not on the list.
+ */
+corsOrigins: Array<string>, 
+/**
+ * Which runtime is running — the outbound grant is enforced under one
+ * of the three and merely recorded under the other two, so a page that
+ * did not say which would be describing a guarantee that may not exist.
+ */
+runtime: string, 
+/**
+ * Everything the launcher granted outbound, bind address first. What
+ * was actually passed to the runtime, not what was asked for.
+ */
+netGranted: Array<string>, 
+/**
+ * The `netAllowlist` setting on its own — the hosts a person added,
+ * without the bind address the launcher always includes.
+ */
+netExtra: Array<string>, 
+/**
+ * Whether anything checks the grant at runtime.
+ */
+netEnforced: boolean, 
+/**
+ * True when the launcher is supervising. Unsupervised, the grant is
+ * whatever the shell handed the process, and none of it was applied.
+ */
+supervised: boolean, };
+
+/**
  * What Deno is permitted to do — the only runtime that can answer this.
  */
 export type DenoMetrics = { permissions: { [key in string]: string }, bindAddressAllowed: boolean, };
