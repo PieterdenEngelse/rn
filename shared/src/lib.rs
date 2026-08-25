@@ -14,8 +14,10 @@
 //! anything heavy lands in the browser bundle.
 
 pub mod jobs;
+pub mod monitor;
 
 pub use jobs::*;
+pub use monitor::*;
 
 /// Write every wire type to the TypeScript module, in one call.
 ///
@@ -38,6 +40,26 @@ pub fn export_all(cfg: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     JobsResponse::export_all(cfg)?;
     JobRunResult::export_all(cfg)?;
     JobErrors::export_all(cfg)?;
+
+    HeapSpace::export_all(cfg)?;
+    NodeMemory::export_all(cfg)?;
+    LargestSpace::export_all(cfg)?;
+    NodeEventLoop::export_all(cfg)?;
+    NodeCpu::export_all(cfg)?;
+    NodeConcurrency::export_all(cfg)?;
+    HandleDetail::export_all(cfg)?;
+    NodeHost::export_all(cfg)?;
+    BunMetrics::export_all(cfg)?;
+    DenoMetrics::export_all(cfg)?;
+    Unavailable::export_all(cfg)?;
+    NodeResources::export_all(cfg)?;
+    NodeGc::export_all(cfg)?;
+    NodeMetrics::export_all(cfg)?;
+    HistorySample::export_all(cfg)?;
+    LoopPercentile::export_all(cfg)?;
+    Bucket::export_all(cfg)?;
+    HistoryTier::export_all(cfg)?;
+    NodeHistory::export_all(cfg)?;
     JobSource::export_all(cfg)?;
     Ok(())
 }

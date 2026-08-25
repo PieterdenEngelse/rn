@@ -9,6 +9,53 @@
 import type { JsonValue } from "./serde_json/JsonValue.ts";
 
 /**
+ * One bucket of a long-window tier.
+ */
+export type Bucket = { t: number, heapFloorMB: number, rssPeakMB: number, 
+/**
+ * None when no sample in the bucket came from a runtime that measures it.
+ */
+loopP99Ms: number | null, loopMaxMs: number | null, 
+/**
+ * Worst run-queue wait in the bucket.
+ */
+cpuWaitPeakMsPerSec: number | null, 
+/**
+ * Most resources open at any sample in the bucket.
+ */
+handlesPeak: number | null, 
+/**
+ * Most old space held in the bucket.
+ */
+oldSpacePeakMB: number | null, 
+/**
+ * Busiest second of filesystem work in the bucket.
+ */
+fsOpsPeakPerSec: number | null, 
+/**
+ * Busiest second of context switching in the bucket.
+ */
+ctxPeakPerSec: number | null, 
+/**
+ * Least free memory the machine had in the bucket.
+ */
+hostFreeFloorMB: number | null, 
+/**
+ * Fine samples that landed in it.
+ */
+n: number, 
+/**
+ * Runtime that measured it — the last one to write into it, when a restart
+ * swapped runtimes mid-bucket. None on buckets stored before the tag.
+ */
+rt: string | null, };
+
+/**
+ * JavaScriptCore's own accounting, which has no Node equivalent.
+ */
+export type BunMetrics = { heapSizeMB: number, heapCapacityMB: number, objectCount: number, protectedObjectCount: number, allocCurrentMB: number, allocPeakMB: number, };
+
+/**
  * One job that exists, whether or not it is running.
  */
 export type CatalogueJob = { id: string, label: string, info: JobInfo, 
@@ -31,6 +78,76 @@ timeoutMs: number,
  * which is the same argument the schedule is surfaced on.
  */
 onFailure?: string | null, };
+
+/**
+ * What Deno is permitted to do — the only runtime that can answer this.
+ */
+export type DenoMetrics = { permissions: { [key in string]: string }, bindAddressAllowed: boolean, };
+
+/**
+ * One live handle and whatever distinguishes it from the others of its kind.
+ *
+ * `kind` uses the same vocabulary as the keys of `active_resources`, so a
+ * detail row can be filed under the count it belongs to. The backend does that
+ * translation — the two Node APIs behind these disagree on naming.
+ */
+export type HandleDetail = { kind: string, 
+/**
+ * Address, interval or pid — empty when nothing sets this handle apart.
+ */
+detail: string, 
+/**
+ * Absent where the handle has no file descriptor, which is not the same
+ * as descriptor zero.
+ */
+fd: number | null, };
+
+/**
+ * One V8 heap space that currently holds something.
+ */
+export type HeapSpace = { name: string, usedMB: number, sizeMB: number, };
+
+export type HistorySample = { t: number, heapUsedMB: number, rssMB: number, 
+/**
+ * None when the runtime that took this sample does not measure loop
+ * delay. A gap, not a zero — the distinction survives on disk, so a window
+ * spanning a runtime switch keeps the readings that were real.
+ */
+loopP50Ms: number | null, loopP99Ms: number | null, loopMaxMs: number | null, 
+/**
+ * Milliseconds per second spent waiting for a core. None where the kernel
+ * does not report it, or on samples stored before this was recorded.
+ */
+cpuWaitMsPerSec: number | null, 
+/**
+ * Resources keeping the process alive at this instant. None where the
+ * runtime does not report them, or on samples stored before this existed.
+ */
+handles: number | null, 
+/**
+ * Old space in use, MB. None where the runtime has no V8 spaces.
+ */
+oldSpaceMB: number | null, 
+/**
+ * Filesystem operations per second over this interval. A rate, because the
+ * kernel's totals are per pid and restart at zero.
+ */
+fsOpsPerSec: number | null, 
+/**
+ * Context switches per second over this interval.
+ */
+ctxPerSec: number | null, 
+/**
+ * Memory free on the machine, MB. None on samples stored before this was
+ * recorded.
+ */
+hostFreeMB: number | null, 
+/**
+ * Runtime that measured it. None on samples stored before the tag existed.
+ */
+rt: string | null, };
+
+export type HistoryTier = { id: string, label: string, bucketMs: number, capacity: number, buckets: Array<Bucket>, };
 
 /**
  * GET /api/jobs/:id/errors.
@@ -181,6 +298,86 @@ lastRuns: Array<JobRun>,
  */
 recent: Array<JobRun>, };
 
+export type LargestSpace = { name: string, usedMB: number, };
+
+export type LoopPercentile = { label: string, ms: number, };
+
+export type NodeConcurrency = { threadpoolSize: number, activeResources: { [key in string]: number }, 
+/**
+ * One entry per live handle, where the runtime can name them individually.
+ * Defaulted: an older backend sends counts and no detail, and that must
+ * leave the counts on screen rather than blanking the page.
+ */
+handles: Array<HandleDetail>, };
+
+export type NodeCpu = { userPct: number, systemPct: number, cores: number, load1: number, };
+
+export type NodeEventLoop = { meanMs: number, p50Ms: number, p99Ms: number, maxMs: number, utilizationPct: number, };
+
+export type NodeGc = { count: number, totalMs: number, };
+
+export type NodeHistory = { sampleMs: number, capacity: number, heapLimitMB: number, 
+/**
+ * Installed memory, MB — constant, so the backend sends it once instead of
+ * putting it in every sample.
+ */
+hostTotalMB: number, samples: Array<HistorySample>, loopPercentiles: Array<LoopPercentile>, 
+/**
+ * Series this runtime does not measure; charting them would draw zeros.
+ */
+unsupported: Array<Unavailable>, 
+/**
+ * Epoch ms this process started.
+ */
+startedAt: number, 
+/**
+ * The runtime answering right now, to read each entry's `rt` against.
+ */
+runtime: string, 
+/**
+ * The longer windows: hour, day, week, month, year.
+ */
+tiers: Array<HistoryTier>, };
+
+export type NodeHost = { totalMemMB: number, freeMemMB: number, };
+
+export type NodeMemory = { heapUsedMB: number, heapTotalMB: number, heapLimitMB: number, heapUsedPct: number, rssMB: number, externalMB: number, arrayBuffersMB: number, 
+/**
+ * Every space holding anything, largest first. Empty where unsupported.
+ */
+spaces: Array<HeapSpace>, largestSpace: LargestSpace, 
+/**
+ * What old space may grow to, MB — derived, since V8 reports no per-space
+ * ceiling. See `oldSpaceMaxMB` in be/src/node_metrics.ts.
+ */
+oldSpaceMaxMB: number, };
+
+export type NodeMetrics = { memory: NodeMemory, eventLoop: NodeEventLoop, cpu: NodeCpu, resources: NodeResources, gc: NodeGc, concurrency: NodeConcurrency, host: NodeHost, versions: { [key in string]: string }, 
+/**
+ * Figures not being measured, each with the reason to show in place of it.
+ */
+unsupported: Array<Unavailable>, 
+/**
+ * Set when the runtime version differs from the one the list was probed on.
+ */
+probeNote: string | null, 
+/**
+ * Present only under the runtime that can report it.
+ */
+bun: BunMetrics | null, deno: DenoMetrics | null, uptimeMs: number, };
+
+/**
+ * Kernel counters, reported by all three runtimes.
+ */
+export type NodeResources = { maxRssMB: number, fsRead: number, fsWrite: number, ctxVoluntary: number, ctxInvoluntary: number, 
+/**
+ * Milliseconds per second spent ready to run and waiting for a CPU. Read
+ * beside event-loop delay: it is what separates "my code blocked" from
+ * "this process could not get a core", which the delay figure alone
+ * cannot say. 0 where the kernel does not report it.
+ */
+runqueueWaitMsPerSec: number, };
+
 /**
  * The four states a reader cares about, in priority order.
  *
@@ -224,3 +421,13 @@ nextRunAt: number, };
  * How a run was started.
  */
 export type Trigger = "manual" | "schedule" | "failure";
+
+/**
+ * One figure that is not being measured, and why.
+ *
+ * `kind` is what decides the wording: a `runtime` gap is a consequence of the
+ * runtime selected on Config and can be undone by selecting another, while a
+ * `platform` gap is a fact about the machine with no action attached. Saying
+ * "not reported" for both would flatten two different next steps into one.
+ */
+export type Unavailable = { id: string, kind: string, reason: string, };

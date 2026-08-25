@@ -1832,9 +1832,26 @@ fn MonitorBoards(
                                     value: format!("{count}"),
                                     mono_note: Some(kind.clone()),
                                     what: handle_what(kind),
-                                    why: "The kinds are libuv's own names for what it is holding open, which is why the raw name is shown beside the plain one — it is what you will find in a stack trace or a Node issue.".to_string(),
-                                    if_wrong: "An open connection count that never drops back means sockets are being opened without being closed; a timer count that only grows means intervals are never cleared.".to_string(),
+                                    why: "The kinds are libuv's own names for what it is holding open, which is why the raw name is shown beside the plain one — it is what you will find in a stack trace or a Node issue. The lines under a count name the individual handles: the address a socket is talking to, the interval a timer waits, the pid a child process has.".to_string(),
+                                    if_wrong: "An open connection count that never drops back means sockets are being opened without being closed; a timer count that only grows means intervals are never cleared. When a count and the lines beneath it disagree, trust the count — it comes from getActiveResourcesInfo(), which sees requests as well as handles.".to_string(),
                                 }
+                                // One line per handle of this kind. A count says
+                                // three connections are open; these say who is on
+                                // the other end of them, which is the difference
+                                // between knowing there is a leak and knowing
+                                // what is leaking.
+                                for line in handle_lines(&m.concurrency.handles, kind) {
+                                    div { class: "text-[10px] text-gray-300 font-mono pl-3 break-all", "{line}" }
+                                }
+                            }
+                            // Handles the count rows have no heading for. The two
+                            // Node APIs behind this disagree on naming and the
+                            // backend translates between them; anything it could
+                            // not place is shown here rather than dropped, because
+                            // a handle nobody can name is exactly the one worth
+                            // seeing.
+                            for h in unplaced_handles(&m.concurrency) {
+                                div { class: "text-[10px] text-gray-300 font-mono pl-3 break-all", "{h}" }
                             }
                         }
                     }
@@ -2305,6 +2322,48 @@ fn component_why(key: &str) -> Option<&'static str> {
 /// so they are kept beside these rather than replaced — but "TCPSocketWrap" is
 /// not a thing anybody outside libuv recognises, and a monitor whose stated job
 /// is making the invisible legible cannot print it and call that surfaced.
+/// The detail lines for one kind, already formatted.
+///
+/// Kept out of the rsx because a line is two optional parts — what the handle
+/// is talking to, and the descriptor it holds — and a handle with neither still
+/// deserves a row saying so, which is three cases of punctuation that rsx
+/// renders badly.
+fn handle_lines(handles: &[crate::api::HandleDetail], kind: &str) -> Vec<String> {
+    handles
+        .iter()
+        .filter(|h| h.kind == kind)
+        .map(|h| {
+            let mut line = h.detail.clone();
+            if let Some(fd) = h.fd {
+                if !line.is_empty() {
+                    line.push_str(" · ");
+                }
+                line.push_str(&format!("fd {fd}"));
+            }
+            // A handle that can say nothing about itself still occupies the
+            // process, so it gets a row rather than vanishing from the list.
+            if line.is_empty() {
+                line.push_str("no detail reported");
+            }
+            line
+        })
+        .collect()
+}
+
+/// Handles whose kind has no count row above them, labelled with that kind.
+fn unplaced_handles(c: &crate::api::NodeConcurrency) -> Vec<String> {
+    c.handles
+        .iter()
+        .filter(|h| !c.active_resources.contains_key(&h.kind))
+        .map(|h| {
+            let detail = handle_lines(std::slice::from_ref(h), &h.kind)
+                .pop()
+                .unwrap_or_default();
+            format!("{} — {detail}", handle_label(&h.kind))
+        })
+        .collect()
+}
+
 fn handle_label(kind: &str) -> String {
     match kind {
         "TCPServerWrap" => "listening socket",

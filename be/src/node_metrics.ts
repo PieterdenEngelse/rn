@@ -16,6 +16,20 @@ import { getHeapStatistics, getHeapSpaceStatistics } from "node:v8";
 import { availableParallelism, loadavg, totalmem, freemem } from "node:os";
 import { createRequire } from "node:module";
 import { PerformanceObserver } from "node:perf_hooks";
+
+// Defined once in shared/src/monitor.rs and emitted here — see "Shared wire
+// types" in CLAUDE.md. These were hand-written on both ends until now, and
+// agreed only because someone was careful; a renamed field is a typecheck
+// failure rather than an `undefined` in whichever panel reads it first.
+import type {
+    NodeMetrics,
+    BunMetrics,
+    DenoMetrics,
+    HandleDetail,
+} from "./generated/wire.ts";
+
+export type { NodeMetrics, BunMetrics, DenoMetrics, HandleDetail };
+
 import {
     CPU_WAIT_AVAILABLE,
     type CapabilityKind,
@@ -86,116 +100,8 @@ let lastSample = Date.now();
 let lastRunqueueNs = runqueueNs() ?? 0;
 
 
-export interface NodeMetrics {
-    memory: {
-        heapUsedMB: number;
-        heapTotalMB: number;
-        heapLimitMB: number;
-        heapUsedPct: number;
-        rssMB: number;
-        externalMB: number;
-        arrayBuffersMB: number;
-        largestSpace: { name: string; usedMB: number };
-        /**
-         * The ceiling old space may grow to, MB — the number V8 will not tell
-         * you. See oldSpaceMaxMB() for how it is arrived at, and why
-         * space_available_size is not it.
-         */
-        oldSpaceMaxMB: number;
-        /**
-         * Every space holding anything, largest first. Empty under a runtime
-         * that has no spaces to report — see unsupported.
-         */
-        spaces: { name: string; usedMB: number; sizeMB: number }[];
-    };
-    eventLoop: {
-        meanMs: number;
-        p50Ms: number;
-        p99Ms: number;
-        maxMs: number;
-        utilizationPct: number;
-    };
-    /** Kernel-level counters, available under all three runtimes. */
-    resources: {
-        maxRssMB: number;
-        fsRead: number;
-        fsWrite: number;
-        /**
-         * Milliseconds per second this process spent ready to run and waiting
-         * for a CPU, since the last poll.
-         *
-         * It is here to be read against event-loop delay, which cannot tell on
-         * its own whose fault a spike was: the delay figure measures how late a
-         * timer fired, and a timer is just as late when the process was waiting
-         * for a core as when its own callback ran long. A delay spike with a
-         * flat heap and this climbing is something else on the machine.
-         *
-         * 0 where the kernel does not report it — the unsupported list is what
-         * the UI reads, and it carries the reason.
-         */
-        runqueueWaitMsPerSec: number;
-        ctxVoluntary: number;
-        ctxInvoluntary: number;
-    };
-    gc: {
-        count: number;
-        totalMs: number;
-    };
-    cpu: {
-        userPct: number;
-        systemPct: number;
-        cores: number;
-        load1: number;
-    };
-    concurrency: {
-        threadpoolSize: number;
-        activeResources: Record<string, number>;
-    };
-    host: {
-        totalMemMB: number;
-        freeMemMB: number;
-    };
-    versions: Record<string, string>;
-    uptimeMs: number;
-    /**
-     * Which figures above this runtime does not actually produce. Bun ships the
-     * node:v8 and node:perf_hooks shapes but not all of their behaviour, and a
-     * shim that returns a confident zero is worse than one that throws — the
-     * board would read "loop never blocked" for a runtime that simply is not
-     * counting. Named here so the UI can say "not reported" instead.
-     */
-    unsupported: Unavailable[];
-    /** Warning when the runtime version differs from the one probed. */
-    probeNote: string | null;
-    /**
-     * What only this runtime can report. Hiding what a runtime does not measure
-     * leaves the page poorer than Node's; these put back something in its place,
-     * and they are not translations of Node's figures — JavaScriptCore counts
-     * objects rather than spaces, and Deno is the only one with permissions to
-     * report at all.
-     */
-    // See the note on Sample.rt in node_history.ts: optional on the wire, and
-    // assigned a possibly-undefined value at the one place it is built.
-    bun?: BunMetrics | undefined;
-    deno?: DenoMetrics | undefined;
-}
 
-export interface BunMetrics {
-    heapSizeMB: number;
-    heapCapacityMB: number;
-    objectCount: number;
-    protectedObjectCount: number;
-    /** mimalloc, the allocator underneath JSC — what the OS has actually given. */
-    allocCurrentMB: number;
-    allocPeakMB: number;
-}
 
-export interface DenoMetrics {
-    /** granted | denied | prompt, per permission. "prompt" means not granted. */
-    permissions: Record<string, string>;
-    /** Whether the app's own bind address is reachable under the net grant. */
-    bindAddressAllowed: boolean;
-}
 
 /** JavaScriptCore's own accounting. Bun only — bun:jsc does not exist elsewhere. */
 function bunMetrics(): BunMetrics | undefined {
@@ -328,6 +234,14 @@ function runtimeUnavailable(): Unavailable[] {
                         "process open.",
                 },
                 {
+                    id: "concurrency.handles",
+                    kind: runtime,
+                    reason:
+                        "Bun does not implement process._getActiveHandles(), so the kinds " +
+                        "can be counted but no individual handle can name the address, " +
+                        "descriptor or interval behind it.",
+                },
+                {
                     id: "memory.largestSpace",
                     kind: runtime,
                     reason:
@@ -356,6 +270,14 @@ function runtimeUnavailable(): Unavailable[] {
             // Deno runs V8, so heap spaces and active resources are real here,
             // unlike under Bun. These are not.
             return [
+                {
+                    id: "concurrency.handles",
+                    kind: runtime,
+                    reason:
+                        "Deno does not implement process._getActiveHandles(), so the kinds " +
+                        "can be counted but no individual handle can name the address, " +
+                        "descriptor or interval behind it.",
+                },
                 {
                     id: "eventLoop.utilizationPct",
                     kind: runtime,
@@ -433,6 +355,121 @@ function oldSpaceMaxMB(heapSizeLimit: number): number {
     return Math.max(0, Math.round(heapSizeLimit / MB) - OTHER_SPACES_MB);
 }
 
+
+/** Read a property that may be a throwing getter on a closing handle. */
+function quiet<T>(read: () => T): T | undefined {
+    try {
+        return read();
+    } catch {
+        return undefined;
+    }
+}
+
+/**
+ * Name a handle the way `getActiveResourcesInfo()` would.
+ *
+ * The two APIs disagree on vocabulary: the counts use libuv's C++ wrap names
+ * (`TCPSocketWrap`), while the objects are JS classes (`net.Socket`). Without a
+ * translation every detail line would sit under a heading that does not exist.
+ *
+ * The underlying `_handle` is what actually decides TCP from pipe — a
+ * `net.Socket` is either, and its class name says neither — so it is consulted
+ * first and the class name is only a fallback.
+ */
+function handleKind(h: object): string {
+    const cls = h.constructor?.name ?? "unknown";
+    const wrap = quiet(() => (h as { _handle?: { constructor?: { name?: string } } })._handle?.constructor?.name);
+    const listening = quiet(() => typeof (h as { address?: unknown }).address === "function" && "listening" in h);
+
+    if (wrap === "Pipe") return listening ? "PipeServerWrap" : "PipeWrap";
+    if (wrap === "TCP") return listening ? "TCPServerWrap" : "TCPSocketWrap";
+    if (wrap === "TTY") return "TTYWrap";
+    if (wrap === "UDP") return "UDPWrap";
+
+    switch (cls) {
+        case "Server":
+            return "TCPServerWrap";
+        case "Socket":
+            return "TCPSocketWrap";
+        case "WriteStream":
+        case "ReadStream":
+            return "TTYWrap";
+        // Unmapped kinds keep their own name. The UI lists those separately
+        // rather than filing them under a guess.
+        default:
+            return cls;
+    }
+}
+
+/** The distinguishing fact about one handle, in as few characters as carry it. */
+function handleDetail(h: object, kind: string): string {
+    // A connected socket first, because a socket answers address() too — with
+    // its *local* end. Asking that first made every connection report the
+    // server's own address, so all three rows read 127.0.0.1:3010 and the
+    // detail said nothing the count had not already said.
+    //
+    // Read as "peer → us".
+    const remote = quiet(() => (h as { remoteAddress?: string }).remoteAddress);
+    if (remote !== undefined) {
+        const rp = quiet(() => (h as { remotePort?: number }).remotePort);
+        const lp = quiet(() => (h as { localPort?: number }).localPort);
+        return `${remote}:${rp ?? "?"}${lp === undefined ? "" : ` → :${lp}`}`;
+    }
+
+    // A listening server: the address it is bound to is the whole story.
+    const addr = quiet(() => (h as { address?: () => unknown }).address?.());
+    if (addr && typeof addr === "object" && "port" in addr) {
+        const a = addr as { address?: string; port?: number };
+        return `${a.address ?? "?"}:${a.port ?? "?"}`;
+    }
+
+    if (kind === "Timeout") {
+        const ms = quiet(() => (h as { _idleTimeout?: number })._idleTimeout);
+        const repeats = quiet(() => (h as { _repeat?: unknown })._repeat) != null;
+        // A cleared timer reports -1 rather than disappearing immediately.
+        if (typeof ms === "number" && ms >= 0) return `${repeats ? "every" : "in"} ${ms} ms`;
+        return repeats ? "repeating" : "";
+    }
+
+    if (kind === "ChildProcess") {
+        const pid = quiet(() => (h as { pid?: number }).pid);
+        return pid === undefined ? "" : `pid ${pid}`;
+    }
+
+    return "";
+}
+
+/**
+ * Every live handle, or an empty list where the runtime does not expose them.
+ *
+ * Empty is also the honest answer under Bun and Deno, neither of which
+ * implements `_getActiveHandles` — see the capability entry that says so, which
+ * is what the page shows in place of the rows.
+ */
+function handleDetails(): HandleDetail[] {
+    const get = (process as { _getActiveHandles?: () => object[] })._getActiveHandles;
+    if (typeof get !== "function") return [];
+
+    const handles = quiet(() => get.call(process)) ?? [];
+    const out: HandleDetail[] = [];
+    for (const h of handles) {
+        if (h === null || typeof h !== "object") continue;
+        const kind = handleKind(h);
+        const fd = quiet(() => (h as { fd?: number }).fd) ??
+            quiet(() => (h as { _handle?: { fd?: number } })._handle?.fd);
+        out.push({
+            kind,
+            detail: handleDetail(h, kind),
+            // libuv uses -1 for "no descriptor", which is not a file
+            // descriptor and must not be printed as one.
+            fd: typeof fd === "number" && fd >= 0 ? fd : null,
+        });
+    }
+    // Stable order, so a row does not jump between polls for no reason.
+    out.sort((a, b) => a.kind.localeCompare(b.kind) || a.detail.localeCompare(b.detail));
+    return out;
+}
+
 export function collect(): NodeMetrics {
     const mem = process.memoryUsage();
     const ru = process.resourceUsage();
@@ -463,6 +500,7 @@ export function collect(): NodeMetrics {
     for (const kind of process.getActiveResourcesInfo()) {
         activeResources[kind] = (activeResources[kind] ?? 0) + 1;
     }
+    const handles = handleDetails();
 
     const round = (n: number, d = 1): number => Number(n.toFixed(d));
 
@@ -513,6 +551,7 @@ export function collect(): NodeMetrics {
         concurrency: {
             threadpoolSize: Number(process.env["UV_THREADPOOL_SIZE"] ?? 4),
             activeResources,
+            handles,
         },
         resources: {
             // maxRSS is in kilobytes, unlike everything else here.
@@ -538,8 +577,13 @@ export function collect(): NodeMetrics {
         uptimeMs: Math.round(process.uptime() * 1000),
         unsupported: unsupportedHere(),
         probeNote: probeNote(),
-        bun: bunMetrics(),
-        deno: denoMetrics(),
+        // `?? null`, not the bare undefined these used to carry. serde
+        // serialises Option::None as null, so null is what the shared type
+        // says and what the frontend already accepts; undefined simply
+        // vanished from the JSON, which happened to work and was never the
+        // agreed shape.
+        bun: bunMetrics() ?? null,
+        deno: denoMetrics() ?? null,
     };
 }
 
