@@ -81,6 +81,29 @@ export interface JobContext {
      * protect against a job that sends it somewhere; nothing can.
      */
     secret(name: string): string;
+
+    /**
+     * The body of the webhook delivery that started this run, parsed.
+     *
+     * Absent on every other run, exactly like `cause` — a field set by one
+     * trigger kind, so a job can tell which door it came in by rather than
+     * being told which mode it is in.
+     *
+     * It is **not** `input`, and the difference is the point. `input` is
+     * declared, typed and checked against the declaration before anything
+     * starts; a provider's payload is arbitrary nested JSON that no job can
+     * declare in advance. Routing it through `resolveInput` would mean
+     * loosening a check that exists so a typo in a field name cannot run a job
+     * with defaults and report success. So the payload arrives beside the
+     * input, and a webhook job reads both: defaults from its declaration, facts
+     * from the delivery.
+     *
+     * The signature was verified before the job was started, so this came from
+     * the holder of the secret — which is a different statement from "this is
+     * well-formed". Read it defensively; the provider changed their schema
+     * without telling you.
+     */
+    payload?: JsonValue;
 }
 
 /**
@@ -184,6 +207,53 @@ export interface Job {
      * the earlier attempts hit are in `steps` as `retry` entries.
      */
     retry?: { attempts: number; backoffMs: number };
+
+    /**
+     * Accept a webhook: which credential signs it, and where the signature is.
+     *
+     * Declaring this is what puts the job behind `POST /api/hooks/:id` on the
+     * hooks listener. A job without it is not reachable there at all, and the
+     * listener answers 404 rather than 403 — an unconfigured id must not be
+     * distinguishable from one that does not exist, or the endpoint becomes a
+     * way to enumerate the catalogue.
+     *
+     * **There is no unsigned mode.** The listener is reachable from the
+     * internet through a tunnel, and its URL is a bearer capability: anyone who
+     * learns it can post to it. The signature is the only thing standing
+     * between that and a stranger running your automations, so `credential` is
+     * required rather than optional.
+     *
+     * The secret is an ordinary credential — `RN_SECRET_<NAME>` in
+     * `~/.config/rn/credentials`, read by the launcher, redacted from every
+     * record. No second store, and the same rules as a token a job sends.
+     *
+     * Defaults are GitHub's, because it is the most common sender and its
+     * scheme — HMAC-SHA256 hex under `X-Hub-Signature-256`, prefixed
+     * `sha256=` — is also what Slack and most others use under a different
+     * header name.
+     */
+    webhook?: {
+        /** Credential name the signature is verified against. Required. */
+        credential: string;
+        /** Header carrying the signature. Lowercased on read. */
+        header?: string;
+        /** Prefix on the header value, `""` for a bare hex digest. */
+        prefix?: string;
+        /**
+         * Header carrying a unique delivery id, if the provider sends one.
+         * Without it a captured request can be replayed — a signature stays
+         * valid forever, which is what a signature is — so set it wherever the
+         * provider offers one. GitHub: `x-github-delivery`.
+         */
+        deliveryHeader?: string;
+        /**
+         * Header naming what happened, in the provider's vocabulary — "push",
+         * "pull_request", "invoice.paid". Recorded on the run so the history
+         * says which kind of delivery it answered rather than forty identical
+         * rows. GitHub: `x-github-event`, which is the default.
+         */
+        eventHeader?: string;
+    };
 
     /**
      * Values this job accepts for a single run, rendered as a form on the Jobs

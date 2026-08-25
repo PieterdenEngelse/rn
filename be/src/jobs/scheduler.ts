@@ -33,7 +33,7 @@ import { runJob } from "./run.ts";
 import type { Job, Schedule } from "./types.ts";
 
 /**
- * How often to ask whether anything is due.
+ * How often to ask whether anything is due, when nobody has said otherwise.
  *
  * Exported because Config → Jobs shows it: the cadence is what decides how
  * late a run can be, and a page that repeated the number would go on claiming
@@ -120,7 +120,12 @@ export async function tick(now = new Date()): Promise<void> {
         // every 30 seconds forever.
         entry.nextRunAt = nextRun(entry.job.schedule!, now).getTime();
 
-        if (running.list().some((r) => r.name === entry.job.id)) {
+        // Asked here as well as enforced in runJob, and deliberately: the
+        // scheduler can decline a slot without producing a run record, where
+        // runJob's refusal is a recorded skip. A nightly job that is still
+        // going should not write a skipped run every thirty seconds until it
+        // finishes.
+        if (running.isRunning(entry.job.id)) {
             step("schedule-skipped", {
                 id: entry.job.id,
                 reason: "still running from the previous slot",

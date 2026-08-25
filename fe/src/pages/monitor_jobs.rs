@@ -638,6 +638,9 @@ fn trigger_label(t: &Trigger) -> &'static str {
         Trigger::Manual => "manual",
         Trigger::Schedule => "schedule",
         Trigger::Failure => "on failure",
+        // A run nobody started, at an hour nobody chose. Naming the trigger is
+        // what makes it readable rather than mysterious.
+        Trigger::Webhook => "webhook",
     }
 }
 
@@ -648,10 +651,27 @@ fn trigger_label(t: &Trigger) -> &'static str {
 /// about. "on failure of prune-profiles" is that sentence; a bare "on failure"
 /// beside a timestamp is a run the reader has to correlate by hand.
 fn trigger_cell(run: &JobRun) -> String {
-    match run.caused_by.as_ref() {
-        Some(cause) => format!("{} of {cause}", trigger_label(&run.trigger)),
-        None => trigger_label(&run.trigger).to_string(),
+    if let Some(cause) = run.caused_by.as_ref() {
+        return format!("{} of {cause}", trigger_label(&run.trigger));
     }
+    // Same argument as `caused_by` above: without it every webhook run reads
+    // identically, and "which of yesterday's forty deliveries was this" has no
+    // answer. The event is the useful half — "webhook push" says more than a
+    // delivery uuid — so it leads, and the id follows only when there is no
+    // event to name.
+    if let Some(d) = run.delivery.as_ref() {
+        if let Some(event) = d.event.as_ref() {
+            return format!("{} {event}", trigger_label(&run.trigger));
+        }
+        if let Some(id) = d.id.as_ref() {
+            // Truncated because a delivery id is a uuid and the column is not
+            // wide enough to be worth widening for one. Enough to tell two
+            // deliveries apart, which is all this cell is for.
+            let short: String = id.chars().take(8).collect();
+            return format!("{} {short}", trigger_label(&run.trigger));
+        }
+    }
+    trigger_label(&run.trigger).to_string()
 }
 
 /// The run log, with the controls that narrow it.

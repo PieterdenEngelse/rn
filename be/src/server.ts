@@ -9,6 +9,9 @@
  * GET  /api/jobs/:id/source   the job's own source file
  * GET  /api/jobs/:id/errors   the job's recorded failures
  * GET  /api/connection  what is listening, who may talk to it, what it may reach
+ *
+ * The hooks listener is deliberately not here. It is a separate server on its
+ * own port with one route — see be/src/hooks/server.ts.
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -26,6 +29,7 @@ import {
     type Settings,
 } from "./settings.ts";
 import { config, remoteBindRefusal } from "./config.ts";
+import { createHookApp } from "./hooks/server.ts";
 import * as secrets from "./secrets.ts";
 import { display as displayPath } from "./paths.ts";
 
@@ -81,7 +85,7 @@ let restartWhenIdle = false;
  * from the settings as they are now and starts a fresh process.
  */
 function doRestart(): void {
-    server.close();
+    closeListeners(server);
     // Let the HTTP response flush first.
     setTimeout(() => process.exit(EXIT_RESTART), 100);
 }
@@ -200,6 +204,13 @@ export function createApp() {
                     config.host === "::1" ||
                     config.host === "localhost",
                 corsOrigins: config.corsOrigins,
+                // Reported so the Webhooks board can say which port to point a
+                // tunnel at — and, by saying it is not `port`, why.
+                hooksPort: config.hooksPort,
+                webhookJobs: JOBS.filter((j) => j.webhook !== undefined).length,
+                webhookReady: JOBS.filter(
+                    (j) => j.webhook !== undefined && secrets.isSet(j.webhook.credential),
+                ).length,
                 runtime,
                 // What the launcher passed, not what was saved — the two differ
                 // until a restart, which is exactly when someone looks here.
@@ -229,7 +240,7 @@ export function createApp() {
             send(res, 200, { ok: true, message: "stopping", aborted: runningJobs });
             done(200);
             step("stop-requested", { force, aborting: runningJobs.length });
-            server.close();
+            closeListeners(server);
             // Exit 0: the launcher treats that as an intentional stop and exits
             // too, rather than restarting us.
             setTimeout(() => process.exit(0), 100);
@@ -261,6 +272,21 @@ export function createApp() {
                     // path, and the user only finds out which they had when
                     // the job fails.
                     ...(j.onFailure === undefined ? {} : { onFailure: j.onFailure }),
+                    // Whether a hook is configured and whether its secret is
+                    // there — never the secret, and never the URL. A tunnel
+                    // address is a bearer capability: anyone holding it can
+                    // reach the listener, so it is not a thing to put on a
+                    // page or in a payload. See WebhookInfo in
+                    // shared/src/jobs.rs.
+                    ...(j.webhook === undefined
+                        ? {}
+                        : {
+                              webhook: {
+                                  header: (j.webhook.header ?? "x-hub-signature-256").toLowerCase(),
+                                  credential: j.webhook.credential,
+                                  secretSet: secrets.isSet(j.webhook.credential),
+                              },
+                          }),
                     // And for the same reason again: three attempts of a
                     // five-minute job is a fifteen-minute worst case, which
                     // nobody can work out from a page that does not say the
@@ -558,6 +584,20 @@ export function createApp() {
 const bootApplied = applyRuntimeSettings(load(config.settingsPath));
 
 /** Exit cleanly when the launcher (or a service manager) asks us to stop. */
+/**
+ * Stop listening — on both ports.
+ *
+ * There are three places the API shuts down (a signal, /api/stop, and a
+ * restart) and a second listening socket is a second open handle: miss it in
+ * any one of them and the process stays alive with nothing serving it, which
+ * from the launcher looks like a backend that refuses to stop. One function so
+ * there is one thing to get right.
+ */
+function closeListeners(srv: ReturnType<typeof createApp>, done?: () => void): void {
+    hooks.close();
+    srv.close(done);
+}
+
 function installSignalHandlers(srv: ReturnType<typeof createApp>): void {
     let stopping = false;
     for (const signal of ["SIGTERM", "SIGINT"] as const) {
@@ -569,7 +609,7 @@ function installSignalHandlers(srv: ReturnType<typeof createApp>): void {
             scheduler.stop();
             // Stop accepting connections, then exit 0 so the launcher knows
             // this was intentional and does not restart us.
-            srv.close(() => process.exit(0));
+            closeListeners(srv, () => process.exit(0));
             // Don't hang forever on a keep-alive connection.
             setTimeout(() => process.exit(0), 3000).unref();
         });
@@ -587,9 +627,23 @@ if (refusal !== null) {
 
 const server = createApp();
 installSignalHandlers(server);
+
+// One route, its own port, and the thing a tunnel points at. See
+// be/src/hooks/server.ts for why it is not a route on the server above.
+const hooks = createHookApp();
 // The second front door onto runJob. Started after listen so a slow boot
 // cannot fire a job before the API can report that it is running.
 server.listen(config.port, config.host, () => {
+    // Same host as the API, so the guard above covers both. Started here rather
+    // than independently because a hooks port that outlives the API would take
+    // deliveries for a process that can no longer report what it did with them.
+    hooks.listen(config.hooksPort, config.host, () => {
+        step("hooks-listening", {
+            url: `http://${config.host}:${config.hooksPort}`,
+            route: "POST /api/hooks/:id",
+            jobs: JOBS.filter((j) => j.webhook !== undefined).length,
+        });
+    });
     scheduler.start();
     step("listening", {
         url: `http://${config.host}:${config.port}`,

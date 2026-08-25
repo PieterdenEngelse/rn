@@ -56,6 +56,26 @@ export function list(): RunningJob[] {
     return [...running.values()].sort((a, b) => a.startedAt - b.startedAt);
 }
 
+/**
+ * Is this job in flight right now?
+ *
+ * The one implementation of "is it already running", because more than one
+ * caller needs the answer and they must not be able to disagree. The scheduler
+ * asked this question first — a job still running when its slot arrives is
+ * skipped, not stacked — but the rule belongs to the job, not to one of the
+ * doors into it, so `runJob` is the enforcer and this is what it asks.
+ *
+ * Keyed on `name`, which is the job id. `begin()` returns a per-instance handle
+ * so two runs can be told apart in the list; the question here is about the job
+ * they are runs *of*.
+ */
+export function isRunning(name: string): boolean {
+    for (const job of running.values()) {
+        if (job.name === name) return true;
+    }
+    return false;
+}
+
 export function count(): number {
     return running.size;
 }

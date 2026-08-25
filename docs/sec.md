@@ -222,6 +222,89 @@ over a pipe at startup would close it, independently of where they are stored.
 the deputy, reading the credential becomes the easiest remaining path, and that
 is the path a keychain narrows. Doing 5 first buys little while 2 is open.
 
+## Webhooks, and why they are on their own port
+
+Webhooks arrive through an **outbound tunnel** to a **separate listener**. Both
+halves of that are security decisions, and the second one is the important one.
+
+### The direction
+
+A tunnel client (`cloudflared`, `tailscale funnel`, `ngrok`) makes an outbound
+connection from this machine; the provider's push arrives back down it. rn never
+listens publicly, never has a public address, never terminates TLS.
+`remoteBindRefusal()` is untouched and `RN_ALLOW_REMOTE` stays unset. See
+`docs/network.md`.
+
+### The separate port, which is the whole design
+
+The obvious implementation — point the tunnel at `127.0.0.1:3010` — would
+publish `PUT /api/settings`, `POST /api/stop` and `POST /api/jobs/:id` to the
+internet, on an API with no authentication. It is *The bigger hole is upstream of
+storage*, above, handed to strangers instead of to a local process.
+
+So the hooks listener is a second server on `BACKEND_HOOKS_PORT` (default 3011)
+serving `POST /api/hooks/:id` **and nothing else**. There is no path from that
+port to the settings endpoint because that server does not have one. The
+alternative — one port, with the tunnel configured to forward only certain
+paths — puts a security boundary in a third-party config file, one typo from
+open. This one is structural.
+
+`be/test/hooks.test.ts` and the boundary check in `docs/plan1.md` both exist to
+keep it that way.
+
+### What protects a delivery
+
+| Concern | Mechanism |
+|---|---|
+| Is the sender who they claim? | HMAC-SHA256 over the **raw** bytes, constant-time compare |
+| Has this been sent before? | bounded delivery-id log, checked *after* the signature — **only when the provider sends an id**, see below |
+| Can the URL be guessed into? | unconfigured id and unknown path both answer the same 404 |
+| Does a rejection leak anything? | no — one shape of body, reason only in the log |
+| Can a rejection be enumerated? | signature is checked before the replay log, so an unauthenticated caller cannot fill it |
+
+**There is no unsigned mode.** Not for testing, not behind a flag — a verifier
+with an off switch is a verifier that ships off. The tunnel URL is a bearer
+capability: anyone who learns it can post to the listener, and the signature is
+the only thing between that and a stranger running your automations.
+
+**Signature verification being mandatory does not make a delivery replay-proof,
+and the two should not be read as one claim.** Verification is unconditional.
+Replay protection is best-effort, and conditional on three things:
+
+- **the provider sending a delivery id at all.** `deliveryHeader` is optional,
+  and a job that does not set it — or a provider that sends nothing to set it
+  to — gets no replay protection whatsoever. Every delivery is accepted as new.
+- **the id still being in the log.** It holds 1024 and evicts oldest-first, so a
+  captured delivery becomes replayable once 1024 others have arrived.
+- **the process not having restarted.** The log is in memory.
+
+A signature stays valid forever — that is what a signature is. So for a job
+whose effect is not idempotent, treat replay as possible and make the job
+tolerate it, rather than relying on this.
+
+The signing secret is an ordinary credential — `RN_SECRET_<NAME>` in
+`~/.config/rn/credentials`, everything above about storage and redaction applies
+unchanged. **A hook whose credential is missing rejects every delivery**, and
+from the provider's side that looks identical to a wrong secret; Config →
+Connection colours that state for exactly this reason.
+
+### What it does not protect against
+
+- **Replay, in the three cases above.** No delivery id, an evicted id, or a
+  restart. Persisting the log would put a disk write in the path of an
+  unauthenticated request, which is a worse trade than the gap it closes.
+- **A provider with a different signing scheme.** One construction is
+  implemented — HMAC-SHA256, hex, configurable header and prefix — which covers
+  GitHub, Slack and most others. Stripe's timestamped scheme is not it, and
+  needs its own verifier rather than a claim that this one covers it.
+- **Anyone holding the tunnel URL.** They can reach the listener and be rejected
+  all day. Treat the URL as a secret anyway; it is not rendered on any page or
+  written to any run record, which is why `WebhookInfo` carries neither it nor
+  the secret.
+- **A job that mishandles its payload.** The signature proves who sent the
+  bytes, not that they are well-formed or that the job reads them safely. See
+  `webhook-echo`'s info panel on reporting the shape rather than the contents.
+
 ## Why there is no encrypted store (yet)
 
 The conventional shape is an encrypted file with the key held in the OS keychain.

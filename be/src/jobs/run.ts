@@ -22,7 +22,7 @@
 
 import { config } from "../config.ts";
 import { step } from "../log.ts";
-import { track } from "../running.ts";
+import { track, isRunning } from "../running.ts";
 // The catalogue, for looking up a job's `onFailure` handler by id. This is a
 // cycle — index.ts re-exports runJob from here — and it is deliberate: the
 // alternative is a second registry, and two lists of jobs that can disagree is
@@ -33,6 +33,21 @@ import { record, type Trigger } from "./history.ts";
 import { resolveInput } from "./input.ts";
 import * as secrets from "../secrets.ts";
 import type { JobRun, JobStep } from "../generated/wire.ts";
+import type { JsonValue } from "../generated/serde_json/JsonValue.ts";
+import type { Delivery } from "../generated/wire.ts";
+
+/**
+ * What a webhook delivery hands the runner: the body for the job, and the two
+ * headers that identify the delivery for the record.
+ *
+ * One argument rather than two more positional ones — `runJob` already takes
+ * four, and a fifth and sixth that are only ever set together would be four
+ * `undefined`s at every other call site.
+ */
+export interface WebhookRun {
+    payload: JsonValue;
+    delivery: Delivery;
+}
 import type { Job, JobContext, JobResult } from "./types.ts";
 
 /**
@@ -233,6 +248,7 @@ export async function runJob(
     trigger: Trigger = "manual",
     cause?: JobRun,
     rawInput: unknown = {},
+    webhook?: WebhookRun,
 ): Promise<JobResult> {
     // Before track(), before the record, before anything: a job that starts and
     // then fails on bad input has already made its first side effect. The HTTP
@@ -256,6 +272,52 @@ export async function runJob(
         // ones that are *absent*, so there is nothing to leak.
         step("job-credentials-missing", { id: job.id, missing });
         throw new Error(`${job.id} needs credentials that are not configured: ${wanted}`);
+    }
+
+    // **One run of a job at a time.** The scheduler has always refused to stack
+    // a job on itself; the rule lives here now because the scheduler is no
+    // longer the only door. `POST /api/jobs/:id` never enforced it, and the
+    // hooks listener answers 202 and runs afterwards — so ten valid deliveries
+    // in a second would start ten copies of a job that deletes files. Replay
+    // protection does not help: those are ten distinct legitimate deliveries.
+    //
+    // Recorded rather than thrown, and recorded rather than silent. A skipped
+    // run in the history is how "the burst arrived and nine of them found the
+    // job busy" becomes a thing anyone can see afterwards; an exception would
+    // reach the HTTP caller and nowhere else, and the webhook path has already
+    // answered 202 by the time this runs.
+    //
+    // One exemption, and only one: a job that names *itself* as its failure
+    // handler. The handler runs inside the failing run, so the overlap is
+    // guaranteed rather than accidental — and it is already bounded at one
+    // extra run by the one-hop rule below, which says so with a far better
+    // message than this would. Refusing here would shadow `on-failure-refused`
+    // with `job-skipped-overlap` and make a self-referential handler harder to
+    // diagnose, not easier. Any other handler still gets the check, because two
+    // jobs naming one shared handler *can* genuinely collide.
+    const isOwnHandler = cause !== undefined && cause.jobId === job.id;
+    if (!isOwnHandler && isRunning(job.id)) {
+        const started = Date.now();
+        const skipped = "already running — one run of a job at a time";
+        step("job-skipped-overlap", { id: job.id, trigger });
+        record({
+            jobId: job.id,
+            startedAt: started,
+            ms: 0,
+            trigger,
+            dryRun: config.dryRun,
+            changed: false,
+            skipped,
+            summary: {},
+            steps: [],
+            attempts: 0,
+            input: secrets.scrub(input),
+            ...(cause === undefined ? {} : { causedBy: cause.jobId }),
+            // Especially here. Nine refusals in a burst are only readable if
+            // each one says which delivery it turned away.
+            ...(webhook === undefined ? {} : { delivery: webhook.delivery }),
+        });
+        return { changed: false, skipped, summary: {} };
     }
 
     return track(job.id, async () => {
@@ -326,6 +388,10 @@ export async function runJob(
                 // Only ever present on a handler run, so a job can tell the two
                 // apart without being told which mode it is in.
                 ...(cause === undefined ? {} : { cause }),
+                // Same rule, for the webhook trigger. Set only when a delivery
+                // started this run, and already verified by the time it is
+                // here — the listener does not call runJob otherwise.
+                ...(webhook === undefined ? {} : { payload: webhook.payload }),
             };
 
             let timer: ReturnType<typeof setTimeout> | undefined;
@@ -441,6 +507,7 @@ export async function runJob(
                 // text field on the form, and the input is recorded verbatim.
                 input: secrets.scrub(input),
                 ...(cause === undefined ? {} : { causedBy: cause.jobId }),
+                ...(webhook === undefined ? {} : { delivery: webhook.delivery }),
             });
             return result;
         } catch (err) {
@@ -480,6 +547,7 @@ export async function runJob(
                 attempts,
                 input: secrets.scrub(input),
                 ...(cause === undefined ? {} : { causedBy: cause.jobId }),
+                ...(webhook === undefined ? {} : { delivery: webhook.delivery }),
             };
             record(failure);
             await runFailureHandler(job, failure, cause !== undefined);

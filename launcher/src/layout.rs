@@ -90,14 +90,37 @@ pub fn bind_address(env_file: &Path) -> (String, u16) {
     (host, port)
 }
 
-/// The hosts Deno may reach: the app's own listening socket, plus whatever the
+/// The hooks listener's port, mirroring `hooksPort` in be/src/config.ts by the
+/// same precedence as `bind_address`.
+///
+/// A second function rather than a third element on the tuple above: callers
+/// that only want the API address outnumber the ones that want both, and a
+/// tuple that grows every time the backend opens a port is one every caller has
+/// to be edited for.
+pub fn hooks_port(env_file: &Path) -> u16 {
+    std::env::var("BACKEND_HOOKS_PORT")
+        .ok()
+        .or_else(|| env_file_value(env_file, "BACKEND_HOOKS_PORT"))
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(3011)
+}
+
+/// The hosts Deno may reach: the app's own listening sockets, plus whatever the
 /// `netAllowlist` setting adds for job code that calls outward.
 ///
 /// The bind address is always present — without it the server cannot listen at
 /// all — so this never returns an empty list, and the broad `--allow-net`
 /// fallback in `runtime_argv` stays unreachable in practice.
-pub fn net_allowlist(host: &str, port: u16, extra: &str) -> Vec<String> {
+///
+/// `hooks_port` is granted for the same reason and is not optional: the hooks
+/// listener binds it at startup, so under Deno an ungranted port is not a
+/// webhook feature that quietly does nothing, it is a backend that fails to
+/// boot.
+pub fn net_allowlist(host: &str, port: u16, hooks_port: u16, extra: &str) -> Vec<String> {
     let mut out = vec![format!("{host}:{port}")];
+    if hooks_port != port {
+        out.push(format!("{host}:{hooks_port}"));
+    }
     for host in extra.split(',').map(str::trim).filter(|h| !h.is_empty()) {
         if !out.iter().any(|h| h == host) {
             out.push(host.to_string());

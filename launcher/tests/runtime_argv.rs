@@ -2,7 +2,7 @@
 //! because the failure mode is silent: spawn the right binary with the wrong
 //! argv and it dies on an unknown flag with nothing useful in the log.
 
-use rn::layout::{bind_address, net_allowlist, runtime_argv, RuntimeKind};
+use rn::layout::{bind_address, hooks_port, net_allowlist, runtime_argv, RuntimeKind};
 use std::path::Path;
 
 fn strings(kind: RuntimeKind, env_file: &Path) -> Vec<String> {
@@ -70,14 +70,14 @@ fn deno_passes_env_file_when_it_exists() {
 fn the_bind_address_is_always_granted() {
     // Without it the server cannot listen, so it can never be omitted however
     // the allowlist setting is written.
-    assert_eq!(net_allowlist("127.0.0.1", 3010, ""), vec!["127.0.0.1:3010"]);
-    assert_eq!(net_allowlist("0.0.0.0", 8080, "   "), vec!["0.0.0.0:8080"]);
+    assert_eq!(net_allowlist("127.0.0.1", 3010, 3010, ""), vec!["127.0.0.1:3010"]);
+    assert_eq!(net_allowlist("0.0.0.0", 8080, 8080, "   "), vec!["0.0.0.0:8080"]);
 }
 
 #[test]
 fn extra_hosts_are_split_trimmed_and_deduped() {
     assert_eq!(
-        net_allowlist("127.0.0.1", 3010, "api.example.com, 10.0.0.5:5432 ,,127.0.0.1:3010"),
+        net_allowlist("127.0.0.1", 3010, 3010, "api.example.com, 10.0.0.5:5432 ,,127.0.0.1:3010"),
         vec!["127.0.0.1:3010", "api.example.com", "10.0.0.5:5432"]
     );
 }
@@ -167,4 +167,30 @@ fn a_legacy_record_is_unknown_rather_than_orphaned() {
         parent_pid: 0,
     };
     assert_eq!(rn::pidfile::is_orphaned(&rec), None);
+}
+
+#[test]
+fn the_hooks_port_is_granted_alongside_the_api() {
+    // Under Deno an ungranted port is not a webhook feature that quietly does
+    // nothing — the listener binds at startup, so it is a backend that will not
+    // boot. Both sockets have to be in the grant.
+    assert_eq!(
+        net_allowlist("127.0.0.1", 3010, 3011, ""),
+        vec!["127.0.0.1:3010", "127.0.0.1:3011"]
+    );
+}
+
+#[test]
+fn one_port_serving_both_is_granted_once() {
+    // Not a configuration to encourage — it would put the whole API behind the
+    // tunnel — but a duplicate entry in a permission list is noise that makes
+    // the real grant harder to read.
+    assert_eq!(net_allowlist("127.0.0.1", 3010, 3010, ""), vec!["127.0.0.1:3010"]);
+}
+
+#[test]
+fn hooks_port_falls_back_to_the_config_ts_default() {
+    // Same pairing as bind_address: the launcher grants the port the backend
+    // will actually bind, and the two defaults live in different languages.
+    assert_eq!(hooks_port(missing()), 3011);
 }

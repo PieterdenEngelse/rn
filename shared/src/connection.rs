@@ -41,6 +41,18 @@ wire! {
         /// Whether anything checks the grant at runtime.
         #[serde(default)]
         pub net_enforced: bool,
+        /// The hooks listener's port — the one a tunnel points at, and the
+        /// only port that should ever be tunnelled.
+        pub hooks_port: u32,
+        /// How many jobs declare a webhook. Zero is the common case and the
+        /// page says so rather than showing an empty list.
+        #[serde(default)]
+        pub webhook_jobs: u32,
+        /// How many of those have their signing credential configured. A hook
+        /// whose secret is missing rejects every delivery, and the provider's
+        /// retry log is otherwise the only place that shows.
+        #[serde(default)]
+        pub webhook_ready: u32,
         /// True when the launcher is supervising. Unsupervised, the grant is
         /// whatever the shell handed the process, and none of it was applied.
         #[serde(default)]

@@ -6,7 +6,9 @@ from somewhere else, in order of preference — and why the order is that way
 round.
 
 For credentials a job needs — where they live and what redaction covers — see
-`docs/sec.md`. That is a different question with a different answer.
+`docs/sec.md`. That is a different question with a different answer. *Webhooks, and why they are on
+their own port* lives there too — section 4 below is the configuration half of
+the same argument.
 
 ## The thing to understand first
 
@@ -75,6 +77,35 @@ it.
 
 This is how you get authentication without rn having any, and it keeps the
 security-critical code in a project whose job that is.
+
+---
+
+## 4. Receiving webhooks: a tunnel to the hooks port
+
+Inbound push is the one case where "reach rn from outside" has a good answer,
+and it is still not section 2 or 3.
+
+```bash
+cloudflared tunnel --url http://127.0.0.1:3011     # note the port
+```
+
+The tunnel client connects **outbound** from this machine and the provider's
+push arrives back down it. Nothing here listens publicly, `BACKEND_HOST` stays
+loopback, and `RN_ALLOW_REMOTE` stays unset.
+
+**Point it at 3011, never 3010.** That is the entire security design and it is
+easy to get wrong, because 3010 is the port you know. The API on 3010 has no
+authentication; the hooks listener on 3011 serves `POST /api/hooks/:id` and has
+no route to anything else. Tunnelling 3010 would publish `PUT /api/settings` and
+`POST /api/jobs/:id` to the internet.
+
+Do not solve this with tunnel path-routing. A rule that forwards only
+`/api/hooks/*` works right up until someone reorders the config, and a security
+boundary that lives in a third-party YAML file is not one. The second listener
+makes it structural.
+
+The rest — signature verification, replay, what a rejection reveals — is in
+`docs/sec.md` → *Webhooks, and why they are on their own port*.
 
 ---
 

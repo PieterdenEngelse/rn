@@ -12,9 +12,10 @@
  */
 
 import { pruneProfiles } from "./prune-profiles.ts";
+import { webhookEcho } from "./webhook-echo.ts";
 import type { Job } from "./types.ts";
 
-export const JOBS: readonly Job[] = [pruneProfiles];
+export const JOBS: readonly Job[] = [pruneProfiles, webhookEcho];
 
 export function jobById(id: string): Job | undefined {
     return JOBS.find((j) => j.id === id);

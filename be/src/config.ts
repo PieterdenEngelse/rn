@@ -24,6 +24,20 @@ export const config = {
     port: Number(process.env.BACKEND_PORT ?? 3010),
 
     /**
+     * The hooks listener's port — the one a tunnel points at.
+     *
+     * Separate from `port` on purpose, and it is the whole security design of
+     * the webhook feature. The API on `port` has no authentication, so exposing
+     * *it* through a tunnel would publish `PUT /api/settings` and
+     * `POST /api/jobs/:id` to the internet. The hooks server serves one route
+     * and has no path to any of that, so the boundary is structural rather than
+     * a rule in a tunnel's config file.
+     *
+     * Shares `host`: both are loopback, and `remoteBindRefusal` covers both.
+     */
+    hooksPort: Number(process.env.BACKEND_HOOKS_PORT ?? 3011),
+
+    /**
      * Where user settings are stored. Never inside the install directory —
      * that gets replaced wholesale on upgrade.
      */

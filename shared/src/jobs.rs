@@ -167,6 +167,35 @@ wire! {
         /// Credentials this job needs, and whether each is configured.
         #[serde(default)]
         pub credentials: Vec<CredentialRef>,
+        /// Set when this job accepts a webhook. Absent is the common case and
+        /// renders as nothing, rather than as a row saying "no webhook".
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub webhook: Option<WebhookInfo>,
+    }
+}
+
+wire! {
+    /// A job's webhook, described without describing how to call it.
+    ///
+    /// Deliberately carries neither the secret nor the URL. The secret is a
+    /// credential and belongs to the same rules as any other. The URL is worse:
+    /// a tunnel address is a bearer capability — anyone holding it can reach
+    /// the listener — so it is not a thing to render on a page, put in a run
+    /// record, or send over the API.
+    ///
+    /// What is left is what a reader actually needs: that a hook is configured,
+    /// which header carries its signature, and whether the secret it verifies
+    /// against is present. A hook whose credential is missing rejects every
+    /// delivery, and the provider's retries are the only place that shows.
+    #[serde(rename_all = "camelCase")]
+    pub struct WebhookInfo {
+        /// Header the signature arrives in, lowercased.
+        pub header: String,
+        /// The credential name the signature is verified against.
+        pub credential: String,
+        /// Whether that credential is configured. Never its value, never a
+        /// prefix or a length of one.
+        pub secret_set: bool,
     }
 }
 
@@ -185,6 +214,27 @@ wire! {
 }
 
 wire! {
+    /// Which webhook delivery started a run, described in two headers.
+    ///
+    /// Both optional because both are the provider's choice. GitHub sends
+    /// `X-GitHub-Delivery` and `X-GitHub-Event`; a provider that sends neither
+    /// leaves an empty record, which is still worth writing — it says the run
+    /// came from a delivery that could not identify itself, and that is exactly
+    /// the case where replay protection is also absent.
+    #[serde(rename_all = "camelCase")]
+    pub struct Delivery {
+        /// The provider's unique id for this delivery, if it sends one. Also
+        /// what the replay log deduplicates on.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub id: Option<String>,
+        /// What happened, in the provider's vocabulary — "push",
+        /// "pull_request", "invoice.paid".
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub event: Option<String>,
+    }
+}
+
+wire! {
     /// How a run was started.
     #[serde(rename_all = "lowercase")]
     pub enum Trigger {
@@ -194,6 +244,11 @@ wire! {
         /// trigger rather than a flag, because a failure produces two run
         /// records and the second is only readable if it says why it exists.
         Failure,
+        /// A signed request arrived on the hooks listener. Distinct for the
+        /// same reason `Failure` is: a run nobody started, appearing in the
+        /// history at an hour nobody chose, is unreadable unless it says why
+        /// it exists.
+        Webhook,
     }
 }
 
@@ -292,6 +347,24 @@ wire! {
         /// two records being correct and being confusing.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub caused_by: Option<String>,
+        /// For a run triggered by a webhook, which delivery it was.
+        ///
+        /// Same argument as `caused_by` one field up: without it every webhook
+        /// run reads identically in the history — same job, same trigger, no
+        /// way to tell which of yesterday's forty deliveries this one answered,
+        /// or which of them never arrived at all. That is the problem the
+        /// recorded `input` solved for manual runs, and a webhook run has no
+        /// input to carry it.
+        ///
+        /// Deliberately not the payload. It is unbounded, it is written to
+        /// `~/.config/rn/job-runs.json` and rendered on a page, and it carries
+        /// other people's email addresses, branch names and ticket text.
+        /// Redaction scrubs the secrets rn was told about; it cannot scrub a
+        /// customer's address out of a Stripe event. A job that wants a fact
+        /// from the payload on the record puts it there itself, through
+        /// `ctx.step` — having chosen it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub delivery: Option<Delivery>,
         /// How many attempts this one record covers.
         ///
         /// One record per `runJob` call, not one per attempt: three entries for

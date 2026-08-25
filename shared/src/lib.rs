@@ -33,7 +33,9 @@ pub fn export_all(cfg: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     Schedule::export_all(cfg)?;
     RunningJob::export_all(cfg)?;
     CatalogueJob::export_all(cfg)?;
+    WebhookInfo::export_all(cfg)?;
     ScheduledJob::export_all(cfg)?;
+    Delivery::export_all(cfg)?;
     Trigger::export_all(cfg)?;
     RetryPolicy::export_all(cfg)?;
     JobInputType::export_all(cfg)?;

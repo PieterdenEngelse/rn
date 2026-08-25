@@ -94,7 +94,12 @@ inputs: Array<JobInput>,
 /**
  * Credentials this job needs, and whether each is configured.
  */
-credentials: Array<CredentialRef>, };
+credentials: Array<CredentialRef>, 
+/**
+ * Set when this job accepts a webhook. Absent is the common case and
+ * renders as nothing, rather than as a row saying "no webhook".
+ */
+webhook?: WebhookInfo | null, };
 
 /**
  * GET /api/connection.
@@ -140,6 +145,22 @@ netExtra: Array<string>,
  */
 netEnforced: boolean, 
 /**
+ * The hooks listener's port — the one a tunnel points at, and the
+ * only port that should ever be tunnelled.
+ */
+hooksPort: number, 
+/**
+ * How many jobs declare a webhook. Zero is the common case and the
+ * page says so rather than showing an empty list.
+ */
+webhookJobs: number, 
+/**
+ * How many of those have their signing credential configured. A hook
+ * whose secret is missing rejects every delivery, and the provider's
+ * retry log is otherwise the only place that shows.
+ */
+webhookReady: number, 
+/**
  * True when the launcher is supervising. Unsupervised, the grant is
  * whatever the shell handed the process, and none of it was applied.
  */
@@ -161,6 +182,27 @@ export type CredentialRef = { name: string,
  * what to set rather than only that something is missing.
  */
 envVar: string, set: boolean, };
+
+/**
+ * Which webhook delivery started a run, described in two headers.
+ *
+ * Both optional because both are the provider's choice. GitHub sends
+ * `X-GitHub-Delivery` and `X-GitHub-Event`; a provider that sends neither
+ * leaves an empty record, which is still worth writing — it says the run
+ * came from a delivery that could not identify itself, and that is exactly
+ * the case where replay protection is also absent.
+ */
+export type Delivery = { 
+/**
+ * The provider's unique id for this delivery, if it sends one. Also
+ * what the replay log deduplicates on.
+ */
+id?: string | null, 
+/**
+ * What happened, in the provider's vocabulary — "push",
+ * "pull_request", "invoice.paid".
+ */
+event?: string | null, };
 
 /**
  * What Deno is permitted to do — the only runtime that can answer this.
@@ -360,6 +402,25 @@ steps: Array<JobStep>,
  * two records being correct and being confusing.
  */
 causedBy?: string | null, 
+/**
+ * For a run triggered by a webhook, which delivery it was.
+ *
+ * Same argument as `caused_by` one field up: without it every webhook
+ * run reads identically in the history — same job, same trigger, no
+ * way to tell which of yesterday's forty deliveries this one answered,
+ * or which of them never arrived at all. That is the problem the
+ * recorded `input` solved for manual runs, and a webhook run has no
+ * input to carry it.
+ *
+ * Deliberately not the payload. It is unbounded, it is written to
+ * `~/.config/rn/job-runs.json` and rendered on a page, and it carries
+ * other people's email addresses, branch names and ticket text.
+ * Redaction scrubs the secrets rn was told about; it cannot scrub a
+ * customer's address out of a Stripe event. A job that wants a fact
+ * from the payload on the record puts it there itself, through
+ * `ctx.step` — having chosen it.
+ */
+delivery?: Delivery | null, 
 /**
  * How many attempts this one record covers.
  *
@@ -649,7 +710,7 @@ nextRunAt: number, };
 /**
  * How a run was started.
  */
-export type Trigger = "manual" | "schedule" | "failure";
+export type Trigger = "manual" | "schedule" | "failure" | "webhook";
 
 /**
  * One figure that is not being measured, and why.
@@ -660,3 +721,32 @@ export type Trigger = "manual" | "schedule" | "failure";
  * "not reported" for both would flatten two different next steps into one.
  */
 export type Unavailable = { id: string, kind: string, reason: string, };
+
+/**
+ * A job's webhook, described without describing how to call it.
+ *
+ * Deliberately carries neither the secret nor the URL. The secret is a
+ * credential and belongs to the same rules as any other. The URL is worse:
+ * a tunnel address is a bearer capability — anyone holding it can reach
+ * the listener — so it is not a thing to render on a page, put in a run
+ * record, or send over the API.
+ *
+ * What is left is what a reader actually needs: that a hook is configured,
+ * which header carries its signature, and whether the secret it verifies
+ * against is present. A hook whose credential is missing rejects every
+ * delivery, and the provider's retries are the only place that shows.
+ */
+export type WebhookInfo = { 
+/**
+ * Header the signature arrives in, lowercased.
+ */
+header: string, 
+/**
+ * The credential name the signature is verified against.
+ */
+credential: string, 
+/**
+ * Whether that credential is configured. Never its value, never a
+ * prefix or a length of one.
+ */
+secretSet: boolean, };

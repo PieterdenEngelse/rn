@@ -242,7 +242,17 @@ fn build_command(layout: &Layout, params: &[settings::RuntimeParam]) -> NodeComm
     // Pass-throughs, each deliberate:
     //   TERM       so the child can decide about colored output
     //   RN_*       our own configuration
-    for key in ["TERM", "RN_SETTINGS_PATH", "RN_CORS_ORIGIN", "BACKEND_HOST", "BACKEND_PORT"] {
+    for key in [
+        "TERM",
+        "RN_SETTINGS_PATH",
+        "RN_CORS_ORIGIN",
+        "BACKEND_HOST",
+        "BACKEND_PORT",
+        // Without this the hooks listener silently falls back to 3011 in the
+        // child while the launcher grants whatever the operator set — and under
+        // Deno that mismatch is a backend that will not boot.
+        "BACKEND_HOOKS_PORT",
+    ] {
         cmd.allow_var(key);
     }
 
@@ -254,7 +264,8 @@ fn build_command(layout: &Layout, params: &[settings::RuntimeParam]) -> NodeComm
         .and_then(|v| v.as_str())
         .unwrap_or_default()
         .to_string();
-    let allow_net = layout::net_allowlist(&host, port, &extra);
+    let hooks_port = layout::hooks_port(&env_file);
+    let allow_net = layout::net_allowlist(&host, port, hooks_port, &extra);
 
     // Echoed to the child so /api/params can report what was granted, and so a
     // saved-but-not-applied allowlist shows up in the restart banner.
@@ -283,7 +294,8 @@ fn print_env(layout: &Layout, params: &[settings::RuntimeParam]) -> Result<(), S
     let env_file = layout.app_dir.join(".env");
     let (host, port) = layout::bind_address(&env_file);
     let extra = saved.get("netAllowlist").and_then(|v| v.as_str()).unwrap_or_default();
-    let allow_net = layout::net_allowlist(&host, port, extra);
+    let hooks_port = layout::hooks_port(&env_file);
+    let allow_net = layout::net_allowlist(&host, port, hooks_port, extra);
     let (env_opts, argv_flags) = split_options(selection.kind, &launch);
     let argv = layout::runtime_argv(
         selection.kind,

@@ -1631,3 +1631,76 @@ test("every registered job's timeout is a positive number if it sets one", () =>
         }
     }
 });
+
+// --- One run of a job at a time -------------------------------------------
+//
+// The scheduler always refused to stack a job on itself. It stopped being the
+// only door: POST /api/jobs/:id never enforced it, and the hooks listener
+// answers 202 and runs afterwards, so a burst of valid deliveries would start a
+// copy each. Replay protection is no help — those are distinct deliveries.
+
+test("a second run of a job already in flight is refused", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const job = probe({
+        id: "overlap",
+        async run() {
+            await gate;
+            return { summary: {}, changed: true };
+        },
+    });
+
+    const first = runJob(job);
+    // Let the first run reach its await, so it is genuinely in flight.
+    await new Promise((r) => setImmediate(r));
+
+    const second = await runJob(job);
+    assert.match(second.skipped ?? "", /already running/);
+    assert.equal(second.changed, false);
+
+    release();
+    assert.equal((await first).changed, true, "the first run is unaffected");
+});
+
+test("a burst of triggers produces one run and a record for each refusal", async () => {
+    // The webhook case in miniature: ten deliveries arrive while the job is
+    // busy. Nine must be visible as skips rather than silently dropped — "the
+    // burst arrived and found the job busy" is exactly the thing a reader needs
+    // afterwards, and it is the reason this is recorded rather than thrown.
+    history.reset();
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const job = probe({
+        id: "burst",
+        async run() {
+            await gate;
+            return { summary: {}, changed: true };
+        },
+    });
+
+    const first = runJob(job, "webhook");
+    await new Promise((r) => setImmediate(r));
+    const rest = await Promise.all(Array.from({ length: 9 }, () => runJob(job, "webhook")));
+
+    assert.equal(rest.filter((r) => r.skipped !== undefined).length, 9);
+    release();
+    await first;
+
+    const skipped = history.list().filter((r) => r.jobId === "burst" && r.skipped !== undefined);
+    assert.equal(skipped.length, 9, "every refusal is on the record");
+    assert.equal(skipped[0]!.trigger, "webhook", "and says which door it came in by");
+});
+
+test("two different jobs run concurrently, as they always could", async () => {
+    // The rule is per job, not a global lock. Serialising everything would be a
+    // much larger behaviour change than the one being made here.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const a = probe({ id: "a", async run() { await gate; return { summary: {}, changed: true }; } });
+    const b = probe({ id: "b", async run() { await gate; return { summary: {}, changed: true }; } });
+
+    const runs = Promise.all([runJob(a), runJob(b)]);
+    await new Promise((r) => setImmediate(r));
+    release();
+    for (const r of await runs) assert.equal(r.skipped, undefined);
+});
