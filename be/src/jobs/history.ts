@@ -156,6 +156,48 @@ export function list(limit = CAPACITY): JobRun[] {
     return runs.slice(-limit).reverse();
 }
 
+/** What a caller can narrow the run list by. Every field is optional. */
+export interface RunQuery {
+    jobId?: string;
+    outcome?: Outcome;
+    /** Epoch ms; runs that started at or after it. */
+    since?: number;
+    limit?: number;
+}
+
+/** The four outcomes, for validating what arrived on a query string. */
+export const OUTCOMES: readonly Outcome[] = ["changed", "unchanged", "skipped", "failed"];
+
+/**
+ * The run list, narrowed — newest first, with the counts needed to read it
+ * honestly.
+ *
+ * `matched` is before the limit and `retained` is the whole record, because
+ * either number alone misleads: "12 runs" reads as a lifetime total, and this
+ * list is capped so a lifetime total is not something it can offer.
+ *
+ * Outcome is matched by deriving it per run rather than by reading a stored
+ * field — the same reason `outcome()` exists at all. A record written under an
+ * older rule is classified by today's rule, so the filter and the badge beside
+ * it can never disagree.
+ */
+export function query(q: RunQuery = {}): { runs: JobRun[]; matched: number; retained: number } {
+    const limit = Math.max(1, Math.min(q.limit ?? 25, CAPACITY));
+    const matching = runs.filter((r) => {
+        if (q.jobId !== undefined && r.jobId !== q.jobId) return false;
+        if (q.since !== undefined && r.startedAt < q.since) return false;
+        if (q.outcome !== undefined && outcome(r) !== q.outcome) return false;
+        return true;
+    });
+    return {
+        // Newest first, and the limit takes from that end — a "last 25" that
+        // returned the oldest 25 would be a very quiet way to be wrong.
+        runs: matching.slice(-limit).reverse(),
+        matched: matching.length,
+        retained: runs.length,
+    };
+}
+
 /** The most recent run of one job, which is what its row on the page shows. */
 export function lastFor(jobId: string): JobRun | undefined {
     for (let i = runs.length - 1; i >= 0; i -= 1) {

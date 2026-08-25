@@ -11,6 +11,7 @@ import { isArtifact, pruneProfiles } from "../src/jobs/prune-profiles.ts";
 import type { Job, JobInput } from "../src/jobs/types.ts";
 import type { JobRun } from "../src/generated/wire.ts";
 import * as running from "../src/running.ts";
+import * as secrets from "../src/secrets.ts";
 import { config } from "../src/config.ts";
 
 const realRunsPath = config.jobRunsPath;
@@ -178,21 +179,24 @@ async function artifact(name: string, ageDays: number, body = "x"): Promise<void
 
 test("an empty directory is reported as skipped, not as a failure", async () => {
     setDryRun(false);
-    const r = await pruneProfiles.run({ dryRun: false, step: () => {}, signal: new AbortController().signal, input: {} });
+    const r = await pruneProfiles.run({ dryRun: false, step: () => {}, signal: new AbortController().signal, input: {},
+        secret: () => { throw new Error("no credentials declared"); } });
     assert.equal(r.changed, false);
     assert.match(r.skipped ?? "", /No profiling artifacts/);
 });
 
 test("an unreadable directory is skipped with the reason attached", async () => {
     setConfig(join(dir, "does-not-exist"), 7);
-    const r = await pruneProfiles.run({ dryRun: false, step: () => {}, signal: new AbortController().signal, input: {} });
+    const r = await pruneProfiles.run({ dryRun: false, step: () => {}, signal: new AbortController().signal, input: {},
+        secret: () => { throw new Error("no credentials declared"); } });
     assert.equal(r.changed, false);
     assert.match(r.skipped ?? "", /Could not read/);
 });
 
 test("artifacts younger than the window are kept, and the reason says so", async () => {
     await artifact("jit-1.dump", 2);
-    const r = await pruneProfiles.run({ dryRun: false, step: () => {}, signal: new AbortController().signal, input: {} });
+    const r = await pruneProfiles.run({ dryRun: false, step: () => {}, signal: new AbortController().signal, input: {},
+        secret: () => { throw new Error("no credentials declared"); } });
     assert.equal(r.changed, false);
     assert.equal(r.summary.stale, 0);
     assert.match(r.skipped ?? "", /younger than 7 days/);
@@ -204,7 +208,8 @@ test("dry run deletes nothing but reports exactly what it would delete", async (
     await artifact("isolate-0xabc-1-v8.log", 30, "bb");
     await artifact("recent.cpuprofile", 1, "c");
 
-    const r = await pruneProfiles.run({ dryRun: true, step: () => {}, signal: new AbortController().signal, input: {} });
+    const r = await pruneProfiles.run({ dryRun: true, step: () => {}, signal: new AbortController().signal, input: {},
+        secret: () => { throw new Error("no credentials declared"); } });
 
     assert.equal(r.changed, false, "a dry run never reports a change");
     assert.equal(r.summary.stale, 2);
@@ -220,7 +225,8 @@ test("armed, it deletes only the stale artifacts", async () => {
     await artifact("recent.cpuprofile", 1);
     await artifact("notes.txt", 400);
 
-    const r = await pruneProfiles.run({ dryRun: false, step: () => {}, signal: new AbortController().signal, input: {} });
+    const r = await pruneProfiles.run({ dryRun: false, step: () => {}, signal: new AbortController().signal, input: {},
+        secret: () => { throw new Error("no credentials declared"); } });
 
     assert.equal(r.changed, true);
     assert.equal(r.summary.deleted, 2);
@@ -234,8 +240,10 @@ test("dry run and armed run agree on which files are stale", async () => {
     await artifact("jit-2.dump", 8);
     await artifact("jit-3.dump", 6);
 
-    const dry = await pruneProfiles.run({ dryRun: true, step: () => {}, signal: new AbortController().signal, input: {} });
-    const armed = await pruneProfiles.run({ dryRun: false, step: () => {}, signal: new AbortController().signal, input: {} });
+    const dry = await pruneProfiles.run({ dryRun: true, step: () => {}, signal: new AbortController().signal, input: {},
+        secret: () => { throw new Error("no credentials declared"); } });
+    const armed = await pruneProfiles.run({ dryRun: false, step: () => {}, signal: new AbortController().signal, input: {},
+        secret: () => { throw new Error("no credentials declared"); } });
 
     // If these ever disagree the dry run is worthless as a preview.
     assert.equal(dry.summary.stale, armed.summary.deleted);
@@ -244,7 +252,8 @@ test("dry run and armed run agree on which files are stale", async () => {
 
 test("the job reports facts, never the word done", async () => {
     await artifact("jit-1.dump", 30);
-    const r = await pruneProfiles.run({ dryRun: false, step: () => {}, signal: new AbortController().signal, input: {} });
+    const r = await pruneProfiles.run({ dryRun: false, step: () => {}, signal: new AbortController().signal, input: {},
+        secret: () => { throw new Error("no credentials declared"); } });
     // log.ts: "a line that says 'done' cannot become an explanation".
     assert.ok(typeof r.summary.dir === "string");
     assert.ok(typeof r.summary.scanned === "number");
@@ -1214,6 +1223,268 @@ test("the old bare-array file format is read, and its failures are kept", async 
     const fresh = await import(`../src/jobs/history.ts?fmt=${Date.now()}`);
     assert.equal(fresh.list().length, 2, "runs read from the old shape");
     assert.equal(fresh.failuresFor("old").length, 1, "its failure carried over");
+});
+
+// ---- filtering the run list ---------------------------------------------
+
+/** Runs of several jobs and outcomes, oldest first. */
+async function mixedHistory(): Promise<void> {
+    await runJob(probe({ id: "alpha" }));                                   // changed
+    await runJob(probe({ id: "beta", async run() {
+        return { summary: {}, changed: false };
+    } }));                                                                  // unchanged
+    await runJob(probe({ id: "alpha", async run() {
+        return { summary: {}, changed: false, skipped: "nothing to do" };
+    } }));                                                                  // skipped
+    await assert.rejects(runJob(probe({ id: "beta", async run() {
+        throw new Error("boom");
+    } })));                                                                 // failed
+}
+
+test("an unfiltered query is the whole record, newest first", async () => {
+    await mixedHistory();
+    const r = history.query();
+    assert.equal(r.runs.length, 4);
+    assert.equal(r.matched, 4);
+    assert.equal(r.retained, 4);
+    assert.equal(r.runs[0]?.jobId, "beta", "newest first");
+});
+
+test("filtering by job returns only that job's runs", async () => {
+    await mixedHistory();
+    const r = history.query({ jobId: "alpha" });
+    assert.equal(r.matched, 2);
+    assert.ok(r.runs.every((run) => run.jobId === "alpha"));
+    // Both counts, because either alone misleads.
+    assert.equal(r.retained, 4, "and the record is still four");
+});
+
+test("filtering by outcome derives it rather than reading a stored field", async () => {
+    await mixedHistory();
+    // A record written under an older rule is classified by today's, so the
+    // filter and the badge beside it cannot disagree.
+    assert.equal(history.query({ outcome: "failed" }).matched, 1);
+    assert.equal(history.query({ outcome: "skipped" }).matched, 1);
+    assert.equal(history.query({ outcome: "unchanged" }).matched, 1);
+    assert.equal(history.query({ outcome: "changed" }).matched, 1);
+});
+
+test("since keeps the runs at or after it", async () => {
+    await runJob(probe({ id: "old" }));
+    const cut = Date.now() + 1;
+    await new Promise((r) => setTimeout(r, 5));
+    await runJob(probe({ id: "new" }));
+
+    const r = history.query({ since: cut });
+    assert.equal(r.matched, 1);
+    assert.equal(r.runs[0]?.jobId, "new");
+});
+
+test("filters combine rather than replacing each other", async () => {
+    await mixedHistory();
+    assert.equal(history.query({ jobId: "beta", outcome: "failed" }).matched, 1);
+    assert.equal(history.query({ jobId: "alpha", outcome: "failed" }).matched, 0);
+});
+
+test("the limit takes the newest, and matched still counts them all", async () => {
+    await mixedHistory();
+    const r = history.query({ limit: 2 });
+    // A "last 2" that returned the oldest 2 would be a very quiet way to be
+    // wrong — the count would still look right.
+    assert.equal(r.runs.length, 2);
+    assert.equal(r.matched, 4, "so the page can say 2 of 4");
+    assert.equal(r.runs[0]?.jobId, "beta");
+});
+
+test("a limit beyond the record is clamped rather than refused", async () => {
+    await mixedHistory();
+    assert.equal(history.query({ limit: 10_000 }).runs.length, 4);
+});
+
+test("a filter matching nothing is empty, not everything", async () => {
+    await mixedHistory();
+    const r = history.query({ jobId: "never-ran" });
+    assert.equal(r.runs.length, 0);
+    assert.equal(r.matched, 0);
+    assert.equal(r.retained, 4, "and still says how much was searched");
+});
+
+// ---- credentials --------------------------------------------------------
+
+const TOKEN = "ghp_thisIsAVeryRealLookingToken123";
+
+/** Configure a credential for one test, and take it back out afterwards. */
+async function withSecret<T>(name: string, value: string, fn: () => Promise<T>): Promise<T> {
+    const key = secrets.envVarFor(name);
+    const had = process.env[key];
+    process.env[key] = value;
+    try {
+        return await fn();
+    } finally {
+        if (had === undefined) delete process.env[key];
+        else process.env[key] = had;
+    }
+}
+
+test("a credential name maps to one variable, derived rather than declared", () => {
+    // Two ways to spell the same credential is how a job reads a variable
+    // nobody set and fails with an empty header rather than a missing one.
+    assert.equal(secrets.envVarFor("githubToken"), "RN_SECRET_GITHUB_TOKEN");
+    assert.equal(secrets.envVarFor("slack-webhook"), "RN_SECRET_SLACK_WEBHOOK");
+});
+
+test("an empty variable is not a configured credential", async () => {
+    // Treating "" as set sends an empty Authorization header and comes back
+    // 401 with nothing in the record to explain it.
+    await withSecret("blank", "", async () => {
+        assert.equal(secrets.isSet("blank"), false);
+        assert.equal(secrets.read("blank"), undefined);
+    });
+});
+
+test("what leaves the backend is a name and whether it is set, never a value", async () => {
+    await withSecret("githubToken", TOKEN, async () => {
+        const d = secrets.describe("githubToken");
+        assert.deepEqual(d, { name: "githubToken", envVar: "RN_SECRET_GITHUB_TOKEN", set: true });
+        // Not a prefix and not a length: one confirms a guess, the other
+        // narrows a search.
+        assert.equal(JSON.stringify(d).includes(TOKEN.slice(0, 4)), false);
+    });
+});
+
+test("a secret is scrubbed out of a step, wherever in the detail it sits", async () => {
+    await withSecret("githubToken", TOKEN, async () => {
+        const job = probe({
+            credentials: ["githubToken"],
+            async run(ctx) {
+                ctx.step("called", {
+                    url: `https://api.example.com/x?token=${ctx.secret("githubToken")}`,
+                    nested: { headers: { auth: `Bearer ${TOKEN}` } },
+                });
+                return { summary: {}, changed: true };
+            },
+        });
+        await runJob(job);
+
+        const [run] = history.list();
+        const text = JSON.stringify(run);
+        assert.equal(text.includes(TOKEN), false, "not anywhere in the record");
+        assert.match(text, /redacted/);
+    });
+});
+
+test("a secret is scrubbed out of the summary and the skip reason", async () => {
+    await withSecret("githubToken", TOKEN, async () => {
+        const job = probe({
+            credentials: ["githubToken"],
+            async run() {
+                return {
+                    summary: { endpoint: `https://x/?t=${TOKEN}` },
+                    changed: false,
+                    skipped: `no work: ${TOKEN} returned nothing`,
+                };
+            },
+        });
+        await runJob(job);
+
+        const [run] = history.list();
+        // Both are written to disk and rendered on a page.
+        assert.equal(JSON.stringify(run?.summary).includes(TOKEN), false);
+        assert.equal((run?.skipped ?? "").includes(TOKEN), false);
+    });
+});
+
+test("a secret is scrubbed out of an error message", async () => {
+    // The likeliest place of all: an HTTP client echoing the request URL back
+    // into what it threw.
+    await withSecret("githubToken", TOKEN, async () => {
+        const job = probe({
+            credentials: ["githubToken"],
+            async run() {
+                throw new Error(`GET https://api.example.com/?token=${TOKEN} failed`);
+            },
+        });
+        await assert.rejects(runJob(job), (err: Error) => {
+            assert.equal(err.message.includes(TOKEN), false, "not even to the caller");
+            return true;
+        });
+        assert.equal((history.failuresFor("probe")[0]?.error ?? "").includes(TOKEN), false);
+    });
+});
+
+test("a secret typed into an input is scrubbed out of the record", async () => {
+    await withSecret("githubToken", TOKEN, async () => {
+        const job = probe({
+            credentials: ["githubToken"],
+            inputs: [field({ id: "note", type: "text", default: "" })],
+        });
+        await runJob(job, "manual", undefined, { note: `see ${TOKEN}` });
+        assert.equal(JSON.stringify(history.list()[0]?.input).includes(TOKEN), false);
+    });
+});
+
+test("a job cannot read a credential it did not declare", async () => {
+    await withSecret("githubToken", TOKEN, async () => {
+        // Otherwise `credentials` drifts from what is used, and the page cannot
+        // warn that a missing one will break the next run.
+        const job = probe({
+            async run(ctx) {
+                ctx.secret("githubToken");
+                return { summary: {}, changed: true };
+            },
+        });
+        await assert.rejects(runJob(job), /without declaring it/);
+    });
+});
+
+test("a job whose credential is missing never starts", async () => {
+    let ran = false;
+    const job = probe({
+        credentials: ["absentToken"],
+        async run() {
+            ran = true;
+            return { summary: {}, changed: true };
+        },
+    });
+    await assert.rejects(runJob(job), /RN_SECRET_ABSENT_TOKEN/);
+    assert.equal(ran, false, "no side effect, and no empty header sent");
+    assert.equal(history.list().length, 0);
+});
+
+test("a value too short to be a credential is left alone", () => {
+    // Scrubbing it would replace those characters inside paths and counts, and
+    // produce a record that looks corrupted rather than protected.
+    assert.ok("abc".length < secrets.MIN_REDACTABLE);
+    assert.equal(secrets.redact("a path with abc in it"), "a path with abc in it");
+});
+
+test("the longer of two overlapping secrets is redacted whole", async () => {
+    // Replacing the short one first would leave the tail of the long one in
+    // the record.
+    await withSecret("short", "abcdefgh", async () => {
+        await withSecret("long", "abcdefgh-plus-more-tail", async () => {
+            const out = secrets.redact("value: abcdefgh-plus-more-tail");
+            assert.equal(out.includes("plus-more-tail"), false, out);
+        });
+    });
+});
+
+test("keys are scrubbed as well as values", async () => {
+    // A job reporting { [token]: 1 } has published it just as surely.
+    await withSecret("githubToken", TOKEN, async () => {
+        const out = secrets.scrub({ [TOKEN]: 1 });
+        assert.equal(JSON.stringify(out).includes(TOKEN), false);
+    });
+});
+
+test("every declared credential of a registered job is a name, not a value", () => {
+    for (const job of JOBS) {
+        for (const name of job.credentials ?? []) {
+            assert.ok(name.length > 0 && name.length < 64, `${job.id}: ${name}`);
+            // A literal secret pasted into a job file would be committed.
+            assert.equal(process.env[secrets.envVarFor(name)] === name, false);
+        }
+    }
 });
 
 // ---- timeouts -----------------------------------------------------------

@@ -31,6 +31,7 @@ import { track } from "../running.ts";
 import { jobById } from "./index.ts";
 import { record, type Trigger } from "./history.ts";
 import { resolveInput } from "./input.ts";
+import * as secrets from "../secrets.ts";
 import type { JobRun, JobStep } from "../generated/wire.ts";
 import type { Job, JobContext, JobResult } from "./types.ts";
 
@@ -244,6 +245,19 @@ export async function runJob(
     }
     const input = resolved.input;
 
+    // Same rule as the input above, and the same reason: a job that starts and
+    // then fails for want of a token has already made its first side effect,
+    // and an empty Authorization header fails somewhere far less legible than
+    // here. All declared credentials are required.
+    const missing = (job.credentials ?? []).filter((name) => !secrets.isSet(name));
+    if (missing.length > 0) {
+        const wanted = missing.map((n) => `${n} (${secrets.envVarFor(n)})`).join(", ");
+        // Names and variables, never values — and these are the names of the
+        // ones that are *absent*, so there is nothing to leak.
+        step("job-credentials-missing", { id: job.id, missing });
+        throw new Error(`${job.id} needs credentials that are not configured: ${wanted}`);
+    }
+
     return track(job.id, async () => {
         const started = Date.now();
         const limitMs = job.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -260,8 +274,14 @@ export async function runJob(
         // `npm run dev`, and the line is namespaced so it says which job
         // produced it without every job remembering to.
         const note = (name: string, detail: Record<string, unknown> = {}) => {
-            steps.add(name, detail);
-            step(`${job.id}:${name}`, detail);
+            // Scrubbed once, here, so both destinations get the same treatment.
+            // A job reporting its own token is an accident, not a rarity — it
+            // arrives inside a URL, an error message, or a config object echoed
+            // back for context — and both the record on disk and the line on
+            // stdout would otherwise publish it.
+            const safe = secrets.scrub(detail);
+            steps.add(name, safe);
+            step(`${job.id}:${name}`, safe);
         };
 
         // Aborted when this run is finished with, so a backoff wait can never
@@ -279,12 +299,30 @@ export async function runJob(
          * See the retry info panel, which says so.
          */
         const attempt = async (mayRetry: boolean): Promise<JobResult> => {
+            // Declared names only. `ctx.secret` throwing on an undeclared name
+            // is what keeps `credentials` honest — a job that reads one it
+            // never declared is one the page cannot warn about.
+            const declared = new Set(job.credentials ?? []);
+            const secret = (name: string): string => {
+                if (!declared.has(name)) {
+                    throw new Error(
+                        `${job.id} asked for the credential "${name}" without declaring it`,
+                    );
+                }
+                const value = secrets.read(name);
+                if (value === undefined) {
+                    throw new Error(`${job.id}: credential "${name}" is not configured`);
+                }
+                return value;
+            };
+
             const controller = new AbortController();
             const ctx: JobContext = {
                 dryRun: config.dryRun,
                 step: note,
                 signal: controller.signal,
                 input,
+                secret,
                 // Only ever present on a handler run, so a job can tell the two
                 // apart without being told which mode it is in.
                 ...(cause === undefined ? {} : { cause }),
@@ -369,14 +407,24 @@ export async function runJob(
                 }
             }
 
+            // Everything a job reports is scrubbed on the way out. The summary
+            // and the skip reason are written to disk and rendered on a page,
+            // so a job that puts a token in either has published it — and no
+            // store, however strong, undoes that.
+            const summary = secrets.scrub(result.summary);
+            // `skipped` is optional on the wire, so it arrives as string,
+            // undefined *or* null; only a real reason is worth redacting.
+            const skipped =
+                typeof result.skipped === "string" ? secrets.redact(result.skipped) : undefined;
+
             step("job-result", {
                 id: job.id,
                 ms: Date.now() - started,
                 attempts,
                 dryRun: config.dryRun,
                 changed: result.changed,
-                ...(result.skipped === undefined ? {} : { skipped: result.skipped }),
-                ...result.summary,
+                ...(skipped === undefined ? {} : { skipped }),
+                ...summary,
             });
             record({
                 jobId: job.id,
@@ -385,11 +433,13 @@ export async function runJob(
                 trigger,
                 dryRun: config.dryRun,
                 changed: result.changed,
-                ...(result.skipped === undefined ? {} : { skipped: result.skipped }),
-                summary: result.summary,
+                ...(skipped === undefined ? {} : { skipped }),
+                summary,
                 steps: steps.collected(),
                 attempts,
-                input,
+                // Scrubbed too: nothing stops someone typing a token into a
+                // text field on the form, and the input is recorded verbatim.
+                input: secrets.scrub(input),
                 ...(cause === undefined ? {} : { causedBy: cause.jobId }),
             });
             return result;
@@ -397,7 +447,11 @@ export async function runJob(
             // Logged here rather than left to the caller: a job that fails at
             // 3am under the scheduler has no caller watching, and the duration
             // is worth as much as the message when working out what happened.
-            const message = err instanceof Error ? err.message : String(err);
+            // Redacted before it is logged, recorded, shown, or handed to a
+            // failure handler. A thrown error is the likeliest place of all for
+            // a credential to surface — inside a URL an HTTP client echoed back
+            // into its message, most often.
+            const message = secrets.redact(err instanceof Error ? err.message : String(err));
             step("job-failed", {
                 id: job.id,
                 ms: Date.now() - started,
@@ -424,12 +478,21 @@ export async function runJob(
                 // keeping at all. A failed run has no summary to explain it.
                 steps: steps.collected(),
                 attempts,
-                input,
+                input: secrets.scrub(input),
                 ...(cause === undefined ? {} : { causedBy: cause.jobId }),
             };
             record(failure);
             await runFailureHandler(job, failure, cause !== undefined);
-            throw err;
+            // Rethrown redacted rather than as-is. The HTTP endpoint puts this
+            // message straight into its 500 body, so rethrowing the original
+            // would hand the token to the browser — past every scrub above,
+            // which is exactly the leak this is meant to close. The stack goes
+            // too: it embeds the message.
+            const safe = new Error(message);
+            if (err instanceof Error && err.stack !== undefined) {
+                safe.stack = secrets.redact(err.stack);
+            }
+            throw safe;
         } finally {
             // Ends any backoff wait still pending, so nothing this run started
             // can outlive it. Each attempt clears its own deadline timer.

@@ -26,6 +26,7 @@ import {
     type Settings,
 } from "./settings.ts";
 import { config } from "./config.ts";
+import * as secrets from "./secrets.ts";
 import { display as displayPath } from "./paths.ts";
 
 /**
@@ -271,6 +272,11 @@ export function createApp() {
                     // input they do not know about is a 400 with no way to fix
                     // it from the page.
                     inputs: j.inputs ?? [],
+                    // Names, variables and whether each is set — never a value,
+                    // and never a prefix or a length of one. A job that will
+                    // fail at 03:00 for want of a token otherwise looks exactly
+                    // like one that will work.
+                    credentials: (j.credentials ?? []).map((name) => secrets.describe(name)),
                 })),
                 dryRun: config.dryRun,
                 // The knobs every run is subject to, whichever job it is.
@@ -299,9 +305,65 @@ export function createApp() {
                         ? null
                         : { ...run, outcome: jobHistory.outcome(run) };
                 }).filter((r) => r !== null),
-                recent: jobHistory
-                    .list(25)
-                    .map((run) => ({ ...run, outcome: jobHistory.outcome(run) })),
+                // The run list moved to GET /api/runs when it grew filters.
+                // Left here it would be a second, unfiltered copy nobody reads
+                // — and 25 full records, steps and inputs included, on every
+                // request for something else.
+            });
+            return done(200);
+        }
+
+        // The run list, narrowed. Its own endpoint rather than more fields on
+        // GET /api/jobs: that one answers "what exists and what is happening
+        // now" and is polled for it, while this one is asked a question and
+        // re-asked when the question changes.
+        if (url.pathname === "/api/runs" && req.method === "GET") {
+            const q = url.searchParams;
+            const jobId = q.get("job") ?? undefined;
+            const outcome = q.get("outcome") ?? undefined;
+            const since = q.get("since") ?? undefined;
+            const limit = q.get("limit") ?? undefined;
+
+            // Every bad value is refused rather than ignored. A filter that
+            // silently falls back to "everything" shows a list that answers a
+            // different question than the one on screen, and nothing about it
+            // looks wrong.
+            const errors: string[] = [];
+            if (jobId !== undefined && !jobById(jobId)) {
+                errors.push(`no job with id "${jobId}"`);
+            }
+            if (outcome !== undefined && !jobHistory.OUTCOMES.includes(outcome as jobHistory.Outcome)) {
+                errors.push(`outcome must be one of ${jobHistory.OUTCOMES.join(", ")}`);
+            }
+            const sinceMs = since === undefined ? undefined : Number(since);
+            if (sinceMs !== undefined && !Number.isFinite(sinceMs)) {
+                errors.push("since must be epoch milliseconds");
+            }
+            const limitN = limit === undefined ? undefined : Number(limit);
+            if (limitN !== undefined && (!Number.isInteger(limitN) || limitN < 1)) {
+                errors.push("limit must be a positive integer");
+            }
+            if (errors.length > 0) {
+                send(res, 400, { message: errors.join("; "), errors });
+                return done(400);
+            }
+
+            // Spread rather than passed as undefined: exactOptionalPropertyTypes
+            // is on, and "absent" and "present but undefined" are the same
+            // question asked twice.
+            const result = jobHistory.query({
+                ...(jobId === undefined ? {} : { jobId }),
+                // Checked against OUTCOMES above, which is what makes this safe.
+                ...(outcome === undefined ? {} : { outcome: outcome as jobHistory.Outcome }),
+                ...(sinceMs === undefined ? {} : { since: sinceMs }),
+                ...(limitN === undefined ? {} : { limit: limitN }),
+            });
+            send(res, 200, {
+                // Derived here rather than stored, like everywhere else it is
+                // sent — see be/src/jobs/history.ts.
+                runs: result.runs.map((run) => ({ ...run, outcome: jobHistory.outcome(run) })),
+                matched: result.matched,
+                retained: result.retained,
             });
             return done(200);
         }

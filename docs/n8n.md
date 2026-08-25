@@ -9,8 +9,9 @@ Its *execution model*, though, is better than rn's in several specific ways, and
 each one maps onto a gap already identified in `docs/jobs.md`. This document
 lists them in the order worth doing, with what each would actually take.
 
-Items 1 to 4 are done. 5 and 6 are not started. Where it says "currently", that
-is the state of the code as written.
+Items 1 to 5 are done. 6 is done except for its first step, which is a decision
+rather than a piece of work — see the note there. Where it says "currently",
+that is the state of the code as written.
 
 ---
 
@@ -257,22 +258,48 @@ rather than made here.
 
 ---
 
-## 5. Filtered execution list
+## 5. Filtered execution list — **done**
 
 **What n8n does.** Filter executions by status, workflow and time range.
 
-**Why it fits rn.** Recent runs is the last 25, unfiltered
-(`be/src/server.ts`, the `/api/jobs` handler). That is fine for one job and
-useless for twenty.
+**Why it fitted rn.** Recent runs was the last 25, unfiltered — fine for one job
+and useless for twenty.
 
-**Steps.**
+**What was built.**
 
-1. Add query parameters to a runs endpoint: job id, outcome, since.
-2. Filter server-side. The record is capped at 200 so client-side filtering
-   would work today, but it would stop working exactly when it starts to matter.
-3. Add the controls to the Recent runs panel.
-4. Keep the counts honest: say "12 of 200 retained runs", never a bare "12",
-   which reads as a lifetime total. The error log already words it this way.
+`GET /api/runs?job=&outcome=&since=&limit=`, returning `RunsResponse { runs,
+matched, retained }`. Its own endpoint rather than more fields on `/api/jobs`:
+that one answers "what exists and what is happening now", while this one is
+asked a question and re-asked when the question changes.
+
+**Filtered on the backend**, per the plan — filtering in the page would work
+today and stop working at exactly the point the feature starts to matter, which
+is a bad place to discover a design.
+
+**Outcome is matched by deriving it**, not by reading a stored field, for the
+same reason `outcome()` exists at all: a record written under an older rule gets
+classified by today's, so the filter and the badge beside it cannot disagree.
+
+**Bad filter values are refused, not ignored** — an unknown job id, an outcome
+outside the four, a non-numeric `since`, a non-positive `limit`, each answered
+400 with what was wrong. A filter that silently falls back to "everything" shows
+a list answering a different question than the one on screen, and nothing about
+it looks wrong. The limit is clamped rather than refused, since asking for more
+than the record holds is a reasonable thing to do.
+
+**The counts.** `matched` is before the limit and `retained` is the whole
+record, because either alone misleads. The panel reads "5 of 5 retained runs"
+unfiltered and "3 of 12 matching, out of 47 retained runs" when a filter is
+narrowing — never a bare count, which would read as a lifetime total the capped
+record cannot offer.
+
+An empty result now says "No runs match this filter" rather than "Nothing has
+run yet" — the old wording predates filters and would have been a confident lie
+about a record that is not empty.
+
+**`JobsResponse.recent` was removed.** With the panel on its own endpoint it
+would have been a second, unfiltered copy nobody reads — 25 full records, steps
+and inputs included, on every request for something else.
 
 ---
 
@@ -292,17 +319,71 @@ any heap snapshot. A small Rust component holding secrets in a buffer it zeroes
 on drop is a component whose one-sentence justification writes itself — which is
 the bar `CLAUDE.md` sets for reaching for Rust at all.
 
-**Steps.**
+**What was built — steps 2 and 3, deliberately before step 1.**
 
-1. Decide the store first: file beside `settings.json`, encrypted with a key
-   from the OS keychain, is the conventional shape. Do not invent a scheme.
-2. Reference by name from a job — never the value inline, which is how secrets
-   reach a log line and a run record.
-3. Redact in `ctx.step` details and in `JobRun.summary`. The run record is
-   written to disk and rendered on a page; a job that logs its own token has
-   published it.
-4. Only then consider the Rust component. A credential store in Node with
-   correct redaction beats a Rust one without it.
+The plan's own step 4 says a store in Node with correct redaction beats one in
+Rust without it. The same argument goes one further: redaction and
+reference-by-name are worth having whatever the store turns out to be, and they
+are the half that protects the record. So they went first, behind an interface
+the store slots into.
+
+**Reference by name.** `Job.credentials` declares the names a job needs, and
+`ctx.secret("githubToken")` resolves one. It throws on a name the job did not
+declare, which is what stops the declaration drifting from the use — a job that
+quietly reads a credential nobody knows about is one the page cannot warn you
+about. All declared credentials are required, and `runJob` refuses to start a
+job whose credential is missing, before `track()` and before any side effect;
+an empty `Authorization` header fails somewhere far less legible.
+
+**Redaction, everywhere a job speaks.** Every configured secret is scrubbed out
+of step details (both the record and the stdout line), the summary, the skip
+reason, the recorded input, and the error message — recursively, keys as well as
+values, since `{ [token]: 1 }` publishes it just as surely.
+
+Two things the plan did not name, both found by writing the tests:
+
+- **The rethrown error.** The message was being redacted for the log and the
+  record while the original error went back to the caller unchanged — and the
+  HTTP endpoint puts that message straight into its 500 body. The token would
+  have reached the browser past every other scrub. It is now rethrown as a
+  redacted error, stack included, since the stack embeds the message.
+- **The recorded input.** Nothing stops someone typing a token into a text field
+  on the form from item 4, and the input is recorded verbatim.
+
+Values shorter than eight characters are left alone: scrubbing a two-character
+secret would replace those characters inside paths, counts and words and produce
+a record that looks corrupted rather than protected. Overlapping secrets are
+replaced longest-first, or the tail of the long one survives.
+
+**Where values live today: the environment**, one variable per credential,
+`RN_SECRET_<NAME>`, derived from the name rather than declared separately — two
+spellings of one credential is how a job reads a variable nobody set. That is
+not a scheme invented here; it is the one that already existed, named and given
+a boundary. An empty variable is not a configured credential.
+
+**Visible before it fails.** `CredentialRef { name, envVar, set }` reaches
+Config → Jobs, which says `githubToken — set` or `slackWebhook — not set, put it
+in RN_SECRET_SLACK_WEBHOOK`. Never a value, and deliberately not a prefix or a
+length either: one confirms a guess, the other narrows a search. A job that will
+fail at 03:00 for want of a token otherwise looks exactly like one that will
+work.
+
+**Still to decide — step 1, the store.** An encrypted file beside
+`settings.json` with a key from the OS keychain is the conventional shape, and
+it slots in behind `read()` in `be/src/secrets.ts` without any job changing —
+which is why that indirection exists rather than jobs reading `process.env`. It
+was not built here because the plan says *decide the store first, do not invent
+a scheme*, and the decision has a real cost attached in this project: reaching
+an OS keychain from Node means a native addon, and CLAUDE.md's runtime rules say
+prefer a Rust component to an addon. So the honest options are a small Rust
+component using the `keyring` crate, invoked over the documented CLI boundary —
+which is also the one place on this list with a genuine argument for Rust, since
+a JavaScript string cannot be overwritten and lands in any heap snapshot — or
+staying with the environment and saying so plainly.
+
+**Step 4 needs no separate answer any more.** Its condition — correct redaction
+first — is met, so if the store does move to Rust it starts from the right
+place.
 
 ---
 
@@ -325,7 +406,7 @@ argues that the second front door onto one runner beats a second runner.
 
 ## Order
 
-1 to 4 are done. 1 was the smallest, it used machinery that already existed,
+1 to 6 are done, bar the store decision under 6. 1 was the smallest, it used machinery that already existed,
 and it makes every other item easier to debug — its steps are what a failure
 handler receives and where a retry's earlier errors survive. 2 converted a
 missing feature into a job you write. 3 turned out to have a hazard the plan did
@@ -333,7 +414,5 @@ not name, which is the usual return on writing the plan down first. 4 closed the
 "jobs take no parameters" gap, and its own hazard — "scheduled" quietly meaning
 "undefined everywhere" — the plan did see, which is the other kind of return.
 
-5 becomes worth doing at the point there are enough jobs for an unfiltered list
-of the last 25 runs to stop being readable — one job is not that point. 6 waits
-for the first job that authenticates to anything, and its first step is choosing
-a store rather than writing one.
+6 is done bar its store, which is a decision and not a piece of work. Nothing on
+this list is now waiting on code that has not been written.

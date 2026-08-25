@@ -4,6 +4,7 @@
 //! because of one rule from CLAUDE.md: the app never uses whatever Node is on
 //! the machine, and never inherits the user's environment.
 
+use rn::credentials;
 use rn::layout::{self, display_path, display_text, Layout};
 use rn::node_command::NodeCommand;
 use rn::pidfile;
@@ -201,6 +202,18 @@ fn build_command(layout: &Layout, params: &[settings::RuntimeParam]) -> NodeComm
     let mut cmd = NodeCommand::new(&selection.path, &layout.app_dir);
     cmd.envs(env);
 
+    // Credentials, from outside the install tree. Passed through env() rather
+    // than allowed through from the ambient environment: these are values we
+    // read from a file we name, which is exactly the door env() is. The seal is
+    // untouched. See launcher/src/credentials.rs and docs/sec.md.
+    let creds = credentials::read_from(&credentials::path());
+    cmd.envs(&creds.vars);
+    for warning in &creds.warnings {
+        // On stderr and not swallowed: a credential that looks configured and
+        // is not is the failure the whole feature exists to make visible.
+        eprintln!("rn: credentials: {warning}");
+    }
+
     // The child reports these back through /api/params, so the Config page can
     // say what was asked for and what actually happened rather than leaving a
     // silently ignored setting on screen.
@@ -299,6 +312,25 @@ fn print_env(layout: &Layout, params: &[settings::RuntimeParam]) -> Result<(), S
     println!("node        {}", display_path(&layout.node));
     println!("entry       {}", display_path(&layout.entry));
     println!("settings    {}", display_path(&layout.settings));
+
+    // Names only, never values — this is the command someone runs to check
+    // their file is being read, often while someone else is looking at the
+    // screen. See docs/sec.md.
+    let creds_file = credentials::path();
+    let creds = credentials::read_from(&creds_file);
+    if creds.vars.is_empty() {
+        println!("credentials {} (none set)", display_path(&creds_file));
+    } else {
+        println!(
+            "credentials {} -> {}",
+            display_path(&creds_file),
+            creds.vars.keys().cloned().collect::<Vec<_>>().join(", "),
+        );
+    }
+    for warning in &creds.warnings {
+        println!("            ! {}", display_text(warning));
+    }
+
     println!("sealed      RN_ENV_SEALED=1 (environment cleared, then built explicitly)");
     if env_opts.is_empty() {
         println!("NODE_OPTIONS  (none)");

@@ -273,6 +273,27 @@ fn JobConfigRow(
                     }
                 }
 
+                dt { class: "text-gray-400", "Credentials" }
+                dd { class: "text-gray-300 flex items-center gap-2 flex-wrap",
+                    if job.credentials.is_empty() {
+                        span { class: "text-gray-400", "none — this job authenticates to nothing" }
+                    } else {
+                        for c in job.credentials.iter() {
+                            span {
+                                class: if c.set { "text-gray-300" } else { "text-red-400" },
+                                "{c.name} — "
+                                if c.set { "set" } else { "not set, put it in {c.env_var}" }
+                            }
+                        }
+                    }
+                    InfoButton {
+                        title: "Credentials".to_string(),
+                        what: CREDENTIALS_WHAT.to_string(),
+                        why: CREDENTIALS_WHY.to_string(),
+                        if_wrong: CREDENTIALS_IF_WRONG.to_string(),
+                    }
+                }
+
                 dt { class: "text-gray-400", "Declared in" }
                 dd { class: "text-gray-300", code { "{job.source}" } }
             }
@@ -338,6 +359,37 @@ const RETRY_IF_WRONG: &str =
      \"up to\" figure: a job whose worst case exceeds its own interval will still be running \
      when its next slot arrives, and the scheduler skips a slot rather than stacking a second \
      copy.";
+
+const CREDENTIALS_WHAT: &str =
+    "The credentials this job needs, by name, and whether each one is configured on this \
+     machine. A job declares the names it uses and asks for them with ctx.secret(\"githubToken\"); \
+     the runner resolves them and refuses to start the job if any is missing.\n\nWhat you see \
+     here is a name, the variable it reads, and set or not set. Never a value, and deliberately \
+     not a prefix or a length either — \"starts with ghp_\" is enough to confirm a guess, and a \
+     length narrows a search.\n\nValues live outside the codebase, in \
+     ~/.config/rn/credentials as RN_SECRET_<NAME>=value, one line each. The launcher reads that \
+     file and hands the values to the backend; it sits beside settings.json rather than in the \
+     install directory, which is replaced wholesale on upgrade. The file is plaintext — see \
+     docs/sec.md for what that does and does not protect.";
+
+const CREDENTIALS_WHY: &str =
+    "Because a job that will fail at 03:00 for want of a token looks exactly like one that will \
+     work, right up until it does not — and the scheduler does not catch up on the slot it \
+     missed. This row is the only place that difference is visible before the failure.\n\nThe \
+     declaration is what makes it possible. A job that read a variable directly could not be \
+     asked what it needs, so nothing could warn you; ctx.secret throws on a name the job did not \
+     declare, which is what keeps the two from drifting apart.";
+
+const CREDENTIALS_IF_WRONG: &str =
+    "A credential that is set is not the same as a credential that works — nothing here tries \
+     it. An expired token reads as set, and the failure will be in the job's error log rather \
+     than on this page.\n\nThe more important thing this protects against is the opposite \
+     direction. Every configured secret is scrubbed out of step details, summaries, skip \
+     reasons, run inputs and error messages before any of them is logged, written to \
+     ~/.config/rn/job-runs.json, or rendered on a page — because a job that reports its own \
+     token has published it, and no store, however strong, undoes that. What it cannot protect \
+     against is a job that sends a credential somewhere on purpose. Nothing can; read the \
+     source.";
 
 const WHERE_BODY: &str =
     "Every value on this page is declared in code and read here, not stored in \

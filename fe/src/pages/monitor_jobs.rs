@@ -1,5 +1,5 @@
 use crate::api::{
-    fetch_job_errors, fetch_job_source, fetch_jobs, run_job, CatalogueJob, JobErrors, JobRun,
+    fetch_job_errors, fetch_job_source, fetch_jobs, fetch_runs, run_job, CatalogueJob, JobErrors, JobRun,
     JobInput, JobInputType, JobRunResult, JobSource, JobStep, JobsResponse, Outcome,
     ScheduledJob, Trigger,
 };
@@ -42,7 +42,7 @@ pub fn MonitorJobs() -> Element {
                                     if_wrong: STEPS_IF_WRONG.to_string(),
                                 }
                             }),
-                            RecentRuns { runs: j.recent.clone() }
+                            RunLog { catalogue: j.catalogue.clone() }
                         }
                     }
                 }
@@ -651,6 +651,136 @@ fn trigger_cell(run: &JobRun) -> String {
     match run.caused_by.as_ref() {
         Some(cause) => format!("{} of {cause}", trigger_label(&run.trigger)),
         None => trigger_label(&run.trigger).to_string(),
+    }
+}
+
+/// The run log, with the controls that narrow it.
+///
+/// Its own resource rather than a slice of the jobs payload: the question this
+/// panel answers changes when the reader changes it, and re-asking it is a
+/// different thing from polling "what exists right now".
+///
+/// The filtering happens on the backend. Today the record is capped at a few
+/// hundred and filtering here would work — and would stop working at exactly
+/// the point the feature starts to matter, which is a bad place to discover a
+/// design.
+#[component]
+fn RunLog(catalogue: Vec<CatalogueJob>) -> Element {
+    let mut job = use_signal(String::new);
+    let mut outcome = use_signal(String::new);
+    // Hours; 0 is "all of the record".
+    let mut window_hours = use_signal(|| 0_u32);
+
+    let runs = use_resource(move || async move {
+        let since = match window_hours() {
+            0 => None,
+            h => Some(js_sys::Date::now() - f64::from(h) * 3_600_000.0),
+        };
+        fetch_runs(&job(), &outcome(), since, 25).await
+    });
+
+    rsx! {
+        div { class: "space-y-3",
+            div { class: "flex items-center gap-3 flex-wrap",
+                FilterSelect {
+                    label: "Job".to_string(),
+                    value: job(),
+                    all: "every job".to_string(),
+                    options: catalogue.iter().map(|c| (c.id.clone(), c.label.clone())).collect(),
+                    on_pick: move |v| job.set(v),
+                }
+                FilterSelect {
+                    label: "Outcome".to_string(),
+                    value: outcome(),
+                    all: "any outcome".to_string(),
+                    options: vec![
+                        ("changed".to_string(), "changed".to_string()),
+                        ("unchanged".to_string(), "unchanged".to_string()),
+                        ("skipped".to_string(), "skipped".to_string()),
+                        ("failed".to_string(), "failed".to_string()),
+                    ],
+                    on_pick: move |v| outcome.set(v),
+                }
+                FilterSelect {
+                    label: "Since".to_string(),
+                    value: match window_hours() { 0 => String::new(), h => h.to_string() },
+                    all: "all of the record".to_string(),
+                    options: vec![
+                        ("1".to_string(), "the last hour".to_string()),
+                        ("24".to_string(), "the last day".to_string()),
+                        ("168".to_string(), "the last week".to_string()),
+                    ],
+                    on_pick: move |v: String| {
+                        window_hours.set(v.parse().unwrap_or(0));
+                    },
+                }
+            }
+
+            match &*runs.read_unchecked() {
+                Some(Ok(r)) => rsx! {
+                    // Never a bare count. "12 runs" reads as a lifetime total,
+                    // and the record is capped, so a lifetime total is not
+                    // something this can offer.
+                    p { class: "text-gray-400 text-xs", "{run_counts(r.runs.len(), r.matched, r.retained)}" }
+                    if r.matched == 0 && r.retained > 0 {
+                        // Distinct from "nothing has run yet", which is what
+                        // this said before filters existed and would now be a
+                        // confident lie about a record that is not empty.
+                        p { class: "text-gray-300 max-w-3xl",
+                            "No runs match this filter. Widen it, or set the controls back to "
+                            "every job, any outcome and all of the record."
+                        }
+                    } else {
+                        RecentRuns { runs: r.runs.clone() }
+                    }
+                },
+                Some(Err(e)) => rsx! {
+                    p { class: "text-red-400", "Could not read the run list" }
+                    p { class: "text-gray-300 mt-1", "{e}" }
+                },
+                None => rsx! { p { class: "text-gray-400", "Loading…" } },
+            }
+        }
+    }
+}
+
+/// How much of the record is on screen, said so it cannot be misread.
+///
+/// A bare "12 runs" reads as a lifetime total, and this record is capped — a
+/// lifetime total is not something it can offer. So the retained figure is
+/// always present, and the matching figure appears only when a filter is
+/// actually narrowing something, which keeps the unfiltered case short.
+fn run_counts(shown: usize, matched: u32, retained: u32) -> String {
+    if matched == retained {
+        format!("{shown} of {retained} retained runs")
+    } else {
+        format!("{shown} of {matched} matching, out of {retained} retained runs")
+    }
+}
+
+/// One filter. An empty value is "no filter", which is also what the client
+/// sends nothing for — so the control and the request agree by construction.
+#[component]
+fn FilterSelect(
+    label: String,
+    value: String,
+    all: String,
+    options: Vec<(String, String)>,
+    on_pick: EventHandler<String>,
+) -> Element {
+    rsx! {
+        label { class: "flex items-center gap-2",
+            span { class: "text-gray-400 text-xs", "{label}" }
+            select {
+                class: "bg-gray-900 border border-gray-600 rounded px-2 py-1 text-gray-200 text-xs",
+                value: "{value}",
+                onchange: move |evt| on_pick.call(evt.value()),
+                option { value: "", "{all}" }
+                for (v, text) in options.iter() {
+                    option { value: "{v}", "{text}" }
+                }
+            }
+        }
     }
 }
 

@@ -65,6 +65,22 @@ export interface JobContext {
      * runner handles every job through one signature.
      */
     input: Record<string, JsonValue>;
+
+    /**
+     * A credential, by name — never by value.
+     *
+     * Throws if the job did not declare the name in `credentials`, so the
+     * declaration cannot drift from the use: a job that quietly reads a
+     * credential it never declared is one the Jobs page cannot warn you about
+     * when it is missing.
+     *
+     * The value is never logged by the runner, and every configured secret is
+     * scrubbed out of step details, summaries, inputs and error messages before
+     * anything is written or shown — see `be/src/secrets.ts`. That protects the
+     * record from a job that reports its own token by accident. It cannot
+     * protect against a job that sends it somewhere; nothing can.
+     */
+    secret(name: string): string;
 }
 
 /**
@@ -184,5 +200,21 @@ export interface Job {
      * everywhere" is exactly the failure that would not announce itself.
      */
     inputs?: JobInput[];
+
+    /**
+     * Names of the credentials this job needs, resolved through `ctx.secret`.
+     *
+     * Declared rather than merely used, so the Jobs page can say which are
+     * missing *before* a run — and so the runner can refuse to start a job
+     * whose credential is absent, rather than letting it send an empty header
+     * and fail somewhere less legible. All declared credentials are required;
+     * a job that can work without one should not declare it.
+     *
+     * Values live outside the codebase. Today that is the environment, one
+     * variable per name (`githubToken` → `RN_SECRET_GITHUB_TOKEN`); see
+     * `be/src/secrets.ts` for why the indirection exists rather than jobs
+     * reading `process.env` directly.
+     */
+    credentials?: string[];
     run(ctx: JobContext): Promise<JobResult>;
 }

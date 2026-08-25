@@ -38,6 +38,7 @@ pub fn export_all(cfg: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     RetryPolicy::export_all(cfg)?;
     JobInputType::export_all(cfg)?;
     JobInput::export_all(cfg)?;
+    CredentialRef::export_all(cfg)?;
     Outcome::export_all(cfg)?;
     JobResult::export_all(cfg)?;
     JobStep::export_all(cfg)?;
@@ -67,6 +68,7 @@ pub fn export_all(cfg: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     HistoryTier::export_all(cfg)?;
     NodeHistory::export_all(cfg)?;
     JobSource::export_all(cfg)?;
+    RunsResponse::export_all(cfg)?;
 
     ConnectionResponse::export_all(cfg)?;
     Ok(())

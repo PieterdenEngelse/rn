@@ -114,6 +114,25 @@ wire! {
 }
 
 wire! {
+    /// A credential a job needs, described without describing its value.
+    ///
+    /// Name, where to put it, and whether it is there. Never the value, and
+    /// never a prefix or a length of one — "starts with ghp_" is enough to
+    /// confirm a guess, and a length narrows a search.
+    ///
+    /// `set` is here because a job that will fail at 03:00 for want of a token
+    /// looks exactly like one that will work, right up until it does not.
+    #[serde(rename_all = "camelCase")]
+    pub struct CredentialRef {
+        pub name: String,
+        /// The environment variable currently backing it, so the page can say
+        /// what to set rather than only that something is missing.
+        pub env_var: String,
+        pub set: bool,
+    }
+}
+
+wire! {
     /// One job that exists, whether or not it is running.
     #[serde(rename_all = "camelCase")]
     pub struct CatalogueJob {
@@ -145,6 +164,9 @@ wire! {
         /// none, which is most of them.
         #[serde(default)]
         pub inputs: Vec<JobInput>,
+        /// Credentials this job needs, and whether each is configured.
+        #[serde(default)]
+        pub credentials: Vec<CredentialRef>,
     }
 }
 
@@ -352,9 +374,6 @@ wire! {
         /// The most recent run of each job that has ever run.
         #[serde(default)]
         pub last_runs: Vec<JobRun>,
-        /// The last 25 runs across all jobs, newest first.
-        #[serde(default)]
-        pub recent: Vec<JobRun>,
     }
 }
 
@@ -387,6 +406,31 @@ wire! {
         pub runs_retained: u32,
         #[serde(default)]
         pub failures_retained: u32,
+    }
+}
+
+wire! {
+    /// GET /api/runs — the run list, filtered.
+    ///
+    /// Filtered on the backend rather than in the page. The record is capped, so
+    /// filtering client-side would work today and stop working exactly when it
+    /// starts to matter: the point at which twenty jobs make the list unreadable
+    /// is the same point at which sending all of it becomes wasteful.
+    #[serde(rename_all = "camelCase")]
+    pub struct RunsResponse {
+        /// Newest first, already cut to the requested limit.
+        #[serde(default)]
+        pub runs: Vec<JobRun>,
+        /// How many runs the filter matched, before the limit.
+        #[serde(default)]
+        pub matched: u32,
+        /// How many runs are on record at all.
+        ///
+        /// Both numbers, because one of them alone lies. "12 runs" reads as a
+        /// lifetime total; "12 of 47 retained" says what it is — and the record
+        /// is capped, so a lifetime total is not a thing this can offer.
+        #[serde(default)]
+        pub retained: u32,
     }
 }
 

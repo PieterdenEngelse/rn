@@ -6,7 +6,7 @@
 
 use super::wire::{
     ConnectionResponse, JobErrors, JobRunResult, JobSource, JobsResponse, NodeHistory, NodeMetrics,
-    ParamsResponse, RestartOutcome, SaveResponse, StatusResponse, StopOutcome,
+    ParamsResponse, RestartOutcome, RunsResponse, SaveResponse, StatusResponse, StopOutcome,
 };
 
 /// Base URL of the backend API. In development the frontend is served by
@@ -205,6 +205,52 @@ pub async fn fetch_node_history() -> Result<NodeHistory, String> {
 /// The backend answers 404 for an unknown id and 500 when the job threw; both
 /// carry a `message` explaining which, because "the run failed" and "there is
 /// no such job" send the reader to different places.
+/// The run list, narrowed by whatever the panel is asking.
+///
+/// Filtered on the backend rather than here. The record is capped so filtering
+/// in the page would work today — and stop working exactly when it starts to
+/// matter, which is the point at which there are enough runs for the question
+/// to be worth asking.
+///
+/// Empty strings mean "no filter" rather than "match empty", so the caller can
+/// pass a select's value straight through.
+pub async fn fetch_runs(
+    job: &str,
+    outcome: &str,
+    since_ms: Option<f64>,
+    limit: u32,
+) -> Result<RunsResponse, String> {
+    let mut url = format!("{API_BASE}/api/runs?limit={limit}");
+    if !job.is_empty() {
+        url.push_str(&format!("&job={job}"));
+    }
+    if !outcome.is_empty() {
+        url.push_str(&format!("&outcome={outcome}"));
+    }
+    if let Some(since) = since_ms {
+        url.push_str(&format!("&since={}", since as i64));
+    }
+
+    let resp = gloo_net::http::Request::get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("{e}"))?;
+
+    if resp.ok() {
+        return resp.json::<RunsResponse>().await.map_err(|e| format!("{e}"));
+    }
+    // A 400 here is a filter the backend refused rather than ignored; showing
+    // its message beats showing a list that answers a different question.
+    match resp.json::<serde_json::Value>().await {
+        Ok(v) => Err(v
+            .get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("could not read the run list")
+            .to_string()),
+        Err(e) => Err(format!("{e}")),
+    }
+}
+
 /// Run one job now, with what it was asked to do this time.
 ///
 /// `input` is an object keyed by the job's declared field ids — see `JobInput`
