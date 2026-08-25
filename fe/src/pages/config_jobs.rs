@@ -1,4 +1,4 @@
-use crate::api::{fetch_jobs, CatalogueJob, JobsConfig, JobsResponse, ScheduledJob};
+use crate::api::{fetch_jobs, CatalogueJob, JobsConfig, JobsResponse, RetryPolicy, ScheduledJob};
 use crate::components::param::PARAM_INPUT_ROW_CLASS;
 use crate::components::{InfoButton, Panel};
 use crate::pages::monitor_jobs::duration;
@@ -242,12 +242,102 @@ fn JobConfigRow(
                     }
                 }
 
+                dt { class: "text-gray-400", "Retry" }
+                dd { class: "text-gray-300 flex items-center gap-2",
+                    match job.retry.as_ref() {
+                        Some(r) => rsx! {
+                            span {
+                                "{r.attempts} attempts, {wait(r.backoff_ms)} between"
+                            }
+                            // The number nobody works out for themselves, and
+                            // the reason the ceiling above is not the answer to
+                            // "how long can this job hold the runner".
+                            span { class: "text-gray-400",
+                                "— up to {duration(worst_case(job.timeout_ms, r))} in all"
+                            }
+                        },
+                        None => rsx! {
+                            span { class: "text-gray-400",
+                                "none — one attempt, and a failure is recorded and stops there"
+                            }
+                        },
+                    }
+                    // Inline beside its subject: this row has a gotcha its
+                    // siblings do not, and the card's own button explains the
+                    // job rather than the policy.
+                    InfoButton {
+                        title: "Retry".to_string(),
+                        what: RETRY_WHAT.to_string(),
+                        why: RETRY_WHY.to_string(),
+                        if_wrong: RETRY_IF_WRONG.to_string(),
+                    }
+                }
+
                 dt { class: "text-gray-400", "Declared in" }
                 dd { class: "text-gray-300", code { "{job.source}" } }
             }
         }
     }
 }
+
+/// The most wall clock one run can take: every attempt hitting its ceiling,
+/// with a wait between each.
+///
+/// Worth computing rather than leaving to the reader — `timeoutMs` alone reads
+/// as the answer to "how long can this hold the runner", and once a job
+/// retries it is not.
+fn worst_case(timeout_ms: f64, r: &RetryPolicy) -> f64 {
+    let attempts = r.attempts.max(1) as f64;
+    attempts * timeout_ms + (attempts - 1.0) * r.backoff_ms
+}
+
+/// A wait, in the units a person would use for one.
+///
+/// `duration` rounds to whole seconds, which is right for a ceiling measured in
+/// minutes and wrong for a backoff of a few hundred milliseconds — it would
+/// render that as "0s" and the row would look broken.
+fn wait(ms: f64) -> String {
+    if ms < 1000.0 {
+        return format!("{}ms", ms.max(0.0).round() as i64);
+    }
+    duration(ms)
+}
+
+const RETRY_WHAT: &str =
+    "How many times the runner tries this job before recording a failure, and the fixed wait \
+     between attempts. Declared in the job's own file as retry: { attempts, backoffMs } — \
+     attempts counts runs, not extra runs, so 3 means one attempt and two more.\n\nThe whole \
+     sequence is one run record carrying an attempt count, not one record per attempt: three \
+     entries for one nightly failure would make the error log read as three separate nights. \
+     The errors the earlier attempts hit are not lost — each one is a retry entry in that \
+     run's step trace on Monitor → Jobs, with the attempt number and the message.\n\nA fixed \
+     wait rather than a growing one. Exponential backoff earns its keep against a shared \
+     service that needs the pressure taken off; these jobs are mostly local, and what is \
+     worth having instead is a worst case you can state without arithmetic — which is the \
+     \"up to\" figure on this row.";
+
+const RETRY_WHY: &str =
+    "Without it a transient failure costs a full cycle. A job on a daily schedule that fails \
+     at 03:00 because a disk was briefly busy does not run again until 03:00 tomorrow, and \
+     nothing tries in between — the scheduler deliberately does not catch up on missed \
+     slots.\n\nThe timeout on the row above is per attempt, not across the sequence. That is \
+     the less surprising reading of a per-job ceiling, but it means the two settings \
+     multiply: three attempts of a five-minute job can occupy fifteen minutes, plus the \
+     waits. The \"up to\" figure is that multiplication done for you, and it is the number to \
+     check against how often the job is scheduled.";
+
+const RETRY_IF_WRONG: &str =
+    "The trap is a job that does not pass ctx.signal on. A JavaScript promise cannot be \
+     cancelled from outside, so an attempt that hits its ceiling is still running unless the \
+     job cooperated — and starting a second attempt would put two copies of a job that \
+     deletes files onto the same files.\n\nSo a timed-out attempt is retried only if the work \
+     actually stops within a second of the abort. If it does not, the runner keeps the \
+     failure and does not try again, writing retry-abandoned into the step trace with the \
+     reason. A retry: 3 job that only ever runs once is telling you it ignores its signal; \
+     that is a fix in the job, not in this policy.\n\nSet against a schedule, watch the \
+     \"up to\" figure: a job whose worst case exceeds its own interval will still be running \
+     when its next slot arrives, and the scheduler skips a slot rather than stacking a second \
+     copy.";
 
 const WHERE_BODY: &str =
     "Every value on this page is declared in code and read here, not stored in \

@@ -205,8 +205,20 @@ pub async fn fetch_node_history() -> Result<NodeHistory, String> {
 /// The backend answers 404 for an unknown id and 500 when the job threw; both
 /// carry a `message` explaining which, because "the run failed" and "there is
 /// no such job" send the reader to different places.
-pub async fn run_job(id: &str) -> Result<JobRunResult, String> {
+/// Run one job now, with what it was asked to do this time.
+///
+/// `input` is an object keyed by the job's declared field ids — see `JobInput`
+/// in the shared crate. Send `{}` for a job that declares none; the backend
+/// rejects a body a job did not ask for rather than ignoring it, so an empty
+/// object is the right thing to send and not merely the harmless thing.
+///
+/// A 400 here is the input being wrong, and the job has not started. That
+/// distinction is worth keeping: a 500 means it ran and broke.
+pub async fn run_job(id: &str, input: &serde_json::Value) -> Result<JobRunResult, String> {
     let resp = gloo_net::http::Request::post(&format!("{API_BASE}/api/jobs/{id}"))
+        .header("content-type", "application/json")
+        .body(input.to_string())
+        .map_err(|e| format!("{e}"))?
         .send()
         .await
         .map_err(|e| format!("{e}"))?;

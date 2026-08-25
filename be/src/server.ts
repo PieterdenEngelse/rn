@@ -38,6 +38,7 @@ import * as running from "./running.ts";
 import {
     JOBS,
     jobById,
+    resolveInput,
     runJob,
     scheduler,
     history as jobHistory,
@@ -259,6 +260,17 @@ export function createApp() {
                     // path, and the user only finds out which they had when
                     // the job fails.
                     ...(j.onFailure === undefined ? {} : { onFailure: j.onFailure }),
+                    // And for the same reason again: three attempts of a
+                    // five-minute job is a fifteen-minute worst case, which
+                    // nobody can work out from a page that does not say the
+                    // job retries at all.
+                    ...(j.retry === undefined ? {} : { retry: j.retry }),
+                    // The form the Jobs page renders. Sent even though the
+                    // backend is the one that validates: a field the user
+                    // cannot see is one they cannot supply, and a required
+                    // input they do not know about is a 400 with no way to fix
+                    // it from the page.
+                    inputs: j.inputs ?? [],
                 })),
                 dryRun: config.dryRun,
                 // The knobs every run is subject to, whichever job it is.
@@ -359,8 +371,36 @@ export function createApp() {
                 send(res, 404, { message: `No job with id "${id}".` });
                 return done(404);
             }
+            // The body is what this run is being asked to do — see JobInput in
+            // shared/src/jobs.rs. An empty body is the ordinary case and reads
+            // as {}.
+            let body: unknown;
             try {
-                const result = await runJob(job);
+                body = await readJson(req);
+            } catch (err) {
+                send(res, 400, {
+                    id: job.id,
+                    message: err instanceof Error ? err.message : String(err),
+                });
+                return done(400);
+            }
+
+            // Checked here as well as in runJob, and this is the reason: a job
+            // that starts and then fails on bad input has already made its
+            // first side effect, and the caller deserves 400 with what was
+            // wrong rather than 500 with what broke.
+            const resolved = resolveInput(job, body);
+            if (!resolved.ok) {
+                send(res, 400, {
+                    id: job.id,
+                    message: resolved.errors.join("; "),
+                    errors: resolved.errors,
+                });
+                return done(400);
+            }
+
+            try {
+                const result = await runJob(job, "manual", undefined, body);
                 send(res, 200, { id: job.id, ...result });
                 return done(200);
             } catch (err) {

@@ -9,8 +9,8 @@ Its *execution model*, though, is better than rn's in several specific ways, and
 each one maps onto a gap already identified in `docs/jobs.md`. This document
 lists them in the order worth doing, with what each would actually take.
 
-Items 1 and 2 are done. Nothing else here is started. Where it says "currently",
-that is the state of the code as written.
+Items 1 to 4 are done. 5 and 6 are not started. Where it says "currently", that
+is the state of the code as written.
 
 ---
 
@@ -135,57 +135,125 @@ error intact.
 
 ---
 
-## 3. Per-job retry with backoff
+## 3. Per-job retry with backoff — **done**
 
 **What n8n does.** "Retry on fail" is per-node configuration: attempts and wait
 time between them.
 
-**Why it fits rn.** rn has no retry at all. `docs/jobs.md` notes the
-consequence: for a daily job, a transient failure means waiting a full day.
-Network-facing jobs will make this urgent the moment one exists.
+**Why it fitted rn.** rn had no retry at all. `docs/jobs.md` notes the
+consequence: for a daily job, a transient failure means waiting a full day, and
+the scheduler deliberately does not catch up on missed slots.
 
-**Steps.**
+**What was built.**
 
-1. Add `retry?: { attempts: number; backoffMs: number }` to `Job`.
-2. Implement in `runJob` — it is already the one place everything passes
-   through, and doing it anywhere else would let a trigger bypass it.
-3. Decide what a retry means for the record, and say so in the panel. One run
-   entry with an attempt count is probably right; three entries would make the
-   error log read as three separate failures.
-4. Interaction with the timeout: is the ceiling per attempt or for the whole
-   sequence? Per attempt is the less surprising answer, but it means
-   `timeoutMs: 5 min` with three attempts can occupy fifteen. State it.
-5. Retries must respect `ctx.signal` — a retry loop that ignores an abort is a
-   new way to hang.
+`Job.retry = { attempts, backoffMs }`, implemented in `runJob` because that is
+already the one place every trigger passes through — anywhere else and a front
+door could bypass it. `attempts` counts runs rather than extra runs: "retries: 2"
+and "attempts: 2" differ by one whole run of a job that deletes files, and a row
+on a page should not leave that to be guessed. A declared `0` is clamped to one
+rather than taken literally, which would be a very quiet way to disable a job.
+
+**One record per run, not per attempt** — three entries for one nightly failure
+would make the error log read as three separate nights. The record carries
+`attempts` and the wall clock across all of them. The errors the earlier
+attempts hit are not lost: each is a `retry` step in the trace from item 1,
+carrying the attempt number and its message. That is the second time item 1 has
+paid for itself, and the reason it was worth doing first.
+
+**The ceiling is per attempt**, which is the less surprising reading of
+`timeoutMs` — and it means three attempts of a five-minute job can occupy
+fifteen. Rather than only stating it, the Config → Jobs row computes it:
+`attempts × timeout + (attempts - 1) × backoff`, shown as "up to 15m in all".
+The number to check against how often the job is scheduled.
+
+**A timed-out attempt is retried only if the work actually stopped.** This is
+the part the plan above did not see. A promise cannot be cancelled from outside,
+so an attempt that hit its ceiling is still running unless the job honoured
+`ctx.signal` — and retrying would put two copies of the same job on the same
+files. So the runner waits `ABORT_GRACE_MS` (one second) for the work to settle
+and abandons the retry if it does not, writing `retry-abandoned` into the trace
+with the reason. A `retry: 3` job that only ever runs once is telling you it
+ignores its signal.
+
+That grace is only paid when there is an attempt left to protect; a job with no
+retry policy would otherwise wait a second on every timeout to answer a question
+nobody asked.
+
+The backoff is a fixed wait, and it is abortable — the run holds its own
+`AbortController`, aborted when the run unwinds, so a pending wait cannot
+outlive it. Exponential backoff was not built: it earns its keep against a
+shared service that needs pressure taken off, and these jobs are mostly local.
+A worst case you can state without arithmetic is worth more here.
+
+The failure handler from item 2 runs once per run, after the last attempt —
+three notifications for one failure is how a failure handler becomes something
+you turn off.
 
 ---
 
-## 4. Run with pinned input
+## 4. Run with pinned input — **done**
 
 **What n8n does.** Run a single node with fixed input data, rather than whatever
 the previous node would have produced.
 
-**Why it fits rn.** This is the "jobs take no parameters" gap, and n8n's framing
-is better than a settings page: the input belongs to the run, not to the
+**Why it fitted rn.** This was the "jobs take no parameters" gap, and n8n's
+framing is better than a settings page: the input belongs to the run, not to the
 install. "Process this folder" is a thing you say once, not a value you save.
 
-**Steps.**
+**What was built.**
 
-1. Add an input type per job. Because `shared/` exists, this can be a real
-   declared shape rather than a bag of strings — the type lives beside the job's
-   other wire types and both ends see it.
-2. Accept a JSON body on `POST /api/jobs/:id` (`readJson` already exists in
-   `be/src/server.ts`) and hand it to the job through `JobContext`.
-3. Validate against the declared shape before running, and return 400 with the
-   reason. A job that starts and then fails on bad input has already made its
-   first side effect.
-4. Render a form on the Jobs page from the declared shape.
-5. Record the input in `JobRun`, or the run history becomes unreadable — two
-   runs with different inputs would look identical.
+`JobInput { id, label, type, info, default }` in `shared/src/jobs.rs`, with
+`JobInputType` being `text | number | bool`. Three kinds and not a type system:
+the point is a form the frontend can render and a check the backend can run, and
+a job that needs more than this wants a file rather than a field.
 
-**Watch for.** Scheduled runs have no input. Either the type is fully optional,
-or a scheduled job declares its defaults; do not let "scheduled" mean "runs with
-undefined everywhere".
+**Required is the absence of a default**, not a second flag. One fact, so there
+is nothing for a `required: false` and a missing default to disagree about — and
+it makes the scheduled-job rule expressible: the scheduler supplies nothing, so
+every input of a scheduled job must have a default, and a test over the registry
+enforces exactly that. That was the "watch for" above, and it is the failure
+that would not announce itself — every 03:00 run failing while the same job runs
+fine by hand.
+
+**Resolution happens twice, and not out of redundancy.** `resolveInput` is pure,
+in `be/src/jobs/input.ts`. The HTTP endpoint runs it to answer **400 before
+anything starts** — a job that starts and then fails on bad input has already
+made its first side effect. `runJob` runs it again as the authoritative step, so
+no trigger can reach a job with an input nobody checked, and so the scheduler and
+the failure handler get defaults filled in rather than `undefined`.
+
+Three things it refuses that a laxer check would wave through: a value for a job
+that declares no inputs (silence would let a caller believe it did something), an
+unknown field name (running with the default and reporting success is the worst
+of the three possible outcomes for a typo), and a non-finite number (it survives
+`JSON.parse` and comes back out of the record as `null`, so the recorded run
+would disagree with the run that happened). Every failure is collected rather
+than thrown on the first, so a form with three wrong fields says so once.
+
+**The resolved input is recorded on the run**, not the input as supplied — a
+scheduled run shows the values it actually used instead of an empty object.
+Without it the history is unreadable: two runs of one job with different inputs
+look identical and "it worked yesterday" stops being checkable. It renders above
+the step trace on Monitor → Jobs, which is the question the trace is the answer
+to.
+
+**The form is rendered from the declaration**, not written per job in `fe`, so a
+field added in TypeScript appears without a frontend change and a renamed one
+cannot half-exist. Each field carries an info button — a control that takes a
+path or a number and explains neither is precisely the case CLAUDE.md's rule is
+aimed at. An empty box sends nothing rather than `null`, so the backend applies
+the declared default and reports a missing required field with the same message
+any other caller would get; the page does not invent a second validator that
+could disagree with the first.
+
+**No job declares an input yet.** The mechanism was verified end to end against
+a temporary declaration on `prune-profiles` — a 400 naming both errors at once
+with nothing recorded, then a 200 whose record read
+`input: {maxAgeDays: 30, verbose: false}` with the default filled in. The
+obvious first real one is that job's retention window: a one-off "clear anything
+older than 30 days" is exactly the thing this exists for, and it is a change to
+what the job does rather than to the machinery, so it is left as a decision
+rather than made here.
 
 ---
 
@@ -257,8 +325,15 @@ argues that the second front door onto one runner beats a second runner.
 
 ## Order
 
-1 and 2 are done. 1 was the smallest, it used machinery that already existed,
+1 to 4 are done. 1 was the smallest, it used machinery that already existed,
 and it makes every other item easier to debug — its steps are what a failure
-handler now receives. 2 converted a missing feature into a job you write. 3 and
-4 wait until a job actually needs them, which is the same rule the rest of this
-project runs on.
+handler receives and where a retry's earlier errors survive. 2 converted a
+missing feature into a job you write. 3 turned out to have a hazard the plan did
+not name, which is the usual return on writing the plan down first. 4 closed the
+"jobs take no parameters" gap, and its own hazard — "scheduled" quietly meaning
+"undefined everywhere" — the plan did see, which is the other kind of return.
+
+5 becomes worth doing at the point there are enough jobs for an unfiltered list
+of the last 25 runs to stop being readable — one job is not that point. 6 waits
+for the first job that authenticates to anything, and its first step is choosing
+a store rather than writing one.

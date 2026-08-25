@@ -30,6 +30,7 @@ import { track } from "../running.ts";
 // lookup happens when a job fails, long after both modules have evaluated.
 import { jobById } from "./index.ts";
 import { record, type Trigger } from "./history.ts";
+import { resolveInput } from "./input.ts";
 import type { JobRun, JobStep } from "../generated/wire.ts";
 import type { Job, JobContext, JobResult } from "./types.ts";
 
@@ -120,6 +121,72 @@ function stepCollector() {
  * same fact.
  */
 /**
+ * Wraps a failure that must not be retried, on its way out of one attempt.
+ *
+ * A class rather than a flag on the error itself: the error belongs to the job,
+ * and writing a property onto it would be the runner editing something it did
+ * not make. Unwrapped before the failure is recorded, so nothing downstream
+ * ever sees this type.
+ */
+class UnretryableError extends Error {
+    override readonly cause: unknown;
+    constructor(cause: unknown) {
+        super("work did not stop after the abort");
+        this.cause = cause;
+    }
+}
+
+/**
+ * How long a timed-out attempt is given to actually stop before a retry is
+ * abandoned.
+ *
+ * A promise cannot be cancelled from outside. When an attempt times out, the
+ * runner stops *waiting* — but the work carries on unless the job honoured
+ * `ctx.signal`. Starting another attempt at that point would put two copies of
+ * the same job on the same files, which for something that deletes things is
+ * worse than the failure being retried.
+ *
+ * So a timeout is retried only if the work actually settles within this window,
+ * which is exactly the test of whether the job passed the signal on. A job that
+ * ignores it gets its failure recorded and no second copy; the trace says which
+ * happened. One second is long enough for an aborted `fetch` or `fs` call to
+ * reject and short enough not to matter beside a backoff.
+ */
+export const ABORT_GRACE_MS = 1_000;
+
+/** A wait that ends early if `signal` fires, and never leaves a timer behind. */
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+    if (ms <= 0 || signal.aborted) return Promise.resolve();
+    return new Promise((resolve) => {
+        const done = () => {
+            clearTimeout(timer);
+            signal.removeEventListener("abort", done);
+            resolve();
+        };
+        const timer = setTimeout(done, ms);
+        signal.addEventListener("abort", done, { once: true });
+    });
+}
+
+/**
+ * Has `work` finished — either way — within `ms`?
+ *
+ * `work` already has a `.catch` attached by the caller, so observing it here
+ * cannot turn a rejection into an unhandled one.
+ */
+async function settlesWithin(work: Promise<unknown>, ms: number): Promise<boolean> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const grace = new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(false), ms);
+    });
+    try {
+        return await Promise.race([work.then(() => true, () => true), grace]);
+    } finally {
+        if (timer !== undefined) clearTimeout(timer);
+    }
+}
+
+/**
  * Run a failed job's `onFailure` handler, if it named one and is allowed to.
  *
  * Every way this can decline is logged. A failure path that quietly does
@@ -164,52 +231,149 @@ export async function runJob(
     job: Job,
     trigger: Trigger = "manual",
     cause?: JobRun,
+    rawInput: unknown = {},
 ): Promise<JobResult> {
+    // Before track(), before the record, before anything: a job that starts and
+    // then fails on bad input has already made its first side effect. The HTTP
+    // endpoint checks too, so it can answer 400 rather than 500 — this is the
+    // authoritative one, and it is here so no trigger can get past it.
+    const resolved = resolveInput(job, rawInput);
+    if (!resolved.ok) {
+        step("job-input-rejected", { id: job.id, errors: resolved.errors });
+        throw new Error(`${job.id} input: ${resolved.errors.join("; ")}`);
+    }
+    const input = resolved.input;
+
     return track(job.id, async () => {
         const started = Date.now();
         const limitMs = job.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-        const controller = new AbortController();
+        // Attempts, not extra attempts. A policy is optional and a missing one
+        // means exactly one try; a declared 0 or 1 is clamped rather than
+        // treated as "never run", which would be a very quiet way to disable a
+        // job.
+        const maxAttempts = Math.max(1, job.retry?.attempts ?? 1);
+        const backoffMs = Math.max(0, job.retry?.backoffMs ?? 0);
 
         const steps = stepCollector();
-
-        const ctx: JobContext = {
-            dryRun: config.dryRun,
-            step: (name, detail = {}) => {
-                // Kept on the run *and* written to stdout. The record is what
-                // survives the 3am run nobody watched; the line is still what
-                // you read under `npm run dev`, and namespaced there so it says
-                // which job produced it without every job remembering to.
-                steps.add(name, detail);
-                step(`${job.id}:${name}`, detail);
-            },
-            signal: controller.signal,
-            // Only ever present on a handler run, so a job can tell the two
-            // apart without being told which mode it is in.
-            ...(cause === undefined ? {} : { cause }),
+        // Both are written on every step: the record is what survives the 3am
+        // run nobody watched, the stdout line is what you read under
+        // `npm run dev`, and the line is namespaced so it says which job
+        // produced it without every job remembering to.
+        const note = (name: string, detail: Record<string, unknown> = {}) => {
+            steps.add(name, detail);
+            step(`${job.id}:${name}`, detail);
         };
 
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        const deadline = new Promise<never>((_, reject) => {
-            timer = setTimeout(() => {
-                // Abort first: the rejection below only stops us waiting, and
-                // for a cooperative job this is what stops the actual work.
-                controller.abort();
-                reject(new Error(`timed out after ${limitMs}ms`));
-            }, limitMs);
-        });
+        // Aborted when this run is finished with, so a backoff wait can never
+        // outlive it. It is also the hook an external cancel would use: the
+        // per-attempt controllers below are consumed by their own timeouts and
+        // cannot speak for the run as a whole.
+        const runController = new AbortController();
 
-        try {
+        /**
+         * One attempt, with its own ceiling and its own abort signal.
+         *
+         * The ceiling is per attempt rather than across the sequence, which is
+         * the less surprising reading of `timeoutMs` — but it does mean a job
+         * with `timeoutMs: 5m` and three attempts can occupy fifteen minutes.
+         * See the retry info panel, which says so.
+         */
+        const attempt = async (mayRetry: boolean): Promise<JobResult> => {
+            const controller = new AbortController();
+            const ctx: JobContext = {
+                dryRun: config.dryRun,
+                step: note,
+                signal: controller.signal,
+                input,
+                // Only ever present on a handler run, so a job can tell the two
+                // apart without being told which mode it is in.
+                ...(cause === undefined ? {} : { cause }),
+            };
+
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            let timedOut = false;
+            const deadline = new Promise<never>((_, reject) => {
+                timer = setTimeout(() => {
+                    timedOut = true;
+                    // Abort first: the rejection below only stops us waiting,
+                    // and for a cooperative job this is what stops the work.
+                    controller.abort();
+                    reject(new Error(`timed out after ${limitMs}ms`));
+                }, limitMs);
+            });
+
             const work = job.run(ctx);
             // A job that rejects *after* losing the race would otherwise be an
             // unhandled rejection, which under the default unhandledRejections
             // setting takes the process down — turning a slow job into a crash.
             work.catch(() => {});
 
-            const result = await Promise.race([work, deadline]);
+            try {
+                return await Promise.race([work, deadline]);
+            } catch (err) {
+                // Whether a retry is even safe is decided here, while the work
+                // promise is still in hand. See ABORT_GRACE_MS.
+                //
+                // Guarded by `mayRetry` because the question is only worth
+                // asking when there is an attempt left to protect: a job with
+                // no retry policy would otherwise pay a second of grace on
+                // every timeout to answer a question nobody asked.
+                if (mayRetry && timedOut && !(await settlesWithin(work, ABORT_GRACE_MS))) {
+                    throw new UnretryableError(err);
+                }
+                throw err;
+            } finally {
+                // Whichever way it ended, the timer must not outlive the run.
+                if (timer !== undefined) clearTimeout(timer);
+            }
+        };
+
+        let attempts = 0;
+
+        try {
+            let result: JobResult | undefined;
+            for (;;) {
+                attempts += 1;
+                try {
+                    result = await attempt(attempts < maxAttempts);
+                    break;
+                } catch (err) {
+                    const stillRunning = err instanceof UnretryableError;
+                    const cause = stillRunning ? err.cause : err;
+                    const message =
+                        cause instanceof Error ? cause.message : String(cause);
+
+                    if (attempts >= maxAttempts) throw cause;
+                    if (stillRunning) {
+                        // Recorded rather than silently degrading to no retry:
+                        // "why did my retry:3 job only run once" has to have an
+                        // answer, and this is it.
+                        note("retry-abandoned", {
+                            attempt: attempts,
+                            of: maxAttempts,
+                            error: message,
+                            reason: `work did not stop within ${ABORT_GRACE_MS}ms of the abort`,
+                        });
+                        throw cause;
+                    }
+                    // In the trace rather than only in the count, so the errors
+                    // the earlier attempts hit survive — they are usually the
+                    // interesting ones, and the record keeps only the last.
+                    note("retry", {
+                        attempt: attempts,
+                        of: maxAttempts,
+                        error: message,
+                        waitMs: backoffMs,
+                    });
+                    await sleep(backoffMs, runController.signal);
+                }
+            }
+
             step("job-result", {
                 id: job.id,
                 ms: Date.now() - started,
-                dryRun: ctx.dryRun,
+                attempts,
+                dryRun: config.dryRun,
                 changed: result.changed,
                 ...(result.skipped === undefined ? {} : { skipped: result.skipped }),
                 ...result.summary,
@@ -219,11 +383,13 @@ export async function runJob(
                 startedAt: started,
                 ms: Date.now() - started,
                 trigger,
-                dryRun: ctx.dryRun,
+                dryRun: config.dryRun,
                 changed: result.changed,
                 ...(result.skipped === undefined ? {} : { skipped: result.skipped }),
                 summary: result.summary,
                 steps: steps.collected(),
+                attempts,
+                input,
                 ...(cause === undefined ? {} : { causedBy: cause.jobId }),
             });
             return result;
@@ -235,7 +401,8 @@ export async function runJob(
             step("job-failed", {
                 id: job.id,
                 ms: Date.now() - started,
-                dryRun: ctx.dryRun,
+                attempts,
+                dryRun: config.dryRun,
                 error: message,
             });
             // Recorded as well as logged: a failure at 3am is exactly the run
@@ -249,21 +416,24 @@ export async function runJob(
                 startedAt: started,
                 ms: Date.now() - started,
                 trigger,
-                dryRun: ctx.dryRun,
+                dryRun: config.dryRun,
                 changed: false,
                 error: message,
                 summary: {},
                 // The steps that ran before it broke — the reason this is worth
                 // keeping at all. A failed run has no summary to explain it.
                 steps: steps.collected(),
+                attempts,
+                input,
                 ...(cause === undefined ? {} : { causedBy: cause.jobId }),
             };
             record(failure);
             await runFailureHandler(job, failure, cause !== undefined);
             throw err;
         } finally {
-            // Whichever way it ended, the timer must not outlive the run.
-            if (timer !== undefined) clearTimeout(timer);
+            // Ends any backoff wait still pending, so nothing this run started
+            // can outlive it. Each attempt clears its own deadline timer.
+            runController.abort();
         }
     });
 }

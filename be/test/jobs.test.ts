@@ -3,12 +3,12 @@ import assert from "node:assert/strict";
 import { mkdtemp, writeFile, utimes, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, isAbsolute } from "node:path";
-import { runJob, STEP_HEAD, STEP_TAIL, STEP_TRUNCATED } from "../src/jobs/run.ts";
-import { JOBS, jobById } from "../src/jobs/index.ts";
+import { runJob, ABORT_GRACE_MS, STEP_HEAD, STEP_TAIL, STEP_TRUNCATED } from "../src/jobs/run.ts";
+import { JOBS, jobById, resolveInput } from "../src/jobs/index.ts";
 import * as scheduler from "../src/jobs/scheduler.ts";
 import * as history from "../src/jobs/history.ts";
 import { isArtifact, pruneProfiles } from "../src/jobs/prune-profiles.ts";
-import type { Job } from "../src/jobs/types.ts";
+import type { Job, JobInput } from "../src/jobs/types.ts";
 import type { JobRun } from "../src/generated/wire.ts";
 import * as running from "../src/running.ts";
 import { config } from "../src/config.ts";
@@ -178,21 +178,21 @@ async function artifact(name: string, ageDays: number, body = "x"): Promise<void
 
 test("an empty directory is reported as skipped, not as a failure", async () => {
     setDryRun(false);
-    const r = await pruneProfiles.run({ dryRun: false, step: () => {}, signal: new AbortController().signal });
+    const r = await pruneProfiles.run({ dryRun: false, step: () => {}, signal: new AbortController().signal, input: {} });
     assert.equal(r.changed, false);
     assert.match(r.skipped ?? "", /No profiling artifacts/);
 });
 
 test("an unreadable directory is skipped with the reason attached", async () => {
     setConfig(join(dir, "does-not-exist"), 7);
-    const r = await pruneProfiles.run({ dryRun: false, step: () => {}, signal: new AbortController().signal });
+    const r = await pruneProfiles.run({ dryRun: false, step: () => {}, signal: new AbortController().signal, input: {} });
     assert.equal(r.changed, false);
     assert.match(r.skipped ?? "", /Could not read/);
 });
 
 test("artifacts younger than the window are kept, and the reason says so", async () => {
     await artifact("jit-1.dump", 2);
-    const r = await pruneProfiles.run({ dryRun: false, step: () => {}, signal: new AbortController().signal });
+    const r = await pruneProfiles.run({ dryRun: false, step: () => {}, signal: new AbortController().signal, input: {} });
     assert.equal(r.changed, false);
     assert.equal(r.summary.stale, 0);
     assert.match(r.skipped ?? "", /younger than 7 days/);
@@ -204,7 +204,7 @@ test("dry run deletes nothing but reports exactly what it would delete", async (
     await artifact("isolate-0xabc-1-v8.log", 30, "bb");
     await artifact("recent.cpuprofile", 1, "c");
 
-    const r = await pruneProfiles.run({ dryRun: true, step: () => {}, signal: new AbortController().signal });
+    const r = await pruneProfiles.run({ dryRun: true, step: () => {}, signal: new AbortController().signal, input: {} });
 
     assert.equal(r.changed, false, "a dry run never reports a change");
     assert.equal(r.summary.stale, 2);
@@ -220,7 +220,7 @@ test("armed, it deletes only the stale artifacts", async () => {
     await artifact("recent.cpuprofile", 1);
     await artifact("notes.txt", 400);
 
-    const r = await pruneProfiles.run({ dryRun: false, step: () => {}, signal: new AbortController().signal });
+    const r = await pruneProfiles.run({ dryRun: false, step: () => {}, signal: new AbortController().signal, input: {} });
 
     assert.equal(r.changed, true);
     assert.equal(r.summary.deleted, 2);
@@ -234,8 +234,8 @@ test("dry run and armed run agree on which files are stale", async () => {
     await artifact("jit-2.dump", 8);
     await artifact("jit-3.dump", 6);
 
-    const dry = await pruneProfiles.run({ dryRun: true, step: () => {}, signal: new AbortController().signal });
-    const armed = await pruneProfiles.run({ dryRun: false, step: () => {}, signal: new AbortController().signal });
+    const dry = await pruneProfiles.run({ dryRun: true, step: () => {}, signal: new AbortController().signal, input: {} });
+    const armed = await pruneProfiles.run({ dryRun: false, step: () => {}, signal: new AbortController().signal, input: {} });
 
     // If these ever disagree the dry run is worthless as a preview.
     assert.equal(dry.summary.stale, armed.summary.deleted);
@@ -244,7 +244,7 @@ test("dry run and armed run agree on which files are stale", async () => {
 
 test("the job reports facts, never the word done", async () => {
     await artifact("jit-1.dump", 30);
-    const r = await pruneProfiles.run({ dryRun: false, step: () => {}, signal: new AbortController().signal });
+    const r = await pruneProfiles.run({ dryRun: false, step: () => {}, signal: new AbortController().signal, input: {} });
     // log.ts: "a line that says 'done' cannot become an explanation".
     assert.ok(typeof r.summary.dir === "string");
     assert.ok(typeof r.summary.scanned === "number");
@@ -527,7 +527,7 @@ test("a record written before steps existed reads as an empty trace, not undefin
 test("outcome separates a skip from a run that changed nothing", () => {
     const base = {
         jobId: "x", startedAt: 0, ms: 1, trigger: "manual" as const,
-        dryRun: false, summary: {}, steps: [],
+        dryRun: false, summary: {}, steps: [], attempts: 1, input: {},
     };
     // Both changed nothing; only one of them has a reason worth reading.
     assert.equal(history.outcome({ ...base, changed: false }), "unchanged");
@@ -799,6 +799,351 @@ test("a handler that fails does not replace the error the caller asked about", a
     // is itself visible rather than only inferable.
     assert.equal(history.failuresFor("broken-handler").length, 1);
     assert.equal(history.failuresFor("breaks").length, 1);
+});
+
+// ---- retry --------------------------------------------------------------
+
+test("a job with no retry policy is tried once", async () => {
+    let calls = 0;
+    const job = probe({
+        async run() {
+            calls += 1;
+            throw new Error("boom");
+        },
+    });
+    await assert.rejects(runJob(job));
+    assert.equal(calls, 1);
+    assert.equal(history.list()[0]?.attempts, 1, "and the record says so");
+});
+
+test("a failing job is tried again, and the record covers the whole sequence", async () => {
+    let calls = 0;
+    const job = probe({
+        retry: { attempts: 3, backoffMs: 0 },
+        async run() {
+            calls += 1;
+            if (calls < 3) throw new Error(`boom ${calls}`);
+            return { summary: { files: 1 }, changed: true };
+        },
+    });
+    const result = await runJob(job);
+    assert.equal(result.changed, true);
+    assert.equal(calls, 3);
+
+    // One record, not three. Three would make one nightly failure read as
+    // three separate nights in the error log.
+    const runs = history.list();
+    assert.equal(runs.length, 1);
+    assert.equal(runs[0]?.attempts, 3);
+    assert.equal(history.outcome(runs[0]!), "changed");
+});
+
+test("the errors the earlier attempts hit survive in the trace", async () => {
+    let calls = 0;
+    const job = probe({
+        retry: { attempts: 3, backoffMs: 0 },
+        async run() {
+            calls += 1;
+            throw new Error(`boom ${calls}`);
+        },
+    });
+    await assert.rejects(runJob(job), /boom 3/, "the caller gets the last error");
+
+    const [run] = history.list();
+    // The record keeps only the last error, so without these the first two
+    // are gone — and they are usually the interesting ones.
+    const retries = run!.steps.filter((s) => s.name === "retry");
+    assert.equal(retries.length, 2, "two waits between three attempts");
+    assert.deepEqual(retries.map((s) => s.detail.error), ["boom 1", "boom 2"]);
+    assert.deepEqual(retries.map((s) => s.detail.attempt), [1, 2]);
+    assert.equal(run!.attempts, 3);
+});
+
+test("a successful first attempt never waits", async () => {
+    const started = Date.now();
+    const job = probe({ retry: { attempts: 3, backoffMs: 5_000 } });
+    await runJob(job);
+    assert.ok(Date.now() - started < 1_000, "the backoff belongs between attempts, not after");
+    assert.equal(history.list()[0]?.attempts, 1);
+});
+
+test("the backoff is actually waited out between attempts", async () => {
+    let calls = 0;
+    const job = probe({
+        retry: { attempts: 2, backoffMs: 60 },
+        async run() {
+            calls += 1;
+            throw new Error("boom");
+        },
+    });
+    const started = Date.now();
+    await assert.rejects(runJob(job));
+    assert.equal(calls, 2);
+    assert.ok(Date.now() - started >= 55, "one wait of roughly backoffMs");
+});
+
+test("a declared attempts of 0 runs the job once rather than never", async () => {
+    // A very quiet way to disable a job, if it were taken literally.
+    let calls = 0;
+    const job = probe({
+        retry: { attempts: 0, backoffMs: 0 },
+        async run() {
+            calls += 1;
+            return { summary: {}, changed: true };
+        },
+    });
+    await runJob(job);
+    assert.equal(calls, 1);
+});
+
+test("a timed-out attempt is retried when the job honoured the signal", async () => {
+    let calls = 0;
+    const job = probe({
+        timeoutMs: 30,
+        retry: { attempts: 2, backoffMs: 0 },
+        async run(ctx) {
+            calls += 1;
+            if (calls === 1) {
+                // Cooperative: stops when told to, which is what makes a
+                // second attempt safe.
+                await new Promise((_, reject) => {
+                    ctx.signal.addEventListener("abort", () => reject(new Error("aborted")));
+                });
+            }
+            return { summary: {}, changed: true };
+        },
+    });
+    await runJob(job);
+    assert.equal(calls, 2, "the first attempt stopped, so a second was safe");
+    assert.equal(history.list()[0]?.attempts, 2);
+});
+
+test("a job that ignores the abort is not started a second time", async () => {
+    let calls = 0;
+    const job = probe({
+        id: "ignores-abort",
+        timeoutMs: 30,
+        retry: { attempts: 3, backoffMs: 0 },
+        // Never settles, signal or not. Attempt one is still running, so a
+        // second copy would put two of them on the same files.
+        run: () => {
+            calls += 1;
+            return new Promise<never>(() => {});
+        },
+    });
+    await assert.rejects(runJob(job), /timed out/);
+
+    assert.equal(calls, 1, "no second copy");
+    const [run] = history.list();
+    assert.equal(run?.attempts, 1);
+    // Recorded, not silent: "why did my retry:3 job only run once" has an
+    // answer, and this is it.
+    const abandoned = run!.steps.find((s) => s.name === "retry-abandoned");
+    assert.ok(abandoned, "the abandoned retry is in the trace");
+    assert.equal(abandoned!.detail.of, 3);
+    assert.match(String(abandoned!.detail.reason), new RegExp(`${ABORT_GRACE_MS}ms`));
+});
+
+test("a run that exhausts its attempts still runs the failure handler, once", async () => {
+    let handled = 0;
+    const handler: Job = {
+        id: "notify-me", label: "Notify me",
+        info: { what: "w", why: "y", ifWrong: "i" },
+        source: import.meta.filename,
+        async run() {
+            handled += 1;
+            return { summary: {}, changed: true };
+        },
+    };
+    const failing = probe({
+        id: "breaks",
+        onFailure: "notify-me",
+        retry: { attempts: 3, backoffMs: 0 },
+        async run() {
+            throw new Error("boom");
+        },
+    });
+
+    await registered([handler, failing], async () => {
+        await assert.rejects(runJob(failing));
+    });
+
+    // Per run, not per attempt — three notifications for one failure is how a
+    // failure handler becomes something you turn off.
+    assert.equal(handled, 1);
+    assert.equal(history.list()[1]?.attempts, 3, "the failed run tried three times");
+});
+
+test("every registered job's retry policy is sane if it declares one", () => {
+    for (const job of JOBS) {
+        if (job.retry === undefined) continue;
+        assert.ok(job.retry.attempts >= 1, `${job.id}: attempts`);
+        assert.ok(job.retry.backoffMs >= 0, `${job.id}: backoffMs`);
+    }
+});
+
+// ---- run input ----------------------------------------------------------
+
+/** A declared field, with the info prose every one of them carries. */
+function field(over: Partial<JobInput> & Pick<JobInput, "id" | "type">): JobInput {
+    return {
+        label: over.id,
+        info: { what: "w", why: "y", ifWrong: "i" },
+        ...over,
+    } as JobInput;
+}
+
+test("a job that declares no input rejects a body rather than ignoring it", () => {
+    // Silence would let a caller go on believing the value did something.
+    const r = resolveInput(probe(), { folder: "/tmp" });
+    assert.equal(r.ok, false);
+    assert.match(r.ok === false ? r.errors[0]! : "", /takes no input/);
+});
+
+test("defaults are filled in, so a job reads a value nobody supplied", () => {
+    const job = probe({ inputs: [field({ id: "maxAgeDays", type: "number", default: 7 })] });
+    const r = resolveInput(job, {});
+    assert.deepEqual(r.ok && r.input, { maxAgeDays: 7 });
+});
+
+test("a field with no default is required, and says which one", () => {
+    const job = probe({ inputs: [field({ id: "folder", type: "text" })] });
+    const r = resolveInput(job, {});
+    assert.equal(r.ok, false);
+    assert.deepEqual(r.ok === false && r.errors, ["folder is required and has no default"]);
+});
+
+test("a wrong type is rejected with what was expected and what came", () => {
+    const job = probe({ inputs: [field({ id: "maxAgeDays", type: "number", default: 7 })] });
+    const r = resolveInput(job, { maxAgeDays: "seven" });
+    assert.equal(r.ok, false);
+    assert.match(r.ok === false ? r.errors[0]! : "", /maxAgeDays must be number, got string/);
+});
+
+test("a number that is not finite is rejected", () => {
+    // It survives a hand-written body and comes back out of the record as
+    // null, so the run recorded would disagree with the run that happened.
+    const job = probe({ inputs: [field({ id: "n", type: "number", default: 1 })] });
+    assert.equal(resolveInput(job, { n: Number.NaN }).ok, false);
+    assert.equal(resolveInput(job, { n: Number.POSITIVE_INFINITY }).ok, false);
+});
+
+test("an unknown field is an error, not a silent default", () => {
+    // The worst outcome would be running with the default and reporting
+    // success, which is what ignoring a typo amounts to.
+    const job = probe({ inputs: [field({ id: "folder", type: "text", default: "/tmp" })] });
+    const r = resolveInput(job, { floder: "/var" });
+    assert.equal(r.ok, false);
+    assert.match(r.ok === false ? r.errors[0]! : "", /floder is not an input/);
+});
+
+test("every wrong field is reported at once, not one per round trip", () => {
+    const job = probe({
+        inputs: [
+            field({ id: "folder", type: "text" }),
+            field({ id: "days", type: "number", default: 7 }),
+        ],
+    });
+    const r = resolveInput(job, { days: "no", extra: 1 });
+    assert.equal(r.ok, false);
+    assert.equal(r.ok === false && r.errors.length, 3, "required, wrong type, unknown");
+});
+
+test("a body that is not an object is rejected before anything runs", () => {
+    const job = probe({ inputs: [field({ id: "folder", type: "text", default: "/tmp" })] });
+    assert.equal(resolveInput(job, [1, 2]).ok, false);
+    assert.equal(resolveInput(job, "nope").ok, false);
+    assert.equal(resolveInput(job, null).ok, false);
+});
+
+test("the runner hands the resolved input to the job", async () => {
+    let seen: Record<string, unknown> | undefined;
+    const job = probe({
+        inputs: [
+            field({ id: "folder", type: "text" }),
+            field({ id: "days", type: "number", default: 7 }),
+        ],
+        async run(ctx) {
+            seen = ctx.input;
+            return { summary: {}, changed: true };
+        },
+    });
+    await runJob(job, "manual", undefined, { folder: "/var/tmp" });
+    assert.deepEqual(seen, { folder: "/var/tmp", days: 7 }, "supplied and defaulted alike");
+});
+
+test("bad input never reaches the job, and never records a run", async () => {
+    let ran = false;
+    const job = probe({
+        inputs: [field({ id: "folder", type: "text" })],
+        async run() {
+            ran = true;
+            return { summary: {}, changed: true };
+        },
+    });
+    await assert.rejects(runJob(job, "manual", undefined, {}), /folder is required/);
+    assert.equal(ran, false, "no side effect");
+    assert.equal(history.list().length, 0, "and no run to explain in the history");
+});
+
+test("the resolved input is recorded, so two runs are told apart", async () => {
+    const job = probe({
+        inputs: [field({ id: "days", type: "number", default: 7 })],
+    });
+    await runJob(job, "manual", undefined, { days: 30 });
+    await runJob(job);
+
+    const runs = history.list();
+    assert.deepEqual(runs[0]?.input, { days: 7 }, "the defaulted run says 7, not nothing");
+    assert.deepEqual(runs[1]?.input, { days: 30 });
+});
+
+test("a scheduled run gets the declared defaults, not undefined everywhere", async () => {
+    let seen: Record<string, unknown> | undefined;
+    const job: Job = {
+        id: "sched-input",
+        label: "Sched input",
+        info: { what: "w", why: "y", ifWrong: "i" },
+        source: import.meta.filename,
+        schedule: { kind: "everyMinutes", minutes: 60 },
+        inputs: [field({ id: "days", type: "number", default: 7 })],
+        async run(ctx) {
+            seen = ctx.input;
+            return { summary: {}, changed: false };
+        },
+    };
+    scheduler.start([job], new Date(Date.now() - 61 * 60_000));
+    await scheduler.tick();
+    scheduler.stop();
+
+    assert.deepEqual(seen, { days: 7 });
+    assert.deepEqual(history.list()[0]?.input, { days: 7 });
+});
+
+test("a scheduled job cannot declare an input the scheduler could not supply", () => {
+    // The failure this guards is quiet: the scheduler passes nothing, so a
+    // required field would make every scheduled run fail at 03:00 with nobody
+    // watching, while the same job runs fine by hand.
+    for (const job of JOBS) {
+        if (job.schedule === undefined) continue;
+        for (const f of job.inputs ?? []) {
+            assert.notEqual(
+                f.default, undefined,
+                `${job.id} is scheduled, so its input "${f.id}" needs a default`,
+            );
+        }
+    }
+});
+
+test("every declared input carries the prose its info panel needs", () => {
+    for (const job of JOBS) {
+        for (const f of job.inputs ?? []) {
+            assert.ok(f.label.length > 0, `${job.id}.${f.id}: label`);
+            assert.ok(f.info.what.length > 0, `${job.id}.${f.id}: what`);
+            assert.ok(f.info.why.length > 0, `${job.id}.${f.id}: why`);
+            assert.ok(f.info.ifWrong.length > 0, `${job.id}.${f.id}: ifWrong`);
+        }
+    }
 });
 
 // ---- the error log ------------------------------------------------------

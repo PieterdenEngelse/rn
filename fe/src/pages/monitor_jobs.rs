@@ -1,6 +1,7 @@
 use crate::api::{
     fetch_job_errors, fetch_job_source, fetch_jobs, run_job, CatalogueJob, JobErrors, JobRun,
-    JobRunResult, JobSource, JobStep, JobsResponse, Outcome, ScheduledJob, Trigger,
+    JobInput, JobInputType, JobRunResult, JobSource, JobStep, JobsResponse, Outcome,
+    ScheduledJob, Trigger,
 };
 use crate::components::param::PARAM_INPUT_ROW_CLASS;
 use crate::components::{InfoButton, Panel};
@@ -97,7 +98,7 @@ const STEPS_WHAT: &str =
      reported. The shape is JobStep in shared/src/jobs.rs, so this list and the backend's \
      record cannot disagree about it.\n\nThe trigger column says how each run started: manual, \
      schedule, or \"on failure of <a job>\" for a run that exists because another job failed \
-     and named this one as its handler. See the on-failure button on that job's row.";
+     and named this one as its handler. See the on-failure button on that job's row.\n\nA run      that shows an attempt count retried: its trace carries a retry entry per attempt that      failed, with the error that attempt hit, since the record itself keeps only the last one.      A retry-abandoned entry means the opposite — the runner declined to try again because the      timed-out attempt was still running, and a second copy would have overlapped it.";
 
 const STEPS_WHY: &str =
     "It is the difference between a verdict and a record. A failed run's message says the last \
@@ -212,15 +213,38 @@ fn JobRow(
     let mut showing_source = use_signal(|| false);
     let mut errors: Signal<Option<Result<JobErrors, String>>> = use_signal(|| None);
     let mut showing_errors = use_signal(|| false);
+    // What this run is being asked to do, keyed by field id. Seeded from the
+    // declared defaults so the form opens showing what would happen if you
+    // pressed Run without touching it — a blank form implies the job has no
+    // opinion, and it usually has.
+    let inputs = job.inputs.clone();
+    let draft = use_signal(|| {
+        inputs
+            .iter()
+            .map(|f| (f.id.clone(), f.default.clone().unwrap_or(serde_json::Value::Null)))
+            .collect::<std::collections::BTreeMap<String, serde_json::Value>>()
+    });
 
     let source_id = job.id.clone();
     let errors_id = job.id.clone();
     let id = job.id.clone();
     let start = move |_| {
         let id = id.clone();
+        // Nulls are the fields left empty. Dropping them here rather than
+        // sending null means the backend applies the declared default and
+        // reports a required field as missing, which is the same answer a
+        // caller outside the page would get.
+        let body = serde_json::Value::Object(
+            draft
+                .read()
+                .iter()
+                .filter(|(_, v)| !v.is_null())
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+        );
         busy.set(true);
         spawn(async move {
-            let result = run_job(&id).await;
+            let result = run_job(&id, &body).await;
             outcome.set(Some(result));
             busy.set(false);
             on_ran.call(());
@@ -316,6 +340,10 @@ fn JobRow(
                 }
             }
 
+            if !job.inputs.is_empty() {
+                InputForm { fields: job.inputs.clone(), draft }
+            }
+
             if outcome.read().is_none() {
                 if let Some(run) = last.as_ref() {
                     div { class: "mt-2 text-xs flex items-center gap-2",
@@ -358,6 +386,125 @@ fn JobRow(
                     p { class: "text-gray-300 mt-1", "{e}" }
                 },
                 None => rsx! {},
+            }
+        }
+    }
+}
+
+/// The form for what a job is being asked to do, this run only.
+///
+/// Rendered from the job's own declaration — `JobInput` in the shared crate —
+/// rather than written per job here, so a field added in TypeScript appears
+/// without a frontend change, and a renamed one cannot half-exist.
+///
+/// Every field carries an info button, because a form that takes a path or a
+/// number and explains neither is exactly the control CLAUDE.md says must have
+/// one: "what happens if I change this?" is the whole question.
+#[component]
+fn InputForm(
+    fields: Vec<JobInput>,
+    draft: Signal<std::collections::BTreeMap<String, serde_json::Value>>,
+) -> Element {
+    rsx! {
+        // Bounded top and bottom: with only a rule above it, the job's
+        // last-run line beneath reads as another form row.
+        div { class: "mt-3 py-3 border-y border-gray-600 space-y-2",
+            p { class: "text-gray-400 text-xs max-w-3xl",
+                "What this run should do. These belong to the run, not to the install — "
+                "nothing here is saved, and the values used are recorded on the run."
+            }
+            for f in fields.iter() {
+                div { class: PARAM_INPUT_ROW_CLASS,
+                    div { class: "flex items-center gap-3",
+                        label { class: "text-gray-300 text-xs w-40 shrink-0", "{f.label}" }
+                        InputField { field: f.clone(), draft }
+                        if f.default.is_none() {
+                            span { class: "text-gray-400 text-xs", "required" }
+                        }
+                    }
+                    InfoButton {
+                        title: f.label.clone(),
+                        what: f.info.what.clone(),
+                        why: f.info.why.clone(),
+                        if_wrong: f.info.if_wrong.clone(),
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// One control, chosen by the declared type.
+#[component]
+fn InputField(
+    field: JobInput,
+    draft: Signal<std::collections::BTreeMap<String, serde_json::Value>>,
+) -> Element {
+    let id = field.id.clone();
+    let current = draft.read().get(&field.id).cloned().unwrap_or(serde_json::Value::Null);
+
+    match field.kind {
+        JobInputType::Bool => {
+            let on = current.as_bool().unwrap_or(false);
+            rsx! {
+                input {
+                    r#type: "checkbox",
+                    class: "toggle toggle-sm !border !border-white",
+                    // Never `disabled` and never dimmed by opacity — see the
+                    // Form Control Rules in CLAUDE.md.
+                    style: format!(
+                        "border: 1px solid white; background-color: {}; --input-color: #fff;",
+                        if on { "" } else { "#d1d5db" },
+                    ),
+                    checked: on,
+                    onchange: move |evt| {
+                        draft.write().insert(id.clone(), serde_json::json!(evt.checked()));
+                    },
+                }
+            }
+        }
+        JobInputType::Number => {
+            let text = match current.as_f64() {
+                Some(n) => format!("{n}"),
+                None => String::new(),
+            };
+            rsx! {
+                input {
+                    r#type: "number",
+                    class: "bg-gray-900 border border-gray-600 rounded px-2 py-1 text-gray-200 text-xs w-40",
+                    value: "{text}",
+                    onchange: move |evt| {
+                        let raw = evt.value();
+                        // An unparseable box is Null, which the run button
+                        // drops — so the backend answers with the same message
+                        // it would give any other caller, rather than this page
+                        // inventing its own validation that could disagree.
+                        let v = match raw.trim().parse::<f64>() {
+                            Ok(n) => serde_json::json!(n),
+                            Err(_) => serde_json::Value::Null,
+                        };
+                        draft.write().insert(id.clone(), v);
+                    },
+                }
+            }
+        }
+        JobInputType::Text => {
+            let text = current.as_str().unwrap_or_default().to_string();
+            rsx! {
+                input {
+                    r#type: "text",
+                    class: "bg-gray-900 border border-gray-600 rounded px-2 py-1 text-gray-200 text-xs w-96",
+                    value: "{text}",
+                    onchange: move |evt| {
+                        let raw = evt.value();
+                        let v = if raw.is_empty() {
+                            serde_json::Value::Null
+                        } else {
+                            serde_json::json!(raw)
+                        };
+                        draft.write().insert(id.clone(), v);
+                    },
+                }
             }
         }
     }
@@ -554,7 +701,14 @@ fn RunRow(run: JobRun, alt: bool) -> Element {
                         "{sk}"
                     }
                 }
-                if !run.steps.is_empty() {
+                // Only when it is more than one. A count on every row would be
+                // noise, and the interesting case is the run that needed more
+                // than a first go — the errors it hit on the way are the
+                // `retry` entries in its trace.
+                if run.attempts > 1 {
+                    span { class: "text-gray-400 text-xs shrink-0", "{run.attempts} attempts" }
+                }
+                if !run.steps.is_empty() || !run.input.is_empty() {
                     // Cyan: a secondary action, per the colour rules.
                     button {
                         class: "cursor-pointer text-xs shrink-0",
@@ -563,20 +717,58 @@ fn RunRow(run: JobRun, alt: bool) -> Element {
                             let was = open();
                             open.set(!was);
                         },
-                        if open() { "Hide steps" } else { "{step_count(run.steps.len())}" }
+                        if open() { "Hide detail" } else { "{detail_count(&run)}" }
                     }
                 }
             }
             if open() {
-                div { class: "mt-2", StepTrace { steps: run.steps.clone() } }
+                div { class: "mt-2 space-y-2",
+                    RunInput { input: run.input.clone() }
+                    StepTrace { steps: run.steps.clone() }
+                }
             }
         }
     }
 }
 
-/// "1 step", "12 steps" — a count that reads as English at one.
-fn step_count(n: usize) -> String {
-    if n == 1 { "1 step".to_string() } else { format!("{n} steps") }
+/// What is behind the toggle: "12 steps", or "input" for a run that reported
+/// none but was asked something.
+///
+/// A run with an input and no trace is a real case — a job that takes a folder
+/// and skips immediately — and labelling it "0 steps" would read as a bug in
+/// the trace rather than an accurate description of a short run.
+fn detail_count(run: &JobRun) -> String {
+    match run.steps.len() {
+        0 => "input".to_string(),
+        1 => "1 step".to_string(),
+        n => format!("{n} steps"),
+    }
+}
+
+/// What the run was asked to do, as resolved.
+///
+/// Rendered above the trace because it is the question the trace answers to.
+/// Without it two runs of one job with different inputs are indistinguishable
+/// in the history, and "it worked yesterday" stops being checkable.
+///
+/// Nothing at all for a job that takes no input, which is most of them — a
+/// heading over an empty table would suggest something was withheld.
+#[component]
+fn RunInput(input: std::collections::BTreeMap<String, serde_json::Value>) -> Element {
+    if input.is_empty() {
+        return rsx! {};
+    }
+    rsx! {
+        div { class: "rounded border border-gray-600 overflow-hidden",
+            for (i, (key, value)) in input.iter().enumerate() {
+                div {
+                    class: if i % 2 == 1 { "flex gap-4 px-3 py-1.5 bg-gray-900" } else { "flex gap-4 px-3 py-1.5 bg-gray-800" },
+                    span { class: "text-gray-400 text-xs w-40 shrink-0", "asked: {key}" }
+                    code { class: "text-gray-200 text-xs", "{render_value(value)}" }
+                }
+            }
+        }
+    }
 }
 
 /// What a run reported on the way, oldest first.
@@ -739,6 +931,9 @@ fn FailureRow(run: JobRun, alt: bool) -> Element {
                 span { class: "text-red-400 flex-1 break-words",
                     {run.error.clone().unwrap_or_default()}
                 }
+                if run.attempts > 1 {
+                    span { class: "text-gray-400 shrink-0", "{run.attempts} attempts" }
+                }
                 if !run.steps.is_empty() {
                     button {
                         class: "cursor-pointer text-xs shrink-0",
@@ -747,12 +942,15 @@ fn FailureRow(run: JobRun, alt: bool) -> Element {
                             let was = open();
                             open.set(!was);
                         },
-                        if open() { "Hide steps" } else { "{step_count(run.steps.len())}" }
+                        if open() { "Hide detail" } else { "{detail_count(&run)}" }
                     }
                 }
             }
             if open() {
-                div { class: "mt-2", StepTrace { steps: run.steps.clone() } }
+                div { class: "mt-2 space-y-2",
+                    RunInput { input: run.input.clone() }
+                    StepTrace { steps: run.steps.clone() }
+                }
             }
         }
     }

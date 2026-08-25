@@ -76,8 +76,8 @@ function load(): void {
             ? { runs: raw as JobRun[], failures: (raw as JobRun[]).filter(isFailure) }
             : (raw as { runs?: JobRun[]; failures?: JobRun[] });
 
-        runs = (parsed.runs ?? []).filter(valid).map(withSteps).slice(-CAPACITY);
-        failures = (parsed.failures ?? []).filter(valid).map(withSteps).slice(-FAILURE_CAPACITY);
+        runs = (parsed.runs ?? []).filter(valid).map(normalise).slice(-CAPACITY);
+        failures = (parsed.failures ?? []).filter(valid).map(normalise).slice(-FAILURE_CAPACITY);
     } catch {
         // Missing is the normal first run; corrupt must not stop the app from
         // starting. Either way we begin with nothing, which is honest.
@@ -85,14 +85,21 @@ function load(): void {
 }
 
 /**
- * A record written before steps were kept has no `steps` at all, and the wire
- * type says every run has one. Filled in here rather than left undefined, so
- * what is served matches what is declared — the frontend would read the absence
- * as an empty trace either way, and a shape that is only *usually* right is the
- * drift the shared crate exists to stop.
+ * Fill in fields that older records predate.
+ *
+ * A record written before steps were kept has no `steps`, one written before
+ * retries has no `attempts`, and one written before inputs has no `input` —
+ * while the wire type says every run has all three. Filled in here rather than
+ * left undefined, so what is served matches what is declared: a shape that is
+ * only *usually* right is the drift the shared crate exists to stop.
+ *
+ * Each default is the truthful reading of the absence. No steps recorded is an
+ * empty trace; no attempt count is one attempt and no input is no input,
+ * because nothing that wrote those files could retry or take one.
  */
-function withSteps(r: JobRun): JobRun {
-    return r.steps === undefined ? { ...r, steps: [] } : r;
+function normalise(r: JobRun): JobRun {
+    if (r.steps !== undefined && r.attempts !== undefined && r.input !== undefined) return r;
+    return { ...r, steps: r.steps ?? [], attempts: r.attempts ?? 1, input: r.input ?? {} };
 }
 
 function valid(r: JobRun): boolean {

@@ -21,6 +21,7 @@ export function jobById(id: string): Job | undefined {
 }
 
 export { runJob, DEFAULT_TIMEOUT_MS } from "./run.ts";
+export { resolveInput } from "./input.ts";
 export * as scheduler from "./scheduler.ts";
 export * as history from "./history.ts";
-export type { Job, JobContext, JobInfo, JobResult, Schedule } from "./types.ts";
+export type { Job, JobContext, JobInfo, JobInput, JobResult, Schedule } from "./types.ts";

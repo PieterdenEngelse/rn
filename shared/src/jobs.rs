@@ -48,6 +48,72 @@ wire! {
 }
 
 wire! {
+    /// How many times a failing job is tried again, and how long between.
+    ///
+    /// A fixed wait rather than a growing one. Exponential backoff earns its
+    /// keep against a shared service that needs the pressure taken off; these
+    /// jobs are mostly local, and the thing worth having here instead is a
+    /// worst case a person can state out loud — `attempts × timeout` plus
+    /// `(attempts - 1) × backoff`, and no arithmetic to do.
+    #[serde(rename_all = "camelCase")]
+    pub struct RetryPolicy {
+        /// Total attempts, not extra ones. `3` means one run and two more.
+        ///
+        /// Counted this way because "retries: 2" and "attempts: 2" differ by
+        /// one whole run of a job that writes to a filesystem, and the reader
+        /// of a row should not have to guess which is meant.
+        pub attempts: u32,
+        /// Fixed wait between attempts, in ms.
+        pub backoff_ms: f64,
+    }
+}
+
+wire! {
+    /// The kind of value one input takes.
+    ///
+    /// Three, not a type system. The point is a form the frontend can render
+    /// and a check the backend can run, not a way to express every shape a job
+    /// might want — a job needing more than this wants a file, not a field.
+    #[serde(rename_all = "lowercase")]
+    pub enum JobInputType {
+        Text,
+        Number,
+        Bool,
+    }
+}
+
+wire! {
+    /// One value a job accepts, for one run.
+    ///
+    /// The input belongs to the run, not to the install. "Prune anything older
+    /// than 30 days, just this once" is a thing you say, not a value you save —
+    /// which is why this is here rather than in `settings.json`, and why it is
+    /// recorded on the run afterwards.
+    #[serde(rename_all = "camelCase")]
+    pub struct JobInput {
+        /// Key in the request body, and in `JobRun::input`.
+        pub id: String,
+        /// Field label on the form.
+        pub label: String,
+        #[serde(rename = "type")]
+        pub kind: JobInputType,
+        /// Prose for the field's info button. The same shape a job and a
+        /// runtime parameter use, so one `InfoButton` renders all three.
+        pub info: JobInfo,
+        /// The value used when a caller supplies none.
+        ///
+        /// Its absence is what makes an input required — one field rather than
+        /// a `default` and a `required` that can contradict each other. A
+        /// scheduled job supplies nothing, so every input of a scheduled job
+        /// must have one; the backend has a test for exactly that, because
+        /// "scheduled" quietly meaning "runs with undefined everywhere" is the
+        /// failure worth spending a test on.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub default: Option<Value>,
+    }
+}
+
+wire! {
     /// One job that exists, whether or not it is running.
     #[serde(rename_all = "camelCase")]
     pub struct CatalogueJob {
@@ -68,6 +134,17 @@ wire! {
         /// which is the same argument the schedule is surfaced on.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub on_failure: Option<String>,
+        /// What this job asks for when it fails, if it asks for anything.
+        ///
+        /// Absent means one attempt — the default, and not the same statement
+        /// as `attempts: 1`, which is a job that considered retrying and said
+        /// no.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub retry: Option<RetryPolicy>,
+        /// What this job accepts for a single run. Empty for a job that takes
+        /// none, which is most of them.
+        #[serde(default)]
+        pub inputs: Vec<JobInput>,
     }
 }
 
@@ -193,6 +270,28 @@ wire! {
         /// two records being correct and being confusing.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub caused_by: Option<String>,
+        /// How many attempts this one record covers.
+        ///
+        /// One record per `runJob` call, not one per attempt: three entries for
+        /// one nightly failure would make the error log read as three separate
+        /// nights. `ms` is the wall clock across all of them, and the attempts
+        /// that failed on the way are in `steps` as `retry` entries carrying
+        /// the error each one hit.
+        ///
+        /// `1` for a job with no retry policy, and for a record written before
+        /// retries existed — which the backend fills in on load rather than
+        /// leaving absent.
+        #[serde(default = "one_attempt")]
+        pub attempts: u32,
+        /// What this run was given, after defaults were filled in.
+        ///
+        /// Recorded because without it the history is unreadable: two runs of
+        /// one job with different inputs look identical, and "it worked
+        /// yesterday" stops being a statement anyone can check. Resolved rather
+        /// than as supplied, so a scheduled run shows the values it actually
+        /// used instead of an empty object.
+        #[serde(default)]
+        pub input: BTreeMap<String, Value>,
         /// Absent in the stored record, present when served.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub outcome: Option<Outcome>,
@@ -299,4 +398,9 @@ wire! {
         pub path: String,
         pub content: String,
     }
+}
+
+/// serde default for [`JobRun::attempts`]: a run that reports nothing ran once.
+fn one_attempt() -> u32 {
+    1
 }

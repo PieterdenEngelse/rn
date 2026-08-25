@@ -53,6 +53,18 @@ export interface JobContext {
      * handler that could not have said which job it was about.
      */
     cause?: JobRun;
+
+    /**
+     * What this run was asked to do, with the job's declared defaults already
+     * filled in — so a job reads `ctx.input.maxAgeDays` without checking
+     * whether anyone supplied it.
+     *
+     * Empty for a job that declares no inputs. Values are checked against the
+     * declared type before `run()` is called, so a cast here is safe in the way
+     * a cast on a request body is not; there is no per-job generic because the
+     * runner handles every job through one signature.
+     */
+    input: Record<string, JsonValue>;
 }
 
 /**
@@ -66,8 +78,9 @@ export interface JobContext {
  * `Job` and `JobContext` below stay local: they carry `run()` and a `step()`
  * callback, which are behaviour and cannot cross a process boundary at all.
  */
-export type { JobResult, JobInfo, Schedule } from "../generated/wire.ts";
-import type { JobInfo, JobRun, Schedule } from "../generated/wire.ts";
+export type { JobResult, JobInfo, JobInput, Schedule } from "../generated/wire.ts";
+import type { JobInfo, JobInput, JobRun, Schedule } from "../generated/wire.ts";
+import type { JsonValue } from "../generated/serde_json/JsonValue.ts";
 import type { JobResult } from "../generated/wire.ts";
 
 export interface Job {
@@ -128,5 +141,48 @@ export interface Job {
      * recursing. The refusal is logged, never swallowed — see `runJob`.
      */
     onFailure?: string;
+
+    /**
+     * Try again when this job fails: how many attempts in total, and the fixed
+     * wait between them.
+     *
+     * `attempts` counts runs, not extra runs — `3` is one attempt and two more.
+     * Absent means one attempt, which is not the same statement as
+     * `attempts: 1`.
+     *
+     * The ceiling in `timeoutMs` is **per attempt**, so three attempts of a
+     * five-minute job can occupy fifteen minutes plus the waits. That is the
+     * less surprising reading of a per-job timeout, but it is worth knowing
+     * before setting both large.
+     *
+     * **A timed-out attempt is retried only if the work actually stopped.** A
+     * promise cannot be cancelled from outside, so an attempt that hit its
+     * ceiling is still running unless the job honoured `ctx.signal` — and
+     * starting a second copy against the same files would be worse than the
+     * failure. The runner waits `ABORT_GRACE_MS` for the work to settle and
+     * gives up the retry if it does not, recording `retry-abandoned` in the
+     * trace rather than silently running once. Passing `ctx.signal` on is what
+     * makes retries work for slow jobs.
+     *
+     * One run record covers the whole sequence, carrying `attempts`; the errors
+     * the earlier attempts hit are in `steps` as `retry` entries.
+     */
+    retry?: { attempts: number; backoffMs: number };
+
+    /**
+     * Values this job accepts for a single run, rendered as a form on the Jobs
+     * page and checked before anything starts.
+     *
+     * The input belongs to the run rather than to the install, which is the
+     * whole distinction from a runtime parameter: "process this folder" is
+     * said once, not saved. What was actually used is recorded on the run, or
+     * two runs with different inputs would be indistinguishable in the history.
+     *
+     * A field with no `default` is required. **A scheduled job must give every
+     * input a default**, because the scheduler supplies none — there is a test
+     * for it, since "scheduled" quietly meaning "runs with undefined
+     * everywhere" is exactly the failure that would not announce itself.
+     */
+    inputs?: JobInput[];
     run(ctx: JobContext): Promise<JobResult>;
 }
