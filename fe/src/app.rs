@@ -1,7 +1,7 @@
 use crate::components::header::Header;
 use crate::components::SubNav;
 use crate::pages::{
-    Config, ConfigConnection, ConfigJobs, Home, MonitorJobs, MonitorRuntime, PageNotFound,
+    Config, ConfigConnection, ConfigJobs, Home, MonitorConnection, MonitorJobs, MonitorRuntime, PageNotFound,
 };
 use dioxus::prelude::*;
 use dioxus_router::{Outlet, Routable, Router};
@@ -21,6 +21,10 @@ pub enum Route {
         MonitorRuntime {},
         #[route("/monitor/jobs")]
         MonitorJobs {},
+        // The measured counterpart of Config → Connection, the same way
+        // MonitorRuntime is the counterpart of Config → Runtime.
+        #[route("/monitor/connection")]
+        MonitorConnection {},
         #[route("/config")]
         Config {},
         // What is listening, who may talk to it, and what it may reach. Its
