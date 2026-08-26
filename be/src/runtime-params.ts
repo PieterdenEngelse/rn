@@ -880,6 +880,48 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
         },
     },
     {
+        id: "dryRun",
+        flag: "dryRun",
+        kind: "app",
+        type: "bool",
+        default: true,
+        // The registry default is only the truth when DRY_RUN is unset. This
+        // names the live baseline so an install armed in be/.env does not see a
+        // page claiming its default is "on".
+        defaultFrom: "dryRun",
+        appliesAt: "runtime",
+        category: "security",
+        label: "Dry run",
+        info: {
+            what:
+                "The safety switch, on by default. Every job is handed it as ctx.dryRun and " +
+                "honours it by doing all of its work except the part that writes — the scan, " +
+                "the comparison and the decision all still happen, so what it reports is what " +
+                "an armed run would actually do.\n\nIt is the whole process, not per job: " +
+                "there is no override, which is what makes \"is anything armed right now\" a " +
+                "question with one answer. Read when each job starts, so changing it applies " +
+                "to the next run and never to one already going under the value it began " +
+                "with.",
+            why:
+                "Because this is an automation tool, and the failure mode of a mistake is not " +
+                "a crash — it is something irreversible happening to your files or to someone " +
+                "else's service. On means a misconfigured job produces a report instead of " +
+                "damage, and you arm it once you have read that report.\n\nUntil now the " +
+                "only way to change it was editing DRY_RUN in be/.env and restarting, which " +
+                "is the worst affordance in the app attached to its most consequential " +
+                "switch. Note the inverted check there: anything other than the exact string " +
+                "\"false\" means dry run, so a typo fails safe.",
+            ifWrong:
+                "Left on, every job reports what it would have done and nothing ever happens " +
+                "— which looks exactly like a broken automation if you are not expecting it. " +
+                "Monitor → Jobs shows a banner while it is on for that reason.\n\nTurned " +
+                "off before you have read a dry run, the first thing you learn about a bad " +
+                "filter is what it deleted. Arming is written to the log at warn level in " +
+                "both directions, because it is the one change that must outlive whoever made " +
+                "it forgetting.",
+        },
+    },
+    {
         id: "logLevel",
         flag: "logLevel",
         kind: "app",

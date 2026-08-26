@@ -32,6 +32,7 @@ import {
 import { config, remoteBindRefusal } from "./config.ts";
 import { createHookApp, hooksHealth, startHooks } from "./hooks/server.ts";
 import { describeEnv } from "./env-file.ts";
+import { dryRun } from "./dry-run.ts";
 import * as secrets from "./secrets.ts";
 import { display as displayPath } from "./paths.ts";
 
@@ -333,7 +334,7 @@ export function createApp() {
                     // like one that will work.
                     credentials: (j.credentials ?? []).map((name) => secrets.describe(name)),
                 })),
-                dryRun: config.dryRun,
+                dryRun: dryRun(),
                 // The knobs every run is subject to, whichever job it is.
                 // Resolved here for the same reason `timeoutMs` above is: they
                 // are constants in be/src/jobs/, and Config → Jobs reports what

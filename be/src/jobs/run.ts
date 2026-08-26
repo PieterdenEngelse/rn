@@ -23,6 +23,7 @@
 import { config } from "../config.ts";
 import { step, warn, error } from "../log.ts";
 import { track, isRunning } from "../running.ts";
+import { dryRun } from "../dry-run.ts";
 // The catalogue, for looking up a job's `onFailure` handler by id. This is a
 // cycle — index.ts re-exports runJob from here — and it is deliberate: the
 // alternative is a second registry, and two lists of jobs that can disagree is
@@ -323,7 +324,7 @@ export async function runJob(
             startedAt: started,
             ms: 0,
             trigger,
-            dryRun: config.dryRun,
+            dryRun: dryRun(),
             changed: false,
             skipped,
             summary: {},
@@ -398,7 +399,7 @@ export async function runJob(
 
             const controller = new AbortController();
             const ctx: JobContext = {
-                dryRun: config.dryRun,
+                dryRun: dryRun(),
                 step: note,
                 signal: controller.signal,
                 input,
@@ -505,7 +506,7 @@ export async function runJob(
                 id: job.id,
                 ms: Date.now() - started,
                 attempts,
-                dryRun: config.dryRun,
+                dryRun: dryRun(),
                 changed: result.changed,
                 ...(skipped === undefined ? {} : { skipped }),
                 ...summary,
@@ -515,7 +516,7 @@ export async function runJob(
                 startedAt: started,
                 ms: Date.now() - started,
                 trigger,
-                dryRun: config.dryRun,
+                dryRun: dryRun(),
                 changed: result.changed,
                 ...(skipped === undefined ? {} : { skipped }),
                 summary,
@@ -541,7 +542,7 @@ export async function runJob(
                 id: job.id,
                 ms: Date.now() - started,
                 attempts,
-                dryRun: config.dryRun,
+                dryRun: dryRun(),
                 error: message,
             });
             // Recorded as well as logged: a failure at 3am is exactly the run
@@ -555,7 +556,7 @@ export async function runJob(
                 startedAt: started,
                 ms: Date.now() - started,
                 trigger,
-                dryRun: config.dryRun,
+                dryRun: dryRun(),
                 changed: false,
                 error: message,
                 summary: {},

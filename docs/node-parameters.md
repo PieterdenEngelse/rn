@@ -30,6 +30,7 @@ scales with installed RAM, so expect a different number elsewhere.
 | **Trace deprecations** | `--trace-deprecation` (NODE_OPTIONS) | off | — | on restart |
 | **Stack trace depth** | `--stack-trace-limit` (NODE_OPTIONS) | 10 | 0 … 200 | immediately |
 | **Scheduler tick** | `schedulerTickMs` (settings.json) | 30000 ms | 1000 … 300000 ms | immediately |
+| **Dry run** | `dryRun` (settings.json) | on | — | immediately |
 | **Log level** | `logLevel` (settings.json) | info | — | immediately |
 | **Default job timeout** | `defaultTimeoutMs` (settings.json) | 1800000 ms | 1000 … 86400000 ms | immediately |
 | **Runs kept** | `historyCapacity` (settings.json) | 200 runs | 10 … 5000 runs | immediately |
@@ -200,6 +201,22 @@ Default: unset (system default) · Takes effect: on restart · Settings key: `ex
 **If it's wrong.** A dependency that genuinely needs an addon stops working, loudly and at the point of loading. That is the intended outcome: the error names the package, and the decision of whether it belongs here becomes explicit.
 
 Default: off · Takes effect: on restart · Settings key: `noAddons`
+
+### Dry run — `dryRun`
+
+**What it does.** The safety switch, on by default. Every job is handed it as ctx.dryRun and honours it by doing all of its work except the part that writes — the scan, the comparison and the decision all still happen, so what it reports is what an armed run would actually do.
+
+It is the whole process, not per job: there is no override, which is what makes "is anything armed right now" a question with one answer. Read when each job starts, so changing it applies to the next run and never to one already going under the value it began with.
+
+**Why you would change it.** Because this is an automation tool, and the failure mode of a mistake is not a crash — it is something irreversible happening to your files or to someone else's service. On means a misconfigured job produces a report instead of damage, and you arm it once you have read that report.
+
+Until now the only way to change it was editing DRY_RUN in be/.env and restarting, which is the worst affordance in the app attached to its most consequential switch. Note the inverted check there: anything other than the exact string "false" means dry run, so a typo fails safe.
+
+**If it's wrong.** Left on, every job reports what it would have done and nothing ever happens — which looks exactly like a broken automation if you are not expecting it. Monitor → Jobs shows a banner while it is on for that reason.
+
+Turned off before you have read a dry run, the first thing you learn about a bad filter is what it deleted. Arming is written to the log at warn level in both directions, because it is the one change that must outlive whoever made it forgetting.
+
+Default: on · Takes effect: immediately · Settings key: `dryRun`
 
 ## Diagnostics
 

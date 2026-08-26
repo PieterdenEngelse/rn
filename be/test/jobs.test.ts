@@ -7,6 +7,7 @@ import { runJob, ABORT_GRACE_MS, STEP_HEAD, STEP_TAIL, STEP_TRUNCATED } from "..
 import { JOBS, jobById, resolveInput } from "../src/jobs/index.ts";
 import * as scheduler from "../src/jobs/scheduler.ts";
 import * as history from "../src/jobs/history.ts";
+import * as dry from "../src/dry-run.ts";
 import { isArtifact, pruneProfiles } from "../src/jobs/prune-profiles.ts";
 import type { Job, JobContext, JobInput } from "../src/jobs/types.ts";
 import type { JobRun } from "../src/generated/wire.ts";
@@ -152,8 +153,17 @@ function setConfig(d: string, days: number): void {
     (config as unknown as { profileMaxAgeDays: number }).profileMaxAgeDays = days;
 }
 
+/**
+ * The real setter, not a cast past the type.
+ *
+ * It used to reach into `config`, which stopped working the moment the switch
+ * moved into its own module so a registry parameter could change it without a
+ * restart — the runner reads `dryRun()` now and never `config.dryRun`. That the
+ * cast silently stopped steering the runner, rather than failing, is the
+ * argument for a test seam being the production function.
+ */
 function setDryRun(on: boolean): void {
-    (config as unknown as { dryRun: boolean }).dryRun = on;
+    dry.setDryRun(on);
 }
 
 /**
@@ -177,7 +187,7 @@ function bare(dryRun: boolean): JobContext {
     };
 }
 
-const realDryRun = config.dryRun;
+const realDryRun = dry.BASELINE;
 
 beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), "rn-prune-"));

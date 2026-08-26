@@ -20,6 +20,7 @@ import * as scheduler from "./jobs/scheduler.ts";
 import * as history from "./jobs/history.ts";
 import { setDefaultTimeoutMs, DEFAULT_TIMEOUT_MS } from "./jobs/run.ts";
 import * as log from "./log.ts";
+import * as dry from "./dry-run.ts";
 
 export type SettingValue = string | number | boolean | null;
 export type Settings = Record<string, SettingValue>;
@@ -138,6 +139,9 @@ const RUNTIME_APPLIERS: Record<string, (value: SettingValue | undefined) => void
             typeof v === "number" ? v : history.DEFAULT_FAILURE_CAPACITY,
         );
     },
+    dryRun: (v) => {
+        dry.setDryRun(typeof v === "boolean" ? v : dry.BASELINE);
+    },
     logLevel: (v) => {
         log.setLevel(log.isLevel(v) ? v : log.BASELINE);
     },
@@ -244,7 +248,7 @@ export function save(path: string, settings: Settings): void {
  * Live values, for the Monitor page. A user seeing "heap limit 2240 MB,
  * using 180 MB" learns why the setting exists better than a slider teaches them.
  */
-export function effectiveValues(): Record<string, string | number> {
+export function effectiveValues(): Record<string, string | number | boolean> {
     const h = getHeapStatistics();
     return {
         nodeVersion: process.version,
@@ -266,6 +270,9 @@ export function effectiveValues(): Record<string, string | number> {
         // registry's "info" is not always the truth, and a page saying so would
         // be wrong on exactly the installs that had configured it.
         logLevel: log.BASELINE,
+        // What "unset" means for the safety switch on this process — DRY_RUN in
+        // be/.env moves it, so the registry default is not always the truth.
+        dryRun: dry.BASELINE,
     };
 }
 

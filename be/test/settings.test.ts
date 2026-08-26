@@ -14,6 +14,7 @@ import {
 import * as scheduler from "../src/jobs/scheduler.ts";
 import * as history from "../src/jobs/history.ts";
 import * as log from "../src/log.ts";
+import * as dry from "../src/dry-run.ts";
 import { defaultTimeoutMs, DEFAULT_TIMEOUT_MS } from "../src/jobs/run.ts";
 import type { Job } from "../src/jobs/types.ts";
 import { mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
@@ -299,4 +300,24 @@ test("clearing the log level returns to LOG_LEVEL, not to the registry default",
     applyRuntimeSettings({});
 
     assert.equal(log.currentLevel(), log.BASELINE, "back to what the process started at");
+});
+
+test("clearing dry run returns to DRY_RUN, never to the registry default", () => {
+    // The trap: a save replaces the whole settings file, so clearing the key is
+    // how a user says "back to normal". If absence meant the registry default,
+    // an install deliberately armed with DRY_RUN=false in be/.env would be
+    // silently re-disarmed at every boot — applyRuntimeSettings runs at startup
+    // against whatever settings.json holds. Same shape as the logLevel bug,
+    // which was found by running the thing rather than reading it.
+    applyRuntimeSettings({ dryRun: false });
+    assert.equal(dry.dryRun(), false, "armed on request");
+
+    applyRuntimeSettings({});
+
+    assert.equal(dry.dryRun(), dry.BASELINE, "back to what the process started at");
+});
+
+test("dry run is a runtime setting, needing no restart", () => {
+    assert.deepEqual(needsRestart(["dryRun"]), []);
+    assert.ok(appliesAtRuntime("dryRun"), "and something actually applies it");
 });
