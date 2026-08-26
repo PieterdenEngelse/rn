@@ -146,7 +146,10 @@ with the steps for each. `docs/sec.md` covers credentials — where they live, w
 redaction covers, and what none of it protects against. `docs/network.md` is the
 one to read before making rn reachable from another machine: the API has no
 authentication, so the bind address is the whole of that security position, and
-the document is the ordered list of safer answers. `docs/packaging.md` covers
+the document is the ordered list of safer answers. `docs/token-sec.md` is the
+one to read before putting a value on a page: displaying a secret is a broadcast
+rather than a read, and it says why a panel reports that a value is set and
+never what it is. `docs/packaging.md` covers
 shipping this as an installable app. `docs/node-parameters.md` is generated — see below.
 
 ## Build, Test, and Development Commands
