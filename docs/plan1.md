@@ -183,9 +183,12 @@ Monitor → Jobs: `trigger_label` needs a `Webhook` arm.
 5. **The boundary**: `curl localhost:3011/api/settings` → 404, and
    `curl -XPUT localhost:3011/api/settings` → 404. This is the test that proves
    the tunnel cannot reach the main API.
-6. **With a tunnel**: `cloudflared tunnel --url http://127.0.0.1:3011`, register
-   the URL with a real provider, confirm a real delivery arrives and a run
-   appears.
+6. **With a tunnel** — *done, see `docs/tunnel.md`*: tested over a real public
+   URL with `curl` playing the provider. Signed delivery 202 with the run
+   recorded, replay 409, tampered body 401, and `/api/settings` 404 through the
+   tunnel. The body survived byte-identical, which is the part `curl` on
+   loopback cannot check. Registering with an actual provider is still open and
+   only adds their signature scheme.
 7. Screenshot Config → Connection; the Webhooks board should no longer say
    *not available*.
 
