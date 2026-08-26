@@ -75,6 +75,8 @@ pub fn export_all(cfg: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     RunsResponse::export_all(cfg)?;
 
     ConnectionResponse::export_all(cfg)?;
+    HooksHealth::export_all(cfg)?;
+    HealthResponse::export_all(cfg)?;
     EnvEntry::export_all(cfg)?;
     EnvResponse::export_all(cfg)?;
     Ok(())

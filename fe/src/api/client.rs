@@ -5,7 +5,7 @@
 //! `web-sys`, neither of which belongs anywhere near a shared type crate.
 
 use super::wire::{
-    ConnectionResponse, EnvResponse, JobErrors, JobRunResult, JobSource, JobsResponse, NodeHistory, NodeMetrics,
+    ConnectionResponse, EnvResponse, HealthResponse, JobErrors, JobRunResult, JobSource, JobsResponse, NodeHistory, NodeMetrics,
     ParamsResponse, RestartOutcome, RunsResponse, SaveResponse, StatusResponse, StopOutcome,
 };
 
@@ -53,6 +53,22 @@ pub async fn fetch_connection() -> Result<ConnectionResponse, String> {
         .await
         .map_err(|e| format!("{e}"))?;
     resp.json::<ConnectionResponse>()
+        .await
+        .map_err(|e| format!("{e}"))
+}
+
+/// Liveness, and the state of the hooks listener.
+///
+/// Monitor → Connection reads this only as a fallback: the handle list is the
+/// page's premise and answers the same question more directly. This is what it
+/// falls back to where that list is empty — under Bun and Deno, which do not
+/// implement the API it comes from.
+pub async fn fetch_health() -> Result<HealthResponse, String> {
+    let resp = gloo_net::http::Request::get(&format!("{API_BASE}/api/health"))
+        .send()
+        .await
+        .map_err(|e| format!("{e}"))?;
+    resp.json::<HealthResponse>()
         .await
         .map_err(|e| format!("{e}"))
 }

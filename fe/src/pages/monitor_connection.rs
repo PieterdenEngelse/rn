@@ -12,7 +12,7 @@
 //! `/api/node` for what is genuinely open — so nothing new is collected to
 //! render it.
 
-use crate::api::{fetch_connection, fetch_node_metrics, ConnectionResponse, NodeMetrics, API_BASE};
+use crate::api::{fetch_connection, fetch_health, fetch_node_metrics, ConnectionResponse, HealthResponse, NodeMetrics, API_BASE};
 use crate::components::{Board, InfoButton, Metric, Panel};
 use dioxus::prelude::*;
 
@@ -26,6 +26,7 @@ const SOCKET_KIND: &str = "TCPSocketWrap";
 pub fn MonitorConnection() -> Element {
     let mut conn = use_signal(|| Option::<Result<ConnectionResponse, String>>::None);
     let mut metrics = use_signal(|| Option::<NodeMetrics>::None);
+    let mut health = use_signal(|| Option::<HealthResponse>::None);
 
     use_future(move || async move {
         loop {
@@ -35,6 +36,13 @@ pub fn MonitorConnection() -> Element {
             if let Ok(m) = fetch_node_metrics().await {
                 metrics.set(Some(m));
             }
+            // Only consulted where the handle list is empty, but fetched every
+            // tick regardless: a request made only in the fallback case would
+            // make the fallback the slowest path, and it is the one already
+            // short of information.
+            if let Ok(h) = fetch_health().await {
+                health.set(Some(h));
+            }
             gloo_timers::future::TimeoutFuture::new(2_000).await;
         }
     });
@@ -42,7 +50,7 @@ pub fn MonitorConnection() -> Element {
     rsx! {
         div { class: "p-6 w-full space-y-4",
             match conn() {
-                Some(Ok(c)) => rsx! { ConnectionBoards { c, m: metrics() } },
+                Some(Ok(c)) => rsx! { ConnectionBoards { c, m: metrics(), h: health() } },
                 Some(Err(e)) => rsx! {
                     Panel { title: "Connection".to_string(),
                         p { class: "text-red-400", "Backend unreachable" }
@@ -112,7 +120,7 @@ fn is_loopback(addr: &str) -> bool {
 }
 
 #[component]
-fn ConnectionBoards(c: ConnectionResponse, m: Option<NodeMetrics>) -> Element {
+fn ConnectionBoards(c: ConnectionResponse, m: Option<NodeMetrics>, h: Option<HealthResponse>) -> Element {
     let handles = m
         .as_ref()
         .map(|m| m.concurrency.handles.clone())
@@ -151,10 +159,28 @@ fn ConnectionBoards(c: ConnectionResponse, m: Option<NodeMetrics>) -> Element {
     // because neither implements the API it comes from, so "not listening"
     // would be a claim made from no evidence. Same wording as the Bound board
     // uses for the same absence.
-    let hooks_listening = if servers.is_empty() {
-        None
+    //
+    // Falls back to /api/health where that list is empty. `server.listening` is
+    // not weaker evidence for this question — it is the socket object's own
+    // flag, set when the bind returned, where the handle list is libuv's
+    // inventory of what the process holds. For "did the hooks listener bind"
+    // the flag is the closer fact.
+    //
+    // The cost is that this page's premise is *read the live handle list, not a
+    // setting*, and a row sourced elsewhere departs from it. So the row names
+    // its source — but only when the fallback actually answered, because under
+    // Node the list is never empty and a qualifier shown always is one nobody
+    // reads by the third screen. Same shape as "Selection not applied" and the
+    // amber on a missing hook secret: drawn only when there is something to say.
+    let (hooks_listening, hooks_from_health, hooks_error) = if !servers.is_empty() {
+        let bound = servers
+            .iter()
+            .any(|s| socket_role(&s.detail, c.port, c.hooks_port) == "webhook socket");
+        (Some(bound), false, None)
+    } else if let Some(hk) = h.as_ref().and_then(|h| h.hooks.as_ref()) {
+        (Some(hk.listening), true, hk.error.clone())
     } else {
-        Some(servers.iter().any(|s| socket_role(&s.detail, c.port, c.hooks_port) == "webhook socket"))
+        (None, false, None)
     };
 
     let measured_reach = if servers.is_empty() {
@@ -268,15 +294,26 @@ fn ConnectionBoards(c: ConnectionResponse, m: Option<NodeMetrics>) -> Element {
                 Board { title: "Webhooks".to_string(),
                     Metric {
                         label: "listening",
-                        value: match hooks_listening {
-                            Some(true) => format!("yes, on {}", c.hooks_port),
-                            Some(false) if c.hooks_port == 0 => "no — no hooks port configured".to_string(),
-                            Some(false) => format!("no — nothing is bound to {}", c.hooks_port),
-                            None => "not reported".to_string(),
+                        value: {
+                            // Named only on the fallback path; the ordinary
+                            // reading carries no qualifier at all.
+                            let via = if hooks_from_health { " — from the socket, not the handle list" } else { "" };
+                            match hooks_listening {
+                                Some(true) => format!("yes, on {}{via}", c.hooks_port),
+                                Some(false) if c.hooks_port == 0 => "no — no hooks port configured".to_string(),
+                                // The health payload carries why the bind
+                                // failed. A reason beats a restatement of the
+                                // port the reader can already see.
+                                Some(false) => match hooks_error.as_deref() {
+                                    Some(reason) => format!("no — {reason}{via}"),
+                                    None => format!("no — nothing is bound to {}{via}", c.hooks_port),
+                                },
+                                None => "not reported".to_string(),
+                            }
                         },
                         what: "Whether a socket is actually bound to the hooks port right now, read from the running process's handle list rather than from the setting below. The row under this one is what the backend was told to open; this one is what it has open.".to_string(),
                         why: "They are different questions and the gap between them is silent. A listener that failed to bind — the port already taken by something else, most often a second copy of rn — leaves the configured port on display and nothing behind it, and every delivery a provider sends is refused at the socket without reaching any part of rn that could record it. The provider's own retry log is otherwise the first place it shows.".to_string(),
-                        if_wrong: "\"Not reported\" is not \"not listening\": under Bun and Deno the handle list is empty because neither implements the API it is read from, so there is no evidence either way and the socket may well be open. Check with `ss -lptn` on the port. A plain no with a port configured is worth acting on — start there before looking at signatures or secrets, because nothing downstream of the socket ever ran.".to_string(),
+                        if_wrong: "A plain no with a port configured is worth acting on — start there before looking at signatures or secrets, because nothing downstream of the socket ever ran.\n\n\"Not reported\" now means neither source could answer, which is rarer than it was: where the handle list is empty — under Bun and Deno, which do not implement the API it is read from — this falls back to the socket's own listening flag, and says so in the value when it does. A row that names its source is one answering a slightly different question from the Bound board above it, which still reads the handle list only.".to_string(),
                     }
                     Metric {
                         label: "hooks port",

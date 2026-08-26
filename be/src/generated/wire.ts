@@ -283,6 +283,17 @@ detail: string,
 fd: number | null, };
 
 /**
+ * `GET /api/health`. Liveness, plus the state of the listener that cannot
+ * answer for itself: the hooks port has one route by design, so its health
+ * is reported from here instead of from a GET of its own.
+ */
+export type HealthResponse = { 
+/**
+ * `ok`, or `degraded` when a subsystem is down but the API is not.
+ */
+status: string, node: string, hooks: HooksHealth | null, };
+
+/**
  * One V8 heap space that currently holds something.
  */
 export type HeapSpace = { name: string, usedMB: number, sizeMB: number, };
@@ -328,6 +339,22 @@ hostFreeMB: number | null,
 rt: string | null, };
 
 export type HistoryTier = { id: string, label: string, bucketMs: number, capacity: number, buckets: Array<Bucket>, };
+
+/**
+ * Whether the hooks listener is bound, from the socket's own flag.
+ *
+ * The second source for a fact Monitor → Connection otherwise reads out of
+ * the live handle list. It exists because that list is empty under Bun and
+ * Deno — neither implements the API it comes from — which is an absence of
+ * evidence about the runtime rather than about the socket. `listening` is
+ * set when `listen` returned, so it answers the actual question under every
+ * runtime.
+ */
+export type HooksHealth = { listening: boolean, port: number, 
+/**
+ * Set when binding failed — the reason a delivery would not arrive.
+ */
+error: string | null, };
 
 /**
  * GET /api/jobs/:id/errors.

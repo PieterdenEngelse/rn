@@ -59,3 +59,35 @@ wire! {
         pub supervised: bool,
     }
 }
+
+wire! {
+    /// Whether the hooks listener is bound, from the socket's own flag.
+    ///
+    /// The second source for a fact Monitor → Connection otherwise reads out of
+    /// the live handle list. It exists because that list is empty under Bun and
+    /// Deno — neither implements the API it comes from — which is an absence of
+    /// evidence about the runtime rather than about the socket. `listening` is
+    /// set when `listen` returned, so it answers the actual question under every
+    /// runtime.
+    #[serde(rename_all = "camelCase")]
+    pub struct HooksHealth {
+        pub listening: bool,
+        pub port: u32,
+        /// Set when binding failed — the reason a delivery would not arrive.
+        pub error: Option<String>,
+    }
+}
+
+wire! {
+    /// `GET /api/health`. Liveness, plus the state of the listener that cannot
+    /// answer for itself: the hooks port has one route by design, so its health
+    /// is reported from here instead of from a GET of its own.
+    #[serde(rename_all = "camelCase")]
+    pub struct HealthResponse {
+        /// `ok`, or `degraded` when a subsystem is down but the API is not.
+        pub status: String,
+        pub node: String,
+        #[serde(default)]
+        pub hooks: Option<HooksHealth>,
+    }
+}
