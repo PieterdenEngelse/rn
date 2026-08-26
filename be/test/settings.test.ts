@@ -17,9 +17,23 @@ import * as log from "../src/log.ts";
 import * as dry from "../src/dry-run.ts";
 import { defaultTimeoutMs, DEFAULT_TIMEOUT_MS } from "../src/jobs/run.ts";
 import type { Job } from "../src/jobs/types.ts";
-import { mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { config } from "../src/config.ts";
+
+// The run-capacity test records forty runs, and `history.record()` writes on
+// every call — so without this line those forty land in the user's real
+// ~/.config/rn/job-runs.json and show up on Monitor → Jobs as forty runs of a
+// job called "j". They did. jobs.test.ts has had this redirect since the same
+// bug was found there; this file records history too and never got one.
+//
+// At the top rather than in a hook, so a test added later cannot forget it.
+(config as unknown as { jobRunsPath: string }).jobRunsPath = join(
+    tmpdir(),
+    `rn-settings-runs-${process.pid}.json`,
+);
+process.on("exit", () => rmSync(config.jobRunsPath, { force: true }));
 
 test("every parameter carries its info panel text", () => {
     // CLAUDE.md: a control ships with its explanation, in the same change.

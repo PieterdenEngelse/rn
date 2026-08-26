@@ -194,3 +194,77 @@ both defined in `shared/src/jobs.rs` — so a constant renamed in `be/src/jobs/`
 breaks a build rather than leaving the page quietly claiming the old value.
 That is also why the constants are exported: a page that repeated them would go
 on being wrong for as long as nobody checked.
+
+## 6. What a job remembers between runs
+
+A job that polls — an API, a feed, a mailbox, a list of releases — has to answer
+one question before it can do anything useful: *have I seen this already?* A
+process that starts, runs and exits has no way to answer it. The run history is
+a log, not a place to look things up, and a job that keeps its own file beside
+the code loses it on the next upgrade.
+
+So there is one store, `be/src/jobs/state.ts`, reached only as `ctx.state`, and
+written to `~/.config/rn/job-state.json` beside the settings and the run
+history. It is the *State Manager* row of `docs/trigger-archi` — last timestamp,
+last hash, last item id — and it exists because `watch-upstreams` needed it,
+rather than because the sketch listed it. That order matters: a store designed
+before its first consumer guesses at what it must hold, and `docs/n8n.md` makes
+the same argument against building the credential store early.
+
+**The rules are the runner's, not the job's.** A cursor is easy to get wrong in
+ways nothing reports afterwards, so `runJob` enforces the three that matter:
+
+- **A cursor moves only when the run finishes.** Every write is staged and
+  committed after `run()` returns, never after it throws. A job that reads fifty
+  items, advances the cursor, and then fails on item three has told the next run
+  that all fifty were handled — and the record says only that a run failed.
+- **Each retry attempt starts from what is committed.** An attempt that failed
+  halfway cannot leak its cursor into the attempt that succeeds.
+- **A dry run commits nothing.** `DRY_RUN` means make no change, and a cursor is
+  the change that makes the *next* run wrong rather than this one.
+
+Both outcomes are on the record: a run that moved a cursor leaves a
+`state-committed` step naming each key and what it moved from and to, and a dry
+run leaves `state-withheld` saying why. A cursor that silently did not move is
+the explanation for a run that reported nothing, and without the step you are
+left comparing timestamps to work out why.
+
+**One consequence worth knowing before arming anything.** For a job that only
+reads and reports, the cursor is the *only* thing dry run withholds — so an
+unarmed install reports the same items every single run, correctly and forever.
+That is not a bug in the switch, but it does mean `DRY_RUN` changes what a
+polling job *shows you* rather than only what it touches. `watch-upstreams`
+says so in its skip line rather than leaving you to work it out.
+
+The store is deliberately small enough that it cannot become a database:
+thirty-two cursor keys per job, four kilobytes per value, and a bounded window
+of recently-seen item ids. The failure those caps exist to catch is the key
+built from the data — `set(`seen:${item.id}`, true)` works on the first run and
+grows without bound after it. `ctx.state.seen(id)` is the supported way to say
+that, and it is bounded; `watch-upstreams` avoids the same trap by keeping one
+key per *ecosystem* holding a small map, rather than one key per package.
+
+**`seen()` is a window, not a memory**, and the difference is the one thing in
+this store that will eventually surprise someone. The oldest id falls off when
+the thousand-and-first arrives, and an item whose id has aged out reads as new
+again — so it protects against reprocessing what was seen *recently* and does
+not promise an item is handled once for all time. A source that emits more than
+the window between two runs needs a timestamp cursor instead, because no bounded
+set can do that job. It is worth saying because of how it fails: correctly for
+months, and then a reprocessed backlog after one outage, at which point nobody
+suspects the cap.
+
+**Config → Jobs reports it**, on the same board as the run-history capacities:
+the two caps, how many cursors are held, and across how many jobs. Counts only,
+and there is no endpoint that will return a stored value — a cursor is whatever
+the source uses as an identifier, a message id or a URL or an account
+reference, and `docs/token-sec.md` is the argument for why reporting that
+something is remembered is a different act from showing what.
+
+**Deleting `~/.config/rn/job-state.json` is the supported way to start over.**
+The next run of every polling job treats everything its source still holds as
+new. Nothing else notices the file is gone, because an absent cursor is exactly
+what a first run looks like — which is also why nothing prunes the entries of a
+job that has left the catalogue. Commenting a job out of `JOBS` for an afternoon
+should not silently delete the mark that stops it reprocessing its whole source
+when it comes back.

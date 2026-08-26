@@ -12,16 +12,18 @@
  */
 
 import { pruneProfiles } from "./prune-profiles.ts";
+import { watchUpstreams } from "./watch-upstreams.ts";
 import { webhookEcho } from "./webhook-echo.ts";
 import type { Job } from "./types.ts";
 
-export const JOBS: readonly Job[] = [pruneProfiles, webhookEcho];
+export const JOBS: readonly Job[] = [pruneProfiles, watchUpstreams, webhookEcho];
 
 export function jobById(id: string): Job | undefined {
     return JOBS.find((j) => j.id === id);
 }
 
 export { runJob, DEFAULT_TIMEOUT_MS, defaultTimeoutMs, setDefaultTimeoutMs } from "./run.ts";
+export * as state from "./state.ts";
 export { resolveInput } from "./input.ts";
 export * as scheduler from "./scheduler.ts";
 export * as history from "./history.ts";

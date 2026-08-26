@@ -1,0 +1,22 @@
+Section Component   Details
+High-level Architecture External Services   HTTP, IMAP, APIs, OAuth
+High-level Architecture Connection Adapters Webhook Adapter; IMAP Adapter; API Poll Adapter; OAuth Event Adapter
+High-level Architecture Trigger Registry    Stores trigger configs; Maps adapter to workflow
+High-level Architecture State Manager   Last timestamp; Last hash; Last item ID
+High-level Architecture Trigger Engine  Detects state change; Push/Poll logic
+High-level Architecture Workflow Runner Inject payload; Execute node graph
+
+Execution Flow  Step 1  External Event or Poll Interval
+Execution Flow  Step 2  Connection Adapter receives data
+Execution Flow  Step 3  Trigger Engine normalizes event
+Execution Flow  Step 4  State Manager compares old vs new
+Execution Flow  Step 5  Trigger Registry finds workflow
+Execution Flow  Step 6  Workflow Runner starts execution
+Execution Flow  Step 7  Node #1 receives trigger payload
+
+Adapter Design  Base Adapter    start(); stop(); onEvent(callback); validateConfig()
+Adapter Design  Webhook Adapter HTTP server; POST events
+Adapter Design  IMAP Adapter    IMAP IDLE; new mail detection
+Adapter Design  API Poll Adapter    setInterval; fetch API
+Adapter Design  OAuth Adapter   token management; event subscriptions
+

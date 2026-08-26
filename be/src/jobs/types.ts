@@ -67,6 +67,27 @@ export interface JobContext {
     input: Record<string, JsonValue>;
 
     /**
+     * What this job remembers from its last successful run.
+     *
+     * The answer to "have I seen this already?", and the only one there is: a
+     * job process starts with nothing, and the run record is a log rather than
+     * a place to look things up. A poller without this reports every item on
+     * every run — noise a person learns to scroll past, which is the same as
+     * reporting nothing.
+     *
+     * **Writes are staged and committed by the runner, not by this call.** They
+     * land only if the run finishes without throwing, and never under dry run.
+     * That is deliberately not the job's decision: a cursor advanced by a run
+     * that then failed skips forever the items it had read and not acted on,
+     * and nothing about the failed record says anything was lost. See
+     * `state.ts`, which carries the whole rule.
+     *
+     * Values are scrubbed of every configured secret before they reach disk,
+     * exactly like the summary and the step details.
+     */
+    state: JobState;
+
+    /**
      * A credential, by name — never by value.
      *
      * Throws if the job did not declare the name in `credentials`, so the
@@ -120,6 +141,7 @@ export interface JobContext {
 export type { JobResult, JobInfo, JobInput, Schedule } from "../generated/wire.ts";
 import type { JobInfo, JobInput, JobRun, Schedule } from "../generated/wire.ts";
 import type { JsonValue } from "../generated/serde_json/JsonValue.ts";
+import type { JobState } from "./state.ts";
 import type { JobResult } from "../generated/wire.ts";
 
 export interface Job {

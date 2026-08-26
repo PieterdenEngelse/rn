@@ -422,6 +422,29 @@ wire! {
         /// successes cannot push the last failure out of view.
         #[serde(default)]
         pub failure_capacity: u32,
+        /// How many cursor keys one job may keep — see `MAX_CURSORS` in
+        /// `be/src/jobs/state.ts`.
+        #[serde(default)]
+        pub state_cursors_per_job: u32,
+        /// How many recently-seen item ids one job remembers before the oldest
+        /// falls off. A window rather than a memory: an id that has aged out
+        /// reads as new again.
+        #[serde(default)]
+        pub state_seen_per_job: u32,
+        /// How many cursors are stored right now, across every job.
+        ///
+        /// A count, never a value. A cursor is whatever the source hands out as
+        /// an identifier — a message id, a URL, an account reference — and
+        /// `docs/token-sec.md` is the argument for why reporting that something
+        /// is remembered is a different act from showing what.
+        #[serde(default)]
+        pub state_cursors: u32,
+        /// How many jobs have anything remembered at all, including any no
+        /// longer in the catalogue. Nothing prunes those on purpose: commenting
+        /// a job out of `JOBS` for an afternoon should not silently delete the
+        /// cursor that stops it reprocessing its whole source.
+        #[serde(default)]
+        pub state_jobs: u32,
     }
 }
 

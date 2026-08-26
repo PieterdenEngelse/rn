@@ -24,6 +24,7 @@ import { config } from "../config.ts";
 import { step, warn, error } from "../log.ts";
 import { track, isRunning } from "../running.ts";
 import { dryRun } from "../dry-run.ts";
+import * as state from "./state.ts";
 // The catalogue, for looking up a job's `onFailure` handler by id. This is a
 // cycle — index.ts re-exports runJob from here — and it is deliberate: the
 // alternative is a second registry, and two lists of jobs that can disagree is
@@ -379,6 +380,17 @@ export async function runJob(
          * with `timeoutMs: 5m` and three attempts can occupy fifteen minutes.
          * See the retry info panel, which says so.
          */
+        /**
+         * This run's cursors, staged until the run succeeds.
+         *
+         * One handle for the whole run rather than one per attempt — a second
+         * handle would be a second set of uncommitted writes with no rule for
+         * which of them wins. Each attempt rolls it back before it starts, so
+         * a retry decides against the last *committed* values and never
+         * against the ones the failed attempt was about to write.
+         */
+        const staged = state.open(job.id);
+
         const attempt = async (mayRetry: boolean): Promise<JobResult> => {
             // Declared names only. `ctx.secret` throwing on an undeclared name
             // is what keeps `credentials` honest — a job that reads one it
@@ -398,12 +410,16 @@ export async function runJob(
             };
 
             const controller = new AbortController();
+            // Whatever the previous attempt staged is discarded before this one
+            // reads anything. See StateHandle.rollback().
+            staged.rollback();
             const ctx: JobContext = {
                 dryRun: dryRun(),
                 step: note,
                 signal: controller.signal,
                 input,
                 secret,
+                state: staged,
                 // Only ever present on a handler run, so a job can tell the two
                 // apart without being told which mode it is in.
                 ...(cause === undefined ? {} : { cause }),
@@ -492,6 +508,36 @@ export async function runJob(
                 }
             }
 
+            // The cursor moves here and nowhere else: after the last attempt
+            // returned, before the run is recorded, and only when the run is
+            // armed. A dry run has done every bit of the reading and the
+            // deciding and reports exactly what an armed run would — and then
+            // remembers none of it, because remembering is a change, and it is
+            // the change that makes the *next* run wrong rather than this one.
+            //
+            // Both branches leave a step, because a cursor that did not move is
+            // the explanation for a run that reported nothing new, and a silent
+            // one leaves you comparing timestamps to work out why.
+            const withheld = dryRun();
+            const moved = withheld ? staged.pending() : staged.commit();
+            if (!state.isEmpty(moved)) {
+                note(withheld ? "state-withheld" : "state-committed", {
+                    // The key names and where each cursor moved from and to —
+                    // never the stored object. state.ts builds this; see
+                    // StateChanges for why it is a description rather than the
+                    // thing described.
+                    cursors: moved.cursors,
+                    ...(moved.ids === 0 ? {} : { ids: moved.ids }),
+                    ...(withheld
+                        ? {
+                              reason:
+                                  "DRY_RUN is on — nothing was remembered, so the next run " +
+                                  "sees exactly what this one saw",
+                          }
+                        : {}),
+                });
+            }
+
             // Everything a job reports is scrubbed on the way out. The summary
             // and the skip reason are written to disk and rendered on a page,
             // so a job that puts a token in either has published it — and no
@@ -538,6 +584,22 @@ export async function runJob(
             // a credential to surface — inside a URL an HTTP client echoed back
             // into its message, most often.
             const message = secrets.redact(err instanceof Error ? err.message : String(err));
+
+            // The third outcome, and the one a reader most needs spelled out.
+            // Nothing was remembered, so tomorrow's run sees everything this
+            // one already read — which is correct, and looks from the outside
+            // like a job that has started repeating itself. Noted before
+            // `steps.collected()` builds the failure record below, so it is on
+            // the record rather than only in the log.
+            const discarded = staged.pending();
+            if (!state.isEmpty(discarded)) {
+                note("state-discarded", {
+                    cursors: discarded.cursors,
+                    ...(discarded.ids === 0 ? {} : { ids: discarded.ids }),
+                    reason: "the run failed — nothing was remembered, so the next run sees this run's items again",
+                });
+            }
+
             error("job-failed", {
                 id: job.id,
                 ms: Date.now() - started,

@@ -60,6 +60,7 @@ import {
     runJob,
     scheduler,
     history as jobHistory,
+    state as jobState,
     defaultTimeoutMs,
 } from "./jobs/index.ts";
 import { collect as collectNodeMetrics, lifetimeDelay } from "./node_metrics.ts";
@@ -344,6 +345,14 @@ export function createApp() {
                     schedulerTickMs: scheduler.tickMs(),
                     historyCapacity: jobHistory.capacities().runs,
                     failureCapacity: jobHistory.capacities().failures,
+                    stateCursorsPerJob: jobState.MAX_CURSORS,
+                    stateSeenPerJob: jobState.SEEN_CAPACITY,
+                    // Counts, never values. What a job remembers is whatever
+                    // its source hands out as an identifier, and a page that
+                    // showed one would be broadcasting it — see
+                    // docs/token-sec.md and stats() in be/src/jobs/state.ts.
+                    stateCursors: jobState.stats().cursors,
+                    stateJobs: jobState.stats().jobs,
                 },
                 // What fires on its own, and when next. Shown on the Jobs page
                 // because a schedule nobody can see is indistinguishable from

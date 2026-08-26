@@ -7,6 +7,7 @@ import { runJob, ABORT_GRACE_MS, STEP_HEAD, STEP_TAIL, STEP_TRUNCATED } from "..
 import { JOBS, jobById, resolveInput } from "../src/jobs/index.ts";
 import * as scheduler from "../src/jobs/scheduler.ts";
 import * as history from "../src/jobs/history.ts";
+import * as jobState from "../src/jobs/state.ts";
 import * as dry from "../src/dry-run.ts";
 import { isArtifact, pruneProfiles } from "../src/jobs/prune-profiles.ts";
 import type { Job, JobContext, JobInput } from "../src/jobs/types.ts";
@@ -27,13 +28,26 @@ function setRunsPath(p: string): void {
 // Setting it here means a new test cannot forget.
 setRunsPath(join(tmpdir(), `rn-test-runs-${process.pid}.json`));
 
+// The same protection for the cursor file, and set here for the same reason.
+// No job in this suite writes a cursor today, so nothing would have failed —
+// which is exactly how the run-record version of this bug got in: it was
+// noticed only because a test job called `throwing-probe` turned up in the
+// live API. A job added later that does write one must not be the thing that
+// discovers this line is missing.
+(config as unknown as { jobStatePath: string }).jobStatePath = join(
+    tmpdir(),
+    `rn-test-state-${process.pid}.json`,
+);
+
 beforeEach(() => {
     running.reset();
     history.reset();
+    jobState.reset();
 });
 
 after(async () => {
     await rm(config.jobRunsPath, { force: true });
+    await rm(config.jobStatePath, { force: true });
 });
 
 // ---- the runner ---------------------------------------------------------
@@ -184,6 +198,10 @@ function bare(dryRun: boolean): JobContext {
         secret: () => {
             throw new Error("prune-profiles declares no credentials");
         },
+        // A real handle rather than a stub: nothing here calls commit(), so
+        // staging goes nowhere, and a stub would be a second implementation of
+        // the store for the tests to be right about on their own.
+        state: jobState.open("prune-profiles"),
     };
 }
 

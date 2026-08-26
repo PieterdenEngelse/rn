@@ -85,6 +85,20 @@ export const config = {
         `${process.env.HOME ?? "."}/.config/rn/job-runs.json`,
 
     /**
+     * Where a job's cursors are kept between runs — see be/src/jobs/state.ts.
+     *
+     * Its own file rather than a section of job-runs.json, because the two have
+     * opposite lifetimes. The run history is a bounded log that is expected to
+     * lose its oldest entries and costs nothing when it does; a cursor is a
+     * single value that must survive indefinitely, and losing one means the next
+     * run reprocesses everything its source still holds. Sharing a file would
+     * mean one truncation or one corrupt write taking both.
+     */
+    jobStatePath:
+        process.env.RN_JOB_STATE_PATH ??
+        `${process.env.HOME ?? "."}/.config/rn/job-state.json`,
+
+    /**
      * Where V8 drops its profiling artifacts, and how long they are kept.
      *
      * `--cpu-prof`, `--heap-prof` and `--prof` write into the *current working

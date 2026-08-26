@@ -120,10 +120,12 @@ const STEPS_IF_WRONG: &str =
      is what is retained, never a lifetime total.";
 
 const DRY_RUN_WHAT: &str =
-    "A global safety switch, read once at startup from DRY_RUN in be/.env. The backend hands \
-     its value to every job, and a job honours it by doing all of its work except the part \
-     that writes — the scan, the comparison and the decision all still happen, so what it \
-     reports is what an armed run would actually do.";
+    "A global safety switch. The backend hands its value to every job, and a job honours it by \
+     doing all of its work except the part that writes — the scan, the comparison and the \
+     decision all still happen, so what it reports is what an armed run would actually \
+     do.\n\nIt is a runtime setting, changed on Config → Runtime and applied to the next job \
+     to start rather than at a restart. DRY_RUN in be/.env is the baseline the process boots \
+     with, which is what \"no setting saved\" means.";
 
 const DRY_RUN_WHY: &str =
     "This is an automation tool: the failure mode is doing something irreversible to a user's \
@@ -157,12 +159,13 @@ fn DryRunBanner() -> Element {
             div {
                 p { class: "text-gray-300 mt-1 max-w-3xl",
                     "Jobs will do all of their reading and deciding, report exactly what they "
-                    "would change, and change nothing. This is the default, and it stays on "
-                    "until you set "
-                    code { class: "text-gray-200", "DRY_RUN=false" }
+                    "would change, and change nothing. This is the default. Turn it off on "
+                    code { class: "text-gray-200", "Config → Runtime" }
+                    ", which takes effect on the next job to start — no restart. "
+                    code { class: "text-gray-200", "DRY_RUN" }
                     " in "
                     code { class: "text-gray-200", "be/.env" }
-                    " and restart."
+                    " sets only what the install starts with."
                 }
             }
         }

@@ -103,7 +103,7 @@ fn GlobalRows(dry_run: bool, config: JobsConfig) -> Element {
             SettingRow {
                 label: "Dry run".to_string(),
                 value: armed.to_string(),
-                note: Some("DRY_RUN in be/.env, read once at startup".to_string()),
+                note: Some("a runtime setting on Config → Runtime; DRY_RUN in be/.env is the baseline".to_string()),
                 info: rsx! {
                     InfoButton {
                         title: "Dry run".to_string(),
@@ -152,8 +152,43 @@ fn GlobalRows(dry_run: bool, config: JobsConfig) -> Element {
                     }
                 },
             }
+            SettingRow {
+                label: "What jobs remember".to_string(),
+                value: remembered(&config),
+                note: Some(format!(
+                    "up to {} cursors and {} recent item ids per job",
+                    config.state_cursors_per_job, config.state_seen_per_job,
+                )),
+                info: rsx! {
+                    InfoButton {
+                        title: "What jobs remember".to_string(),
+                        what: STATE_WHAT.to_string(),
+                        why: STATE_WHY.to_string(),
+                        if_wrong: STATE_IF_WRONG.to_string(),
+                    }
+                },
+            }
         }
     }
+}
+
+/// How much is stored, in words rather than a bare pair of numbers.
+///
+/// "0 cursors" is the ordinary state of a fresh install and of an install whose
+/// jobs do not poll anything, and reading it as a fault is the obvious mistake —
+/// so the empty case says what it means instead of leaving a zero to be
+/// interpreted. Counts only, never a stored value: see `stats()` in
+/// `be/src/jobs/state.ts` for why nothing here can ask for one.
+fn remembered(config: &JobsConfig) -> String {
+    if config.state_cursors == 0 {
+        return "nothing yet".to_string();
+    }
+    let cursors = if config.state_cursors == 1 { "cursor" } else { "cursors" };
+    let jobs = if config.state_jobs == 1 { "job" } else { "jobs" };
+    format!(
+        "{} {cursors} across {} {jobs}",
+        config.state_cursors, config.state_jobs,
+    )
 }
 
 #[component]
@@ -392,16 +427,20 @@ const CREDENTIALS_IF_WRONG: &str =
      source.";
 
 const WHERE_BODY: &str =
-    "Every value on this page is declared in code and read here, not stored in \
-     ~/.config/rn/settings.json and not editable from the browser. The rows below are what \
-     this running backend actually has: change one in the file named on its row, restart, and \
-     the number here changes with it.";
+    "Almost every value on this page is declared in code and read here, not stored in \
+     ~/.config/rn/settings.json and not editable from the browser. The rows are what this \
+     running backend actually has: change one in the file named on its row, restart, and the \
+     number here changes with it.\n\nTwo rows are not like that, and say so on the row. Dry \
+     run is a runtime setting, changed on Config → Runtime and applied without a restart. What \
+     jobs remember is a live count rather than a setting at all — the caps beside it are the \
+     code constants.";
 
 const WHERE_WHAT: &str =
     "The two halves of job configuration, and the file each lives in.\n\nThe \"Every run\" \
      board is the runner's own settings — the default timeout in be/src/jobs/run.ts, the \
      scheduler's tick in be/src/jobs/scheduler.ts, the history sizes in be/src/jobs/history.ts, \
-     and the dry-run switch from DRY_RUN in be/.env. They apply to every job, including ones \
+     and the dry-run switch, which is a runtime setting on Config → Runtime starting from \
+     DRY_RUN in be/.env. They apply to every job, including ones \
      added later.\n\nThe \"Per job\" board is what a single job declares about itself in its \
      own file — its schedule, its timeout if it wants one other than the default, and the job \
      that answers its failures. The registry that makes a job exist at all is the JOBS array \
@@ -429,12 +468,15 @@ const WHERE_IF_WRONG: &str =
      is a file that never runs, and it fails quietly because there is nothing to fail.";
 
 const DRY_RUN_WHAT: &str =
-    "A global safety switch, read once at startup from DRY_RUN in be/.env and handed to every \
-     job as ctx.dryRun. A job honours it by doing all of its work except the part that writes \
+    "A global safety switch, handed to every job as ctx.dryRun. A job honours it by doing all \
+     of its work except the part that writes \
      — the scan, the comparison and the decision all still happen, so what it reports is what \
      an armed run would actually do.\n\nIt is not per job and there is no override: the switch \
      is the whole process, which is what makes \"is anything armed right now?\" a question with \
-     one answer.";
+     one answer.\n\nIt is a runtime setting, changed on Config → Runtime and read afresh by \
+     every run, so arming takes effect on the next job to start and never on one already \
+     running under the value it began with. DRY_RUN in be/.env is the baseline the process \
+     boots with — what \"no setting saved\" resolves to — rather than the live value.";
 
 const DRY_RUN_WHY: &str =
     "This is an automation tool, so the failure mode is doing something irreversible to a \
@@ -511,8 +553,83 @@ const HISTORY_WHY: &str =
      ceiling is there because the file is read whole and rewritten per run. Unbounded history \
      is how a JSON file becomes a performance problem nobody notices until it is one.";
 
+const STATE_WHAT: &str =
+    "What each job remembers between runs — the mark that tells new from already-seen. A job \
+     that polls an API, a feed or a mailbox has exactly two options without one, and both are \
+     wrong: process everything it finds every time, or process nothing and hope the source \
+     only ever hands it new things.\n\nThree shapes of the same question, and a job picks the \
+     one its source fits. A last timestamp, for a source that can be asked what changed after \
+     a given moment. A last hash, for a source that hands you the whole thing every time and \
+     no way to ask what moved. A last item id, for a source that hands you a list with stable \
+     ids — the only one that survives items arriving out of order, and the only one that costs \
+     storage per item.\n\nStored in ~/.config/rn/job-state.json, beside the run history and \
+     separate from it. This board reports how many marks are held and never what they are: a \
+     cursor is whatever the source uses as an identifier — a message id, a URL, an account \
+     reference — and showing one on a page is a broadcast rather than a read.";
+
+const STATE_WHY: &str =
+    "The rule worth knowing is when a cursor moves, and it is only ever when the run \
+     finishes. Everything \
+     a job writes is staged, and the runner commits it after the job returns and never after \
+     it throws.\n\nThat is not bookkeeping. A job that reads fifty new items, advances the \
+     cursor, and fails on item three has just told the next run that all fifty were handled. \
+     Those forty-seven are not retried, not reported and not recoverable — the record says the \
+     run failed and the cursor says there is nothing left to do. Staging costs nothing and \
+     makes that outcome unrepresentable.\n\nThe same rule covers the other two bad endings. \
+     Each retry attempt starts from the last committed value, so an attempt that failed halfway \
+     cannot leak its cursor into the one that succeeds. And dry run commits nothing at all, \
+     which is what makes rehearsing a polling job repeatable rather than a single-use rehearsal \
+     that consumes the very items it was meant only to report on.\n\nThe caps make \"this is \
+     not a database\" enforceable rather than advisory. A job that exceeds one fails on its \
+     first run, which is the only moment anyone is looking.";
+
+const STATE_IF_WRONG: &str =
+    "The failure that hides is dry run. For a job that writes files, dry run withholds the \
+     writing and the report is unaffected. For a job that only reads and reports, the cursor is \
+     the only thing there is to withhold — so an unarmed install reports the same twenty items \
+     every morning, correctly, forever. Nothing is red and nothing is wrong; the job is being \
+     asked a question it has no memory to answer. Every run that staged something leaves a \
+     state-withheld step saying so.\n\nThe item-id window is a window, not a memory. The \
+     oldest id falls off when the cap is passed, and an item whose id has aged out is new \
+     again — so a source that emits more than the cap between two runs needs a timestamp cursor \
+     instead. It works for months and then reprocesses a backlog after one outage, at which \
+     point nobody suspects the cap.\n\nDeleting ~/.config/rn/job-state.json is the supported \
+     way to make a job report from scratch, and there is no way back: the next run treats \
+     everything its source still holds as new. Nothing else notices the file is gone, because \
+     an absent cursor is exactly what a first run looks like.";
+
 const HISTORY_IF_WRONG: &str =
     "Too small and the evidence is gone before you go looking — a job on a fifteen-minute \
      schedule fills a 200-run history in about two days, so a failure from last week is simply \
      not there. Nothing announces the loss; the list just starts later than you expected.\n\n\
      Too large and startup slows and every run pays to rewrite a bigger file.";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config(cursors: u32, jobs: u32) -> JobsConfig {
+        JobsConfig { state_cursors: cursors, state_jobs: jobs, ..Default::default() }
+    }
+
+    /// Zero is the ordinary state of a fresh install and of one whose jobs do
+    /// not poll anything. Reading it as a fault is the obvious mistake, so the
+    /// empty case says what it means rather than leaving a bare 0 to interpret.
+    #[test]
+    fn nothing_stored_reads_as_a_state_rather_than_a_count() {
+        assert_eq!(remembered(&config(0, 0)), "nothing yet");
+    }
+
+    #[test]
+    fn one_of_each_is_singular() {
+        assert_eq!(remembered(&config(1, 1)), "1 cursor across 1 job");
+    }
+
+    /// The mixed case is the one a naive pluraliser gets wrong: several cursors
+    /// can belong to a single job, so the two words are pluralised apart.
+    #[test]
+    fn cursors_and_jobs_pluralise_independently() {
+        assert_eq!(remembered(&config(3, 1)), "3 cursors across 1 job");
+        assert_eq!(remembered(&config(4, 2)), "4 cursors across 2 jobs");
+    }
+}
