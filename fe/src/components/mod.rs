@@ -1,5 +1,7 @@
 //! Shared components — the building blocks of the app.
 
+pub mod env_panel;
+pub use env_panel::EnvPanel;
 pub mod header;
 pub mod info;
 pub mod panel;

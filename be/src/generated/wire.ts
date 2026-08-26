@@ -210,6 +210,61 @@ event?: string | null, };
 export type DenoMetrics = { permissions: { [key in string]: string }, bindAddressAllowed: boolean, };
 
 /**
+ * One environment variable, as the file has it and as the process has it.
+ */
+export type EnvEntry = { key: string, 
+/**
+ * What the file says now. `None` when the file does not set it, and
+ * also when rn does not recognise the key — see `known`.
+ */
+fileValue?: string | null, 
+/**
+ * Whether the file mentions it at all. Distinguishes "set to nothing"
+ * from "not set", which read the same in a table of values.
+ */
+inFile: boolean, 
+/**
+ * What this process has, read from its own environment. `None` when
+ * the process does not have it.
+ */
+processValue?: string | null, 
+/**
+ * Whether rn recognises the key — that is, whether it appears in
+ * `be/.env.example`, which a test holds equal to what `config.ts`
+ * actually reads. An unknown key gets its name shown and nothing else.
+ */
+known: boolean, 
+/**
+ * The file and the process disagree. Almost always means the file was
+ * edited and the backend has not been restarted since; occasionally
+ * means a real environment variable is overriding the file, which is
+ * the documented precedence and worth being able to see.
+ */
+drifted: boolean, };
+
+/**
+ * GET /api/env.
+ */
+export type EnvResponse = { 
+/**
+ * Display path of the file, so a reader knows which one this is.
+ */
+path: string, 
+/**
+ * False on an install that never had one — `--env-file-if-exists`
+ * tolerates that, so it is a normal state rather than an error.
+ */
+exists: boolean, 
+/**
+ * Every key the file sets or the process has, known or not.
+ */
+entries: Array<EnvEntry>, 
+/**
+ * How many entries disagree, so the page can lead with the answer.
+ */
+drifted: number, };
+
+/**
  * One live handle and whatever distinguishes it from the others of its kind.
  *
  * `kind` uses the same vocabulary as the keys of `active_resources`, so a

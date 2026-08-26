@@ -14,7 +14,7 @@ use serde::Deserialize;
 // `fe` keeps importing from `crate::api`, and so the boundary is legible: what
 // remains below is still hand-written on both ends, and is the next to move.
 pub use shared::{
-    CatalogueJob, ConnectionResponse, CredentialRef, JobErrors, JobInfo, JobInput, JobInputType,
+    CatalogueJob, ConnectionResponse, EnvEntry, EnvResponse, CredentialRef, JobErrors, JobInfo, JobInput, JobInputType,
     JobRun, JobRunResult, JobSource, JobStep, JobsConfig, JobsResponse, Outcome, RetryPolicy,
     RunningJob, RunsResponse, Schedule, ScheduledJob, Trigger,
 };

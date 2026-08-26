@@ -5,7 +5,7 @@
 //! `web-sys`, neither of which belongs anywhere near a shared type crate.
 
 use super::wire::{
-    ConnectionResponse, JobErrors, JobRunResult, JobSource, JobsResponse, NodeHistory, NodeMetrics,
+    ConnectionResponse, EnvResponse, JobErrors, JobRunResult, JobSource, JobsResponse, NodeHistory, NodeMetrics,
     ParamsResponse, RestartOutcome, RunsResponse, SaveResponse, StatusResponse, StopOutcome,
 };
 
@@ -55,6 +55,15 @@ pub async fn fetch_connection() -> Result<ConnectionResponse, String> {
     resp.json::<ConnectionResponse>()
         .await
         .map_err(|e| format!("{e}"))
+}
+
+/// What be/.env says, against what the process actually has.
+pub async fn fetch_env() -> Result<EnvResponse, String> {
+    let resp = gloo_net::http::Request::get(&format!("{API_BASE}/api/env"))
+        .send()
+        .await
+        .map_err(|e| format!("{e}"))?;
+    resp.json::<EnvResponse>().await.map_err(|e| format!("{e}"))
 }
 
 /// Ask the backend to restart. `now = false` waits for running work to finish.

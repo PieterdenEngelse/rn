@@ -14,10 +14,12 @@
 //! anything heavy lands in the browser bundle.
 
 pub mod connection;
+pub mod env;
 pub mod jobs;
 pub mod monitor;
 
 pub use connection::*;
+pub use env::*;
 pub use jobs::*;
 pub use monitor::*;
 
@@ -73,6 +75,8 @@ pub fn export_all(cfg: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     RunsResponse::export_all(cfg)?;
 
     ConnectionResponse::export_all(cfg)?;
+    EnvEntry::export_all(cfg)?;
+    EnvResponse::export_all(cfg)?;
     Ok(())
 }
 

@@ -9,6 +9,7 @@
  * GET  /api/jobs/:id/source   the job's own source file
  * GET  /api/jobs/:id/errors   the job's recorded failures
  * GET  /api/connection  what is listening, who may talk to it, what it may reach
+ * GET  /api/env       what be/.env says, against what this process has
  *
  * The hooks listener is deliberately not here. It is a separate server on its
  * own port with one route — see be/src/hooks/server.ts.
@@ -30,6 +31,7 @@ import {
 } from "./settings.ts";
 import { config, remoteBindRefusal } from "./config.ts";
 import { createHookApp } from "./hooks/server.ts";
+import { describeEnv } from "./env-file.ts";
 import * as secrets from "./secrets.ts";
 import { display as displayPath } from "./paths.ts";
 
@@ -222,6 +224,14 @@ export function createApp() {
                 netEnforced: runtime === "deno",
                 supervised: isSupervised(),
             });
+            return done(200);
+        }
+
+        // What be/.env says against what this process has. The file is read
+        // fresh on every request — reading it once at startup would make the
+        // board unable to report the very drift it exists for.
+        if (url.pathname === "/api/env" && req.method === "GET") {
+            send(res, 200, describeEnv());
             return done(200);
         }
 

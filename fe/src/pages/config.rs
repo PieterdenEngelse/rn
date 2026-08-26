@@ -2,7 +2,7 @@ use crate::api::{
     diagnose_offline, fetch_params, save_settings, OfflineReason, ParamsResponse, RuntimeParam,
 };
 use crate::components::param::*;
-use crate::components::{InfoButton, Panel, ProcessPanel, RestartBanner, RuntimeBoard};
+use crate::components::{EnvPanel, InfoButton, Panel, ProcessPanel, RestartBanner, RuntimeBoard};
 use dioxus::prelude::*;
 use std::collections::BTreeMap;
 
@@ -324,6 +324,10 @@ fn ParamBoards(
                         }
                     }
                     ProcessPanel { reload, draft, saved: resp.settings.clone(), seeded }
+                    // Below the settings it reconciles against: the boards
+                    // above say what was asked for, this says what the file and
+                    // the process each actually have.
+                    EnvPanel {}
                 }
 
                 if !runtime_rows_empty {
