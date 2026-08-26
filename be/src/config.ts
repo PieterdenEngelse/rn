@@ -41,6 +41,22 @@ export const config = {
     hooksPort: Number(process.env.BACKEND_HOOKS_PORT ?? 3011),
 
     /**
+     * Permission to bind a routable address — see `remoteBindRefusal` below.
+     *
+     * Read here rather than at the point of use, which is where it was and
+     * should not have been. This module's first line promises that all
+     * environment reading lives in it, and a variable read straight out of
+     * `process.env` in server.ts was invisible to the check that keeps
+     * `.env.example` honest — so the one setting whose refusal message tells
+     * you to go and set it was the one the reference did not list.
+     *
+     * Deliberately not defaulted. `remoteBindRefusal` treats exactly `"1"` as
+     * permission and everything else — including `undefined` — as refusal, and
+     * a default here would be a second place for that rule to live.
+     */
+    allowRemote: process.env.RN_ALLOW_REMOTE,
+
+    /**
      * Where user settings are stored. Never inside the install directory —
      * that gets replaced wholesale on upgrade.
      */

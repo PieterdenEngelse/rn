@@ -618,7 +618,7 @@ function installSignalHandlers(srv: ReturnType<typeof createApp>): void {
 
 // Fail closed before a socket exists, not after. A refusal that arrives once
 // the port is already open has already published what it was refusing.
-const refusal = remoteBindRefusal(config.host, process.env["RN_ALLOW_REMOTE"]);
+const refusal = remoteBindRefusal(config.host, config.allowRemote);
 if (refusal !== null) {
     error("bind-refused", { host: config.host, port: config.port });
     console.error(refusal);
