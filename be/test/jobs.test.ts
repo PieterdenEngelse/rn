@@ -890,6 +890,210 @@ test("a handler that fails does not replace the error the caller asked about", a
     assert.equal(history.failuresFor("breaks").length, 1);
 });
 
+// ---- onChange, the other half of the handler pair ------------------------
+
+/** A handler that records what it was handed. */
+function notifier(id: string, seen: { cause?: string | undefined; dryRun?: boolean } = {}): Job {
+    return {
+        id, label: id,
+        info: { what: "w", why: "y", ifWrong: "i" },
+        source: import.meta.filename,
+        async run(ctx) {
+            seen.cause = ctx.cause?.jobId;
+            seen.dryRun = ctx.dryRun;
+            return { summary: {}, changed: false };
+        },
+    };
+}
+
+test("a job that changes something runs its handler, and hands it the run", async () => {
+    const seen: { cause?: string; dryRun?: boolean } = {};
+    const changer = probe({ id: "changer", onChange: "tell-me" });
+
+    await registered([notifier("tell-me", seen), changer], async () => {
+        await runJob(changer);
+    });
+
+    // The whole run, not a flag: a handler told only "something changed"
+    // cannot say which job, how long it took, or what it saw.
+    assert.equal(seen.cause, "changer");
+    assert.equal(history.list().length, 2);
+});
+
+test("the handler's record says which change it answers", async () => {
+    const changer = probe({ id: "changer", onChange: "tell-me" });
+    await registered([notifier("tell-me"), changer], async () => {
+        await runJob(changer);
+    });
+
+    const [handlerRun] = history.list();
+    // Without causedBy the second record reads as an unexplained run that
+    // happened to start at the same moment as the first.
+    assert.equal(handlerRun!.jobId, "tell-me");
+    assert.equal(handlerRun!.trigger, "change");
+    assert.equal(handlerRun!.causedBy, "changer");
+});
+
+test("a run that changed nothing starts nothing", async () => {
+    const seen: { cause?: string } = {};
+    const quiet = probe({
+        id: "quiet", onChange: "tell-me",
+        async run() {
+            return { summary: {}, changed: false };
+        },
+    });
+
+    await registered([notifier("tell-me", seen), quiet], async () => {
+        await runJob(quiet);
+    });
+    assert.equal(seen.cause, undefined);
+    assert.equal(history.list().length, 1);
+});
+
+test("a skipped run starts nothing either", async () => {
+    // Skipped and unchanged are different states and neither is news. A
+    // handler that fired on both would be a nightly message saying nothing
+    // happened, which is the message people mute.
+    const seen: { cause?: string } = {};
+    const declined = probe({
+        id: "declined", onChange: "tell-me",
+        async run() {
+            return { summary: {}, changed: false, skipped: "nothing to do" };
+        },
+    });
+
+    await registered([notifier("tell-me", seen), declined], async () => {
+        await runJob(declined);
+    });
+    assert.equal(seen.cause, undefined);
+    assert.equal(history.list().length, 1);
+});
+
+test("a change handler that changes something starts no handler of its own", async () => {
+    // One hop. A pair that name each other would otherwise run until the
+    // process died, and every run of it would look legitimate.
+    let calls = 0;
+    const pinger: Job = {
+        id: "pinger", label: "pinger", onChange: "ponger",
+        info: { what: "w", why: "y", ifWrong: "i" },
+        source: import.meta.filename,
+        async run() {
+            calls += 1;
+            return { summary: {}, changed: true };
+        },
+    };
+    const ponger: Job = { ...pinger, id: "ponger", onChange: "pinger" };
+
+    const lines = await logged(async () => {
+        await registered([pinger, ponger], async () => {
+            await runJob(pinger);
+        });
+    });
+
+    assert.equal(calls, 2, "one hop, and it stops");
+    assert.ok(lines.find((l) => l.step === "on-change-refused"), "the refusal is logged");
+});
+
+test("an onChange naming a job that does not exist is reported, not swallowed", async () => {
+    // Quieter than the failure version of this, and worth more for it: the job
+    // named does not exist so it cannot fail, and the job that named it
+    // succeeded — so the only symptom is news that never arrives.
+    const changer = probe({ id: "changer", onChange: "typo-in-this-id" });
+
+    const lines = await logged(async () => {
+        await registered([changer], async () => {
+            await runJob(changer);
+        });
+    });
+
+    const missing = lines.find((l) => l.step === "on-change-missing");
+    assert.ok(missing, "the typo is named");
+    assert.equal(missing!.handler, "typo-in-this-id");
+    assert.equal(history.list().length, 1, "and nothing extra was recorded");
+});
+
+test("a broken handler does not turn a run that worked into one that failed", async () => {
+    const broken: Job = {
+        id: "broken-notifier", label: "broken notifier",
+        info: { what: "w", why: "y", ifWrong: "i" },
+        source: import.meta.filename,
+        async run() {
+            throw new Error("the webhook is down");
+        },
+    };
+    const changer = probe({ id: "changer", onChange: "broken-notifier" });
+
+    await registered([broken, changer], async () => {
+        // The change really did happen. A notifier that could rewrite that
+        // would make the record of the work depend on the reliability of the
+        // thing reporting it.
+        const result = await runJob(changer);
+        assert.equal(result.changed, true);
+    });
+
+    assert.equal(history.failuresFor("changer").length, 0);
+    assert.equal(history.failuresFor("broken-notifier").length, 1);
+});
+
+test("under dry run the handler still runs, and is itself disarmed", async () => {
+    // Most jobs report unchanged under dry run and so start nothing. This is
+    // the other case: a job that reports a change it did not make — a polling
+    // job whose cursor was withheld, which sees the same movement every run.
+    //
+    // The handler is not suppressed, for the same reason the failure handler
+    // is not: suppressing it would mean a notifier could never be tested
+    // without arming the whole install. It is disarmed instead, and it is the
+    // handler's own job to honour that — the runner will not stop a handler
+    // that sends regardless.
+    const seen: { dryRun?: boolean } = {};
+    const changer = probe({ id: "changer", onChange: "tell-me" });
+
+    setDryRun(true);
+    try {
+        await registered([notifier("tell-me", seen), changer], async () => {
+            await runJob(changer);
+            await runJob(changer);
+        });
+    } finally {
+        setDryRun(realDryRun);
+    }
+
+    assert.equal(seen.dryRun, true, "the handler is told the install is disarmed");
+    assert.equal(history.list().length, 4, "and it ran on both, rather than once");
+});
+
+test("a handler that cannot even start is reported, not swallowed", async () => {
+    // The quietest failure of the three. A handler that runs and throws leaves
+    // its own failed run on the page; one that never starts — an unconfigured
+    // credential is the ordinary case — throws before runJob records anything,
+    // so without this line the only symptom is news that never arrives while
+    // the page says everything worked.
+    const needsSecret: Job = {
+        id: "needs-secret", label: "needs a secret",
+        info: { what: "w", why: "y", ifWrong: "i" },
+        source: import.meta.filename,
+        credentials: ["aCredentialNobodySet"],
+        async run() {
+            return { summary: {}, changed: false };
+        },
+    };
+    const changer = probe({ id: "changer", onChange: "needs-secret" });
+
+    const lines = await logged(async () => {
+        await registered([needsSecret, changer], async () => {
+            const result = await runJob(changer);
+            // And the run that changed is still a success, because it was.
+            assert.equal(result.changed, true);
+        });
+    });
+
+    const reported = lines.find((l) => l.step === "on-change-failed");
+    assert.ok(reported, "the news not arriving has to be visible somewhere");
+    assert.equal(reported!.handler, "needs-secret");
+    assert.match(String(reported!.error), /aCredentialNobodySet/);
+    assert.equal(history.list().length, 1, "the handler never ran, so it left no record");
+});
+
 // ---- retry --------------------------------------------------------------
 
 test("a job with no retry policy is tried once", async () => {

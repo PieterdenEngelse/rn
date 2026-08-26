@@ -62,6 +62,41 @@ pub fn MonitorJobs() -> Element {
     }
 }
 
+const ON_CHANGE_WHAT: &str =
+    "The id of another job that runs when this one reports that it changed something. The \
+     runner records the run, then looks that id up in the same catalogue this page lists and \
+     runs it — handing it the whole completed run: what it did, how long it took, and the steps \
+     it took on the way. The handler is an ordinary job, so it is tracked, timed and recorded \
+     like any other.\n\nIt fires on changed, and on nothing else. A run that found nothing to \
+     do, one that was skipped, and one disarmed by dry run all report unchanged and start \
+     nothing.";
+
+const ON_CHANGE_WHY: &str =
+    "It is the half of \"rn has no notification system\" that carries good news rather than \
+     bad. A job that fails is already visible — the light goes amber, the run is red, the error \
+     log fills. A job that quietly succeeds at noticing something and tells nobody looks exactly \
+     like a job that is working.\n\nWatch upstream releases is why this exists: it runs at \
+     04:00 and writes its report to this page, which somebody then has to open. Wire it to a \
+     handler that posts to a webhook or writes a file and the news reaches you instead of \
+     waiting to be found.\n\nFiring only on changed is what keeps it worth reading. A handler \
+     that ran after every run would be a nightly message saying nothing happened, and a message \
+     that usually says nothing is one people mute — taking the real one with it.";
+
+const ON_CHANGE_IF_WRONG: &str =
+    "One hop, exactly as the failure path. A handler run starts no handler of its own, so a job \
+     that names itself, or a pair that name each other, stops after one extra run rather than \
+     recursing; the refusal is logged.\n\nNaming a job id that does not exist is the quiet \
+     one, and it is quieter here than on the failure path. Nothing would ever report it — the \
+     job named does not exist so it cannot fail, and the job that named it succeeded — so the \
+     only symptom is news that never arrives. The runner logs on-change-missing for exactly \
+     that reason.\n\nA handler that throws is recorded as its own failed run and is not \
+     allowed to rewrite the run that triggered it: the change really did happen, and a broken \
+     notifier must not turn a job that worked into a job that failed.\n\nOne interaction \
+     worth knowing: while dry run is on, a polling job never commits its cursor, so it can go \
+     on reporting the same change every run — and this handler with it. The handler is disarmed \
+     too, so it reports rather than sends, but the repetition is the safety switch showing \
+     through and not a fault in the job.";
+
 const ON_FAILURE_WHAT: &str =
     "The id of another job that runs when this one fails. The runner catches the failure, \
      records it, then looks that id up in the same catalogue this page lists and runs it — \
@@ -287,6 +322,19 @@ fn JobRow(
                             what: ON_FAILURE_WHAT.to_string(),
                             why: ON_FAILURE_WHY.to_string(),
                             if_wrong: ON_FAILURE_IF_WRONG.to_string(),
+                        }
+                    }
+                    // Same rule, the other half. Shown separately rather than
+                    // folded into one "handlers" row, because which of the two
+                    // fired is the only thing that makes the second record
+                    // readable.
+                    if let Some(handler) = job.on_change.as_ref() {
+                        span { class: "text-gray-300 text-xs", "on change → {handler}" }
+                        InfoButton {
+                            title: "On change → {handler}".to_string(),
+                            what: ON_CHANGE_WHAT.to_string(),
+                            why: ON_CHANGE_WHY.to_string(),
+                            if_wrong: ON_CHANGE_IF_WRONG.to_string(),
                         }
                     }
                 }
@@ -644,6 +692,11 @@ fn trigger_label(t: &Trigger) -> &'static str {
         // A run nobody started, at an hour nobody chose. Naming the trigger is
         // what makes it readable rather than mysterious.
         Trigger::Webhook => "webhook",
+        // Reads with `trigger_cell` below as "on change of watch-upstreams",
+        // which is the whole sentence. Distinguished from `Failure` because a
+        // handler wired to both would otherwise leave a history where "the
+        // backup failed" and "the backup found new files" look the same.
+        Trigger::Change => "on change",
     }
 }
 

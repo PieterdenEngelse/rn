@@ -277,6 +277,18 @@ fn JobConfigRow(
                     }
                 }
 
+                dt { class: "text-gray-400", "On change" }
+                dd { class: "text-gray-300",
+                    match job.on_change.as_ref() {
+                        Some(h) => rsx! { "→ {h}" },
+                        None => rsx! {
+                            span { class: "text-gray-400",
+                                "nothing — what this job notices stays on this page"
+                            }
+                        },
+                    }
+                }
+
                 dt { class: "text-gray-400", "Retry" }
                 dd { class: "text-gray-300 flex items-center gap-2",
                     match job.retry.as_ref() {

@@ -153,6 +153,15 @@ wire! {
         /// which is the same argument the schedule is surfaced on.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub on_failure: Option<String>,
+        /// The id of the job that runs when this one changes something.
+        ///
+        /// Sent for the same reason `on_failure` is, and it matters more here:
+        /// a failure path that is never taken is invisible but harmless, while
+        /// this is the path that carries the news. A job whose whole purpose is
+        /// to tell you something, silently wired to nothing, still looks like a
+        /// job that is working.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub on_change: Option<String>,
         /// What this job asks for when it fails, if it asks for anything.
         ///
         /// Absent means one attempt — the default, and not the same statement
@@ -249,6 +258,14 @@ wire! {
         /// history at an hour nobody chose, is unreadable unless it says why
         /// it exists.
         Webhook,
+        /// Another job reported `changed` and named this one as its handler.
+        ///
+        /// The counterpart of `Failure`, and needed for the same reason: the
+        /// pair of records is only readable if the second says which of the
+        /// two things happened. A handler that runs on both would otherwise
+        /// leave a history in which "the backup failed" and "the backup found
+        /// new files" look identical.
+        Change,
     }
 }
 

@@ -11,12 +11,13 @@
  * than keeping their own.
  */
 
+import { notify } from "./notify.ts";
 import { pruneProfiles } from "./prune-profiles.ts";
 import { watchUpstreams } from "./watch-upstreams.ts";
 import { webhookEcho } from "./webhook-echo.ts";
 import type { Job } from "./types.ts";
 
-export const JOBS: readonly Job[] = [pruneProfiles, watchUpstreams, webhookEcho];
+export const JOBS: readonly Job[] = [pruneProfiles, watchUpstreams, notify, webhookEcho];
 
 export function jobById(id: string): Job | undefined {
     return JOBS.find((j) => j.id === id);

@@ -134,6 +134,54 @@ Tests cover the handler running, receiving the cause, both cycle shapes
 terminating, both silent-failure logs, and a broken handler leaving the original
 error intact.
 
+**And the other half: `onChange`.** The failure path was built first because
+failure is the obvious case, but it is the smaller one. A job that fails is
+already loud — the header light goes amber, the run is red, the error log fills.
+A job that quietly succeeds at noticing something and tells nobody looks exactly
+like a job that is working.
+
+`watch-upstreams` is what made that concrete. It runs at 04:00 and writes its
+report to a page somebody then has to open, which is the failure `history.ts`
+was written to fix one level down: an automation reporting to a terminal nobody
+was watching.
+
+`Job.onChange?: string` is the symmetric field. A run that comes back
+`changed: true` hands the whole completed run to the named job as `ctx.cause`,
+through `runJob`, on a `Trigger::Change` so the two records read as one story —
+`on change of watch-upstreams`. Every rule the failure path established is
+reused unaltered: one hop guarded by the presence of `cause`, `on-change-missing`
+and `on-change-refused` logged rather than swallowed, and a handler that throws
+recorded as its own failed run without being allowed to rewrite the run that
+triggered it. A notifier being down must not turn a job that worked into a job
+that failed.
+
+**It fires on `changed`, and on nothing else.** Unchanged, skipped, and disarmed
+runs all start nothing. A handler that ran after every run would be a nightly
+message saying nothing happened, and a message that usually says nothing is one
+people mute — taking the real one with it.
+
+**The first handler is `be/src/jobs/notify.ts`.** It POSTs the triggering run —
+which job, what it reported, and the last twenty steps of its trace — to the URL
+in the `notifyWebhook` credential, in one of three body shapes: plain text for
+ntfy.sh, `{"text":…}` for Slack, `{"content":…}` for Discord. Run by hand it
+sends a test message that says it is a test, which is how you check the URL
+before wiring anything to it.
+
+**Nothing names it by default**, and that is a consequence of the credential
+rule rather than an oversight. A declared credential is required — the runner
+refuses to start a job whose credential is absent — so a notifier wired in
+advance would put a red failed run on the page of every fresh clone the first
+time an upstream moved. Wiring it is one line, `onChange: "notify"`, in the job
+you want news from: visible in a diff, like the schedule beside it.
+
+**One interaction is worth knowing, and it is tested rather than reasoned
+about.** Under dry run a polling job never commits its cursor, so it can keep
+reporting the same change every run, and the handler with it. The handler is
+*not* suppressed — suppressing it would mean a notifier could never be exercised
+without arming the whole install — it is disarmed, and honouring that is the
+handler's own job exactly as it is every other job's. The runner will not stop a
+handler that sends regardless.
+
 ---
 
 ## 3. Per-job retry with backoff — **done**

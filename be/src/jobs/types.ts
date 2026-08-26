@@ -204,6 +204,39 @@ export interface Job {
     onFailure?: string;
 
     /**
+     * The id of another job to run when this one changes something.
+     *
+     * The counterpart of `onFailure`, and the answer to "nothing pushes" for
+     * the case that is not a failure. A job that reports `changed: true` hands
+     * off to this one, which can post to a webhook, write a file, or whatever
+     * else you want — so "tell me when something moved" is a job you write
+     * rather than a notification system rn has to grow, SMTP settings and all.
+     *
+     * It matters more than the failure path, not less. A job that fails is
+     * visible: the header light goes amber, the run is red, the error log
+     * fills. A job that quietly succeeds at noticing something and tells nobody
+     * looks exactly like a job that is working, and `watch-upstreams` — which
+     * fires at 04:00 and writes its report to a page somebody has to open — is
+     * why this exists.
+     *
+     * **`changed`, not "ran".** A run that found nothing to do, or was skipped,
+     * or was disarmed by dry run, starts nothing: those are all `changed:
+     * false`, and a handler that fired on every run would be a daily message
+     * saying nothing happened, which is the thing people mute. That also means
+     * dry run disables this path in passing, because a dry run reports
+     * `changed: false` by construction.
+     *
+     * The handler is given the changed run as `ctx.cause`, exactly as a failure
+     * handler is given the failed one — so it can say *what* changed rather
+     * than only that something did.
+     *
+     * **One hop only**, and the same rule as `onFailure`: a handler's own
+     * change starts nothing, so a job that names itself, or a pair that name
+     * each other, terminates rather than recursing. The refusal is logged.
+     */
+    onChange?: string;
+
+    /**
      * Try again when this job fails: how many attempts in total, and the fixed
      * wait between them.
      *

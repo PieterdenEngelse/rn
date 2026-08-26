@@ -303,6 +303,12 @@ export function createApp() {
                     // path, and the user only finds out which they had when
                     // the job fails.
                     ...(j.onFailure === undefined ? {} : { onFailure: j.onFailure }),
+                    // And the path that carries the news. Worth surfacing more
+                    // than the failure one, not less: an unwired failure path
+                    // is invisible and harmless, while a job whose whole point
+                    // is to tell you something, wired to nothing, still looks
+                    // like a job that is working.
+                    ...(j.onChange === undefined ? {} : { onChange: j.onChange }),
                     // Whether a hook is configured and whether its secret is
                     // there — never the secret, and never the URL. A tunnel
                     // address is a bearer capability: anyone holding it can

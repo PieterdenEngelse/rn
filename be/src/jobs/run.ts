@@ -257,9 +257,79 @@ async function runFailureHandler(job: Job, failure: JobRun, isHandler: boolean):
 
     try {
         await runJob(handler, "failure", failure);
-    } catch {
-        // Already recorded and logged as the handler's own failed run by the
-        // nested call. Swallowed here so the original error survives.
+    } catch (err) {
+        // Swallowed so the original error survives — the answer to "why did my
+        // job fail" must not be replaced by a message about a different job.
+        //
+        // But not swallowed *silently*, and the distinction matters more than
+        // it looks. A handler that runs and throws is already recorded as its
+        // own failed run by the nested call. A handler that never starts is
+        // not: the credential and input checks in `runJob` come before the
+        // record, deliberately, so a handler naming an unconfigured credential
+        // throws with nothing written down at all.
+        error("on-failure-failed", {
+            id: job.id,
+            handler: job.onFailure,
+            error: secrets.redact(err instanceof Error ? err.message : String(err)),
+        });
+    }
+}
+
+/**
+ * Hand off to the job named by `onChange`, when this run changed something.
+ *
+ * Deliberately a near-copy of `runFailureHandler` rather than the two folded
+ * into one parameterised function. They differ in the two places that matter —
+ * which trigger the handler's record carries, and what "already a handler"
+ * means — and a shared implementation would have to be told both, at every call
+ * site, to save eight lines. The pair being obviously symmetrical is worth more
+ * than the pair being one thing.
+ *
+ * `isHandler` is true when this run is itself answering another job, whether by
+ * failing or by changing. That is the one-hop rule, and it is why a job may
+ * name itself in `onChange` without recursing: the second run is a handler, so
+ * its own change starts nothing.
+ */
+async function runChangeHandler(job: Job, changed: JobRun, isHandler: boolean): Promise<void> {
+    if (job.onChange === undefined) return;
+
+    if (isHandler) {
+        warn("on-change-refused", {
+            id: job.id,
+            handler: job.onChange,
+            reason: "one hop only — this run is already a handler",
+        });
+        return;
+    }
+
+    const handler = jobById(job.onChange);
+    if (handler === undefined) {
+        // Same argument as the failure path, and it bites harder here. A typo
+        // in this id means the news never goes anywhere, and nothing else in
+        // the system would ever report it: the job it names does not exist, so
+        // it cannot fail, and the job that named it succeeded.
+        warn("on-change-missing", { id: job.id, handler: job.onChange });
+        return;
+    }
+
+    try {
+        await runJob(handler, "change", changed);
+    } catch (err) {
+        // Swallowed so a broken notifier cannot turn a job that worked into a
+        // job that failed — the change really did happen, and the record of it
+        // must not be rewritten by what came after.
+        //
+        // Reported all the same, and this is the path where it matters most.
+        // A notifier that *runs* and fails leaves its own failed run on the
+        // page; one that cannot start — an unconfigured `notifyWebhook` is the
+        // ordinary case — throws before `runJob` records anything, so the only
+        // symptom would be news that never arrives and a page that says
+        // everything worked.
+        error("on-change-failed", {
+            id: job.id,
+            handler: job.onChange,
+            error: secrets.redact(err instanceof Error ? err.message : String(err)),
+        });
     }
 }
 
@@ -557,7 +627,11 @@ export async function runJob(
                 ...(skipped === undefined ? {} : { skipped }),
                 ...summary,
             });
-            record({
+            // Named rather than passed inline, for the reason the failure path
+            // gives one line further down: it is also what the handler is
+            // handed, and a handler told only "something changed" cannot say
+            // which job, how long it took, or what it saw.
+            const completed: JobRun = {
                 jobId: job.id,
                 startedAt: started,
                 ms: Date.now() - started,
@@ -573,7 +647,24 @@ export async function runJob(
                 input: secrets.scrub(input),
                 ...(cause === undefined ? {} : { causedBy: cause.jobId }),
                 ...(webhook === undefined ? {} : { delivery: webhook.delivery }),
-            });
+            };
+            record(completed);
+
+            // `changed`, and nothing else. A run that found nothing to do, was
+            // skipped, or was disarmed reports false, and a handler that fired
+            // on all of those would be a nightly message saying nothing
+            // happened — which is the message people mute, taking the real one
+            // with it.
+            //
+            // Awaited rather than left to run behind us, matching the failure
+            // path: the job stays registered as in-flight until its handler is
+            // done, so a restart waits for the notification as well as for the
+            // work. A handler that is the job itself is refused by the
+            // one-run-at-a-time rule rather than recursing, which is a second
+            // fence behind the one-hop check inside.
+            if (result.changed) {
+                await runChangeHandler(job, completed, cause !== undefined);
+            }
             return result;
         } catch (err) {
             // Logged here rather than left to the caller: a job that fails at
