@@ -229,6 +229,19 @@ export function resetHooksHealth(): void {
  * every other kind of automation still runs without them, and the API is how
  * anyone finds out something is wrong — killing it is the one outcome that
  * guarantees nobody is told.
+ *
+ * **Testing this will mislead you, so it is written down here.** The API and
+ * this listener are deliberately asymmetric: an occupied API port exits
+ * EXIT_FATAL, an occupied hooks port does not exit at all. Squat the hooks port,
+ * start a backend, and the correct outcome is a `hooks-listen-failed` warning
+ * and a process that keeps running — so anyone who tests it by waiting for the
+ * process to end waits forever and reports a hang.
+ *
+ * That is not hypothetical. It is what the author of the original bug did when
+ * checking this very fix, and the conclusion drawn from a two-minute wait was
+ * that the fix was broken rather than that the expectation was. The test to run
+ * is "does the API still answer, and does /api/health say degraded" — not "did
+ * it stop".
  */
 export function startHooks(
     server: ReturnType<typeof createHookApp>,
