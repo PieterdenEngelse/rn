@@ -10,7 +10,7 @@ use rn::node_command::NodeCommand;
 use rn::pidfile;
 use rn::settings;
 use rn::shutdown;
-use rn::EXIT_RESTART;
+use rn::{EXIT_FATAL, EXIT_RESTART};
 use std::time::{Duration, Instant};
 
 /// Give up if the child dies this many times in quick succession — a crash loop
@@ -394,6 +394,12 @@ fn supervise(layout: &Layout, params: &[settings::RuntimeParam]) -> Result<(), S
             Some(0) => {
                 println!("rn: stopped");
                 return Ok(());
+            }
+            // Asked not to be restarted. The child has already explained
+            // itself on stderr — repeating "Node exited with 78" over it would
+            // bury the one line worth reading.
+            Some(EXIT_FATAL) => {
+                return Err("the backend cannot start. See the reason above.".to_string());
             }
             other => {
                 if started.elapsed() > RAPID_WINDOW {

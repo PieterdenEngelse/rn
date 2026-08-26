@@ -184,3 +184,79 @@ export function handle(deliveries: DeliveryLog) {
 export function createHookApp(deliveries: DeliveryLog = makeDeliveryLog()) {
     return createServer(handle(deliveries));
 }
+
+/**
+ * Whether the hooks listener is actually up, and why not when it is not.
+ *
+ * The API is asked "are you listening?" and answers by replying at all. This
+ * listener cannot be asked that way: it has one route, it is the port a tunnel
+ * points at, and giving it a GET endpoint would add a surface to the one part
+ * of rn a stranger can reach — see the module doc above, and docs/token-sec.md
+ * on why an outward-facing port should disclose nothing it does not have to.
+ *
+ * So its state is reported *by the API instead*, from inside the same process.
+ * `server.listening` is the socket's own flag rather than a claim about it, and
+ * unlike the live handle list it is available under every runtime.
+ */
+export interface HooksHealth {
+    listening: boolean;
+    port: number;
+    /** Set when binding failed. The reason a delivery would not arrive. */
+    error: string | null;
+}
+
+let health: HooksHealth = { listening: false, port: 0, error: null };
+
+export function hooksHealth(): HooksHealth {
+    return { ...health };
+}
+
+/** Test seam. */
+export function resetHooksHealth(): void {
+    health = { listening: false, port: 0, error: null };
+}
+
+/**
+ * Bind the hooks listener, and survive failing to.
+ *
+ * A failed bind used to take the whole backend with it: `listen` emits `error`,
+ * nothing was listening for it, and an unhandled `error` event throws. The
+ * common cause is EADDRINUSE, which a restart cannot fix — so the launcher's
+ * crash-loop guard would give up and the entire app would be down because a
+ * webhook port was occupied.
+ *
+ * Degrading is strictly better here. Webhooks are one trigger among several,
+ * every other kind of automation still runs without them, and the API is how
+ * anyone finds out something is wrong — killing it is the one outcome that
+ * guarantees nobody is told.
+ */
+export function startHooks(
+    server: ReturnType<typeof createHookApp>,
+    port: number,
+    host: string,
+    onListening?: () => void,
+): void {
+    health = { listening: false, port, error: null };
+
+    server.on("error", (err: NodeJS.ErrnoException) => {
+        health = {
+            listening: false,
+            port,
+            error: err.code === "EADDRINUSE"
+                ? `port ${port} is already in use`
+                : (err.message ?? String(err)),
+        };
+        warn("hooks-listen-failed", {
+            port,
+            code: err.code ?? null,
+            // Named as a consequence, not just a fault: what stops working is
+            // the part worth reading in a log at 03:00.
+            effect: "webhook deliveries will not arrive; every other trigger is unaffected",
+        });
+    });
+
+    server.listen(port, host, () => {
+        health = { listening: true, port, error: null };
+        onListening?.();
+    });
+}

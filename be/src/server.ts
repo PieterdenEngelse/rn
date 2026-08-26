@@ -30,7 +30,7 @@ import {
     type Settings,
 } from "./settings.ts";
 import { config, remoteBindRefusal } from "./config.ts";
-import { createHookApp } from "./hooks/server.ts";
+import { createHookApp, hooksHealth, startHooks } from "./hooks/server.ts";
 import { describeEnv } from "./env-file.ts";
 import * as secrets from "./secrets.ts";
 import { display as displayPath } from "./paths.ts";
@@ -40,6 +40,16 @@ import { display as displayPath } from "./paths.ts";
  * launcher/src/lib.rs — the two halves of one protocol.
  */
 const EXIT_RESTART = 75;
+
+/**
+ * Exit code that tells the launcher not to restart us. Must match EXIT_FATAL in
+ * launcher/src/lib.rs — the other half of the same protocol.
+ *
+ * Used for a failure a restart cannot fix. The API's port being occupied is the
+ * whole of that category in practice: retrying binds the same address to the
+ * same taken port, five times, half a second apart.
+ */
+const EXIT_FATAL = 78;
 import { step, debug, error } from "./log.ts";
 import * as running from "./running.ts";
 import {
@@ -126,7 +136,16 @@ export function createApp() {
         }
 
         if (url.pathname === "/api/health") {
-            send(res, 200, { status: "ok", node: process.version });
+            // The hooks listener cannot answer for itself — it has one route
+            // and is the port a tunnel points at, so it is deliberately not
+            // given a GET. Reported from here instead, in the same process,
+            // from the socket's own `listening` flag.
+            const hooksState = hooksHealth();
+            send(res, 200, {
+                status: hooksState.error === null ? "ok" : "degraded",
+                node: process.version,
+                hooks: hooksState,
+            });
             return done(200);
         }
 
@@ -643,11 +662,41 @@ installSignalHandlers(server);
 const hooks = createHookApp();
 // The second front door onto runJob. Started after listen so a slow boot
 // cannot fire a job before the API can report that it is running.
+/**
+ * A bind failure on the API is terminal, and the asymmetry with the hooks
+ * listener is deliberate.
+ *
+ * The hooks listener degrades because everything else still works without it.
+ * This one cannot: the API is the only way anything — the frontend, the
+ * launcher's status, a person with curl — learns what the process is doing. A
+ * backend that is running and unreachable is worse than one that stopped and
+ * said why, because only the second gets investigated.
+ *
+ * So it explains itself and exits EXIT_FATAL, which asks the launcher not to
+ * retry. Before this the event was unhandled: Node threw, the supervisor read
+ * an ordinary crash, and the operator got five restarts and a message about
+ * their frequency rather than the sentence below.
+ */
+server.on("error", (err: NodeJS.ErrnoException) => {
+    const cause = err.code === "EADDRINUSE"
+        ? `${config.host}:${config.port} is already in use — another rn, or something else holding the port`
+        : err.code === "EACCES"
+        ? `not allowed to bind ${config.host}:${config.port} — ports below 1024 need privileges`
+        : (err.message ?? String(err));
+    error("listen-failed", { host: config.host, port: config.port, code: err.code ?? null, cause });
+    // stderr as well as the log: the launcher prints this straight through, and
+    // it is the line someone starting rn by hand actually sees.
+    process.stderr.write(`rn: cannot start the API — ${cause}\n`);
+    process.exit(EXIT_FATAL);
+});
+
 server.listen(config.port, config.host, () => {
     // Same host as the API, so the guard above covers both. Started here rather
     // than independently because a hooks port that outlives the API would take
     // deliveries for a process that can no longer report what it did with them.
-    hooks.listen(config.hooksPort, config.host, () => {
+    // startHooks rather than hooks.listen: a failed bind here used to throw an
+    // unhandled error event and take the API down with it. See its doc.
+    startHooks(hooks, config.hooksPort, config.host, () => {
         step("hooks-listening", {
             url: `http://${config.host}:${config.hooksPort}`,
             route: "POST /api/hooks/:id",
