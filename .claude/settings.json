@@ -1,6 +1,10 @@
 {
   "worktree": {
     "baseRef": "head",
-    "symlinkDirectories": ["fe/node_modules", "fe/target"]
+    "symlinkDirectories": [
+      "be/node_modules",
+      "fe/node_modules",
+      "fe/target"
+    ]
   }
 }
