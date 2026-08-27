@@ -1,0 +1,3 @@
+#!/bin/bash
+# Shorthand for the launcher — keeps the path in one place.
+exec "$(dirname "$0")/../target/debug/rn" "$@"
