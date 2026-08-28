@@ -70,8 +70,8 @@ pub fn Sparkline(
     /// whose height is set by the font and not by how tall the plot happens to
     /// be. CSS `max()` resolves the two against each other at layout time,
     /// which is the only place both are known.
-    #[props(default = String::from("3.75rem"))]
-    label_min_gap: String,
+    #[props(default = 3.75)]
+    label_min_gap_rem: f64,
     /// A CSS length to shift the label gutter by, negative to lift it. The
     /// labels are placed against the plot's scale, which is the right anchor
     /// for where they point — but the block around each reading is taller than
@@ -132,13 +132,27 @@ pub fn Sparkline(
                 .partial_cmp(&value_top(&side_labels[*b]))
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
+        let n = order.len();
+        let gap = label_min_gap_rem;
         let mut tops = vec![String::new(); side_labels.len()];
         let mut above: Option<String> = None;
-        for i in order {
+        for (rank, i) in order.into_iter().enumerate() {
             let own = format!("{:.2}%", value_top(&side_labels[i]));
+            // Pushing down alone is not enough: two curves a few percent apart
+            // pushed the lower label clean out of the plot's box and onto
+            // whatever the board draws underneath — the reading then labelled a
+            // different section entirely, which is worse than the overprinting
+            // it was fixing. So each label is first held high enough to leave
+            // room for every label still below it, and only then pushed clear
+            // of the one above. The half is the block's own overhang: it is
+            // centred on its position, so its bottom edge sits half a gap
+            // lower.
+            let below = (n - 1 - rank) as f64;
+            let ceiling = format!("calc(100% - {:.2}rem)", (below + 0.5) * gap);
+            let own = format!("min({own}, {ceiling})");
             let placed = match above {
                 None => own,
-                Some(prev) => format!("max({own}, calc({prev} + {label_min_gap}))"),
+                Some(prev) => format!("max({own}, calc({prev} + {gap}rem))"),
             };
             tops[i] = placed.clone();
             above = Some(placed);
