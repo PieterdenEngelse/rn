@@ -399,6 +399,16 @@ interface Polled {
     label: string;
     feed?: ParsedFeed;
     error?: string;
+    /**
+     * What was actually thrown, kept beside the message it flattens to.
+     *
+     * The message is what the run record shows; this is what the permission
+     * hint is asked about, and the two are not interchangeable. A runtime
+     * identifies a refusal by its error *class*, which no feed URL can spoof —
+     * flatten first and that arm can never fire, leaving only the wording
+     * match, which is the arm most likely to change out from under us.
+     */
+    thrown?: unknown;
 }
 
 export const watchFeeds: Job = {
@@ -626,7 +636,12 @@ export const watchFeeds: Job = {
                 // One feed being unreachable must not cost the report from the
                 // others. Collected, counted, and thrown only if every one
                 // failed — see below.
-                return { url, label, error: err instanceof Error ? err.message : String(err) };
+                return {
+                    url,
+                    label,
+                    error: err instanceof Error ? err.message : String(err),
+                    thrown: err,
+                };
             }
         });
 
@@ -638,7 +653,10 @@ export const watchFeeds: Job = {
             // failure list rather than as a cheerful "nothing new".
             const first = failed[0]!.error ?? "unknown";
             const hosts = [...new Set(usable.map((u) => new URL(u).host))];
-            const hint = netPermissionHint(first, hosts);
+            // The thrown value, not the message: see Polled.thrown. It
+            // matters more here than it did for the wording — this answer
+            // decides whether the run is retried at all.
+            const hint = netPermissionHint(failed[0]!.thrown ?? first, hosts);
             const message =
                 `every feed failed (${polled.length}) — first: ${first}` +
                 (hint === undefined ? "" : `. ${hint}`);

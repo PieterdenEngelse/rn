@@ -63,6 +63,13 @@ const DENIAL_NAMES = new Set(["permissiondenied", "notcapable"]);
  * So: the error's own name, or the wording at the start of the message where a
  * runtime puts its class, or the phrase Deno actually produces — which carries
  * a space and a "to", and so cannot arrive inside a URL.
+ *
+ * The name arm is the one to protect. It is the only test a URL cannot spoof,
+ * and it is also the only one that survives Deno rewording its message — which
+ * is the change all three arms exist to be ready for. It only works if callers
+ * hand over what was *thrown* rather than the string it flattens to: both jobs
+ * keep the error beside its message for exactly this, and a caller that passes
+ * `err.message` silently gets the two weaker arms and no warning.
  */
 function isDenial(name: string, message: string): boolean {
     return (

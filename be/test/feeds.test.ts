@@ -475,6 +475,24 @@ test("a feed that is merely down is still retried", async () => {
     assert.equal(history.list()[0]?.attempts, 3);
 });
 
+test("a refusal identified only by its error class is still recognised", async () => {
+    // The arm that no URL can spoof: a runtime's own error class. Deno's
+    // wording is the thing we expect to change some day — that is the stated
+    // reason all three arms are kept — and if the class name is dropped on the
+    // way to the hint, the robust arm is decoration and only the fragile ones
+    // work.
+    globalThis.fetch = (async (): Promise<Response> => {
+        const err = new Error("net access denied by the runtime");
+        err.name = "NotCapable";
+        throw err;
+    }) as typeof fetch;
+
+    await assert.rejects(
+        runJob(noRetry, "manual", undefined, { feeds: "https://a.example/f.xml" }),
+        /add a\.example to the network allowlist/,
+    );
+});
+
 test("an ordinary failure is not dressed up as a permission problem", async () => {
     serve({});
     await assert.rejects(

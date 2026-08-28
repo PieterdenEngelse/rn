@@ -589,6 +589,13 @@ export const watchUpstreams: Job = {
             u: Upstream;
             latest?: string;
             error?: string;
+            /**
+             * What was thrown, beside the message it flattens to. The hint is
+             * asked about this rather than the message, so a runtime that
+             * identifies a refusal by its error class is recognised by that
+             * class — see the same field in watch-feeds.ts.
+             */
+            thrown?: unknown;
         }
 
         const checked: Checked[] = await pool(upstreams, async (u): Promise<Checked> => {
@@ -598,7 +605,7 @@ export const watchUpstreams: Job = {
                 // One registry being unreachable must not cost the report from
                 // the other two. Collected, counted, and thrown only if every
                 // single lookup failed — see below.
-                return { u, error: err instanceof Error ? err.message : String(err) };
+                return { u, error: err instanceof Error ? err.message : String(err), thrown: err };
             }
         });
 
@@ -613,7 +620,8 @@ export const watchUpstreams: Job = {
             // narrowed to npm should not be told to allowlist nodejs.org and
             // crates.io, which it never touched.
             const hint = netPermissionHint(
-                first,
+                // The thrown value, not the message it flattens to.
+                failed[0]!.thrown ?? first,
                 [...ecosystems].map((e) => ECOSYSTEM_HOSTS[e] ?? e),
             );
             const message =
