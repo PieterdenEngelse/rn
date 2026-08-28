@@ -326,9 +326,16 @@ export function itemKey(feed: string, rawId: string): string {
  * The same shape as `netPermissionHint` in `watch-upstreams`, with the hosts
  * taken from the feeds actually configured rather than from a fixed list —
  * which is the whole difference, since this job's hosts are whatever the user
- * typed. Folding the two together is worth doing once `docs/todo.md` item 2 has
- * actually executed that path; sharing a helper neither of them has watched run
- * would just make one unverified thing look like two.
+ * typed, which is the more general of the two shapes.
+ *
+ * They are still two functions, and `docs/todo.md` carries the item for folding
+ * them into one. Worth knowing before you touch this regex: the arm that
+ * actually fires has been watched now, on deno 2.9.5 with only rn's own ports
+ * granted, and it is `Requires net access` — not `PermissionDenied` and not
+ * `NotCapable`. All three stay anyway. That is Deno's wording to change, and a
+ * hint that quietly stops firing is worse than one that never fired, because
+ * the run then reports a bare permission error and the person reading it has no
+ * idea there is an allowlist.
  */
 function netPermissionHint(err: unknown, hosts: string[]): string | undefined {
     const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err);

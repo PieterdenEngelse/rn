@@ -409,6 +409,35 @@ test("every feed failing fails the run rather than reporting nothing new", async
     assert.match(String(history.list()[0]?.error), /every feed failed \(2\)/);
 });
 
+test("a Deno refusal is named as one, with the hosts to add", async () => {
+    // The wording is not a guess. Observed on deno 2.9.5 against a scratch
+    // backend granted only rn's own ports: every lookup fails with `Requires
+    // net access`, not `PermissionDenied` and not `NotCapable`. The other two
+    // arms stay in the regex — that is Deno's wording to change, and a hint
+    // that quietly stops firing leaves a bare permission error on the record
+    // with no mention that there is an allowlist at all.
+    globalThis.fetch = (async (): Promise<Response> => {
+        throw new Error(
+            'Requires net access to "a.example:443", run again with the --allow-net flag',
+        );
+    }) as typeof fetch;
+
+    await assert.rejects(
+        runJob(noRetry, "manual", undefined, { feeds: "https://a.example/f.xml" }),
+        // Named from the feeds configured, rather than from a fixed list: this
+        // job's hosts are whatever the user typed.
+        /add a\.example to the network allowlist/,
+    );
+});
+
+test("an ordinary failure is not dressed up as a permission problem", async () => {
+    serve({});
+    await assert.rejects(
+        runJob(noRetry, "manual", undefined, { feeds: "https://a.example/f.xml" }),
+        (err: Error) => !/network allowlist/.test(err.message),
+    );
+});
+
 test("a configuration too big for the window says so before it misbehaves", async () => {
     const many = Array.from({ length: 60 }, (_, i) => `https://f${i}.example/f.xml`);
     serve(Object.fromEntries(many.map((u) => [u, RSS])));

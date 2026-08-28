@@ -67,11 +67,20 @@ Deno error shapes, differing only in which hosts the message names. A third job
 that makes an outbound request writes it a third time, and the copy that goes
 stale is the one nobody is looking at.
 
-Deliberately not folded together yet, and the reason is item 1: neither copy has
-ever been executed. Sharing a helper that nothing has watched run would make one
-unverified thing look like two. Once item 1 has driven the refusal path under
-Deno for real, the verified copy becomes the shared one, taking its hosts as an
-argument.
+It was left duplicated on purpose until the refusal path had been watched
+rather than inferred — sharing a helper nothing has ever executed would make one
+unverified thing look like two. **That condition is now met.** Driven live on
+deno 2.9.5 against a scratch backend granted only rn's own ports, every lookup
+failed with `Requires net access to "nodejs.org:443"` — so of the three arms the
+regex tests, that is the one that actually fires, and the advice the hint gives
+was checked too: those hosts in `netAllowlist` plus a restart takes the same run
+to a clean report. Keep all three arms regardless; that is Deno's wording to
+change, and a hint that silently stops firing is worse than one that never did.
+
+So it is foldable now, and the shape is settled: `watch-feeds` takes its hosts
+as an argument, which is the general form, while `watch-upstreams` names three
+hosts inline. The remaining reason it has not been done is only that it wants
+both jobs in one tree, which is after both branches land.
 
 **The cost while it stands**: two regexes to keep in step, and a job author who
 copies the wrong one ships a message naming nodejs.org, registry.npmjs.org and
