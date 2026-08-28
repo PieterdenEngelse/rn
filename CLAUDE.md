@@ -321,22 +321,46 @@ containing the pattern, including this session's own, which has produced "the
 build is served", "the server was killed" and "two compiles are running", none
 of them true. Use `pgrep -x`.
 
-When a rebuild is genuinely needed, ask for one. Never start a second `dx serve`
-— it writes into the same target directory as the user's and has already
-produced a mismatched js/wasm pair that rendered a blank page.
+When a rebuild is genuinely needed in the tree someone else is serving, ask for
+one. Starting a second `dx serve` used to be banned outright, because it wrote
+into the same target directory as the user's and had already produced a
+mismatched js/wasm pair that rendered a blank page. `fe/serve.sh` now derives
+the build directory from the worktree's name, so that collision is gone and a
+worktree may serve itself — see The dev servers are the user's below.
 
 ## The dev servers are the user's
 
 The frontend dev server on **:1790** belongs to the user, who runs it in their
-own terminal with `fe/s`. Do not start it, and do not restart it after killing
-something — `dx serve` binds the port exclusively, so a session that starts one
-makes `./s` fail with `Address already in use` and the user cannot tell whose
-process took it.
+own terminal with `fe/s` from `~/rn`. Do not start *that* one, and do not
+restart it after killing something — `dx serve` binds the port exclusively, so
+a session that starts one makes `./s` fail with `Address already in use` and
+the user cannot tell whose process took it.
+
+**A worktree serves itself.** `dx` watches the directory it was started in and
+nothing else, so a session editing `~/cb` gets no hot reload from the server
+running out of `~/rn` — as far as that watcher is concerned the file never
+changed, and pressing `r` rebuilds a tree that has not been touched. That is
+not a fault to debug; it is what one watcher on one directory means. `./s`
+therefore takes its port and its build directory from the worktree's own name:
+
+| worktree | port | build directory |
+|---|---|---|
+| `~/rn` | 1790 | `~/.cache/rn-target` |
+| `~/ca` | 1791 | `~/.cache/rn-target-ca` |
+| `~/cb` | 1792 | `~/.cache/rn-target-cb` |
+| `~/cc` | 1793 | `~/.cache/rn-target-cc` |
+
+Those four ports are the ones `RN_CORS_ORIGIN` already allows, for `localhost`
+and `127.0.0.1` alike; a fifth worktree needs adding there too, or its fetches
+fail CORS while the page itself looks fine. The separate build directories are
+the point rather than tidiness: `rn-grid.service` exports one
+`CARGO_TARGET_DIR` into every pane, so without the override each server writes
+crate `fe` over the others' output.
 
 - To check the frontend compiles, run `cargo check` in `fe/`. It needs no port
   and is the answer nearly every time.
 - If you genuinely need a running server — a screenshot, reproducing a runtime
-  bug — take another port: `./serve.sh --port 1791`. Say which port you took.
+  bug — run `./s` in your own worktree and say which port that gave you.
 - Never run it detached (`setsid`, `nohup`, `disown`). A server that outlives
   your session is one the user cannot see, cannot stop from your transcript, and
   will not think to look for.
