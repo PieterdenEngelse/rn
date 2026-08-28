@@ -51,6 +51,25 @@ test("an ordinary network failure is not dressed up as a permission problem", ()
     }
 });
 
+test("the word inside a URL is not a refusal", () => {
+    // Both jobs put the URL they failed on into the message, and a URL is data:
+    // a feed address is typed by the user, and a crates.io lookup carries
+    // whatever a manifest names. A blog's tag feed at .../permissiondenied.atom
+    // is a plausible address rather than a contrived one, and matching it here
+    // reported a permission problem for an ordinary 404.
+    //
+    // It costs more than a wrong sentence once a caller treats this firing as a
+    // classification — a refusal cannot improve on a retry, while the 503 under
+    // a false positive is exactly what a retry is for.
+    for (const message of [
+        "404 Not Found from https://blog.example/tags/permissiondenied.atom",
+        "503 Service Unavailable from https://crates.io/api/v1/crates/notcapable",
+        "429 Too Many Requests from https://example.com/requires-net-access.xml",
+    ]) {
+        assert.equal(netPermissionHint(new Error(message), HOSTS), undefined, message);
+    }
+});
+
 test("something thrown that is not an Error is still read", () => {
     // A job cannot promise what a runtime throws, and a permission refusal that
     // arrived as a string would otherwise be the one case with no advice.
@@ -64,19 +83,19 @@ test("the hosts named are the ones the caller passes", () => {
     // The reason this takes an argument at all. The version it grew out of
     // hardcoded three, so a run narrowed to npm was told to allowlist two hosts
     // it never touched.
-    const one = netPermissionHint(new Error("Requires net access"), ["registry.npmjs.org"]);
+    const one = netPermissionHint(new Error('Requires net access to "x.example:443"'), ["registry.npmjs.org"]);
     assert.match(String(one), /add registry\.npmjs\.org to the network allowlist/);
     assert.doesNotMatch(String(one), /crates\.io/);
 
-    const two = netPermissionHint(new Error("Requires net access"), ["a.example", "b.example"]);
+    const two = netPermissionHint(new Error('Requires net access to "x.example:443"'), ["a.example", "b.example"]);
     assert.match(String(two), /add a\.example and b\.example to/);
 });
 
 test("a duplicated or empty host list still reads as a sentence", () => {
     // Two feeds on one host is ordinary, and the advice is to allowlist it once.
-    const dupes = netPermissionHint(new Error("Requires net access"), ["a.example", "a.example"]);
+    const dupes = netPermissionHint(new Error('Requires net access to "x.example:443"'), ["a.example", "a.example"]);
     assert.match(String(dupes), /add a\.example to the network allowlist/);
     // Nothing to name is not a reason to say "add  to the network allowlist".
-    const none = netPermissionHint(new Error("Requires net access"), []);
+    const none = netPermissionHint(new Error('Requires net access to "x.example:443"'), []);
     assert.match(String(none), /add the host it needs to the network allowlist/);
 });

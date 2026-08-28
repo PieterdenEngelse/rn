@@ -39,6 +39,39 @@
  * allowlist nodejs.org and crates.io is advice about two hosts it never touched.
  */
 
+/** Deno's own names for the two error classes a refused grant produces. */
+const DENIAL_NAMES = new Set(["permissiondenied", "notcapable"]);
+
+/**
+ * Is this a runtime refusal, as opposed to an error that merely contains the
+ * word somewhere?
+ *
+ * Anchored rather than searched, and the difference is not academic. Both jobs
+ * put the URL they failed on into the message — `404 Not Found from
+ * https://…` — and a URL is data: a feed address is typed by the user, and a
+ * crates.io lookup carries whatever a manifest names. A bare substring test
+ * over that message reported a permission problem for an ordinary 404 on
+ * `https://blog.example/tags/permissiondenied.atom`, which is a plausible feed
+ * rather than a contrived one.
+ *
+ * It matters more than a wrong sentence, because a caller may treat this
+ * firing as a *classification* — a permission grant is fixed when the process
+ * starts, so a refusal will not improve on a retry, while the 503 underneath a
+ * false positive is exactly what a retry is for. Getting this wrong that way
+ * turns a transient failure into one that is never tried again.
+ *
+ * So: the error's own name, or the wording at the start of the message where a
+ * runtime puts its class, or the phrase Deno actually produces — which carries
+ * a space and a "to", and so cannot arrive inside a URL.
+ */
+function isDenial(name: string, message: string): boolean {
+    return (
+        DENIAL_NAMES.has(name.trim().toLowerCase()) ||
+        /^\s*(?:PermissionDenied|NotCapable)\b/i.test(message) ||
+        /\brequires net access to\b/i.test(message)
+    );
+}
+
 /** "a", "a and b", "a, b and c" — the message reads as a sentence either way. */
 function readable(hosts: readonly string[]): string {
     const unique = [...new Set(hosts)].filter((h) => h !== "");
@@ -55,8 +88,9 @@ function readable(hosts: readonly string[]): string {
  * quietly produce a message with a trailing full stop and nothing after it.
  */
 export function netPermissionHint(err: unknown, hosts: readonly string[]): string | undefined {
-    const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
-    if (!/PermissionDenied|Requires net access|NotCapable/i.test(message)) return undefined;
+    const name = err instanceof Error ? err.name : "";
+    const message = err instanceof Error ? err.message : String(err);
+    if (!isDenial(name, message)) return undefined;
     return (
         `The runtime refused the outbound request. Under Deno, add ${readable(hosts)} to the ` +
         "network allowlist on Config → Connection and restart — the launcher grants Deno " +
