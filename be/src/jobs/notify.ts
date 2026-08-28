@@ -61,6 +61,7 @@
 
 import { outcome } from "./history.ts";
 import type { Job, JobContext, JobResult } from "./types.ts";
+import { PermanentFailure, isPermanentStatus } from "./permanent.ts";
 import type { JobRun } from "../generated/wire.ts";
 
 /** The body shapes, and what each one is for. */
@@ -267,8 +268,9 @@ export const notify: Job = {
         if (!FORMATS.includes(format as Format)) {
             // Before the credential is read and before anything is sent. A
             // typo must not become a 400 from a URL the record cannot show.
-            throw new Error(
+            throw new PermanentFailure(
                 `notify: "${format}" is not a body format — one of ${FORMATS.join(", ")}`,
+                "the input is wrong, and it is the same input on the next attempt",
             );
         }
 
@@ -307,7 +309,10 @@ export const notify: Job = {
             // Deliberately does not echo the value. A malformed URL is still a
             // credential, and "starts with" is enough to confirm a guess — see
             // docs/token-sec.md.
-            throw new Error("notify: notifyWebhook is not an http(s) URL");
+            throw new PermanentFailure(
+                "notify: notifyWebhook is not an http(s) URL",
+                "the credential is malformed, and nothing about waiting reformats it",
+            );
         }
 
         const res = await fetch(url, {
@@ -324,10 +329,19 @@ export const notify: Job = {
             // there ("invalid_payload"), and truncated because some put a whole
             // HTML page there.
             const detail = (await res.text().catch(() => "")).slice(0, 200);
-            throw new Error(
+            const message =
                 `notify: the webhook answered ${res.status} ${res.statusText}` +
-                    (detail === "" ? "" : ` — ${detail}`),
-            );
+                (detail === "" ? "" : ` — ${detail}`);
+            // A 5xx is the relay having a bad minute and is exactly what the
+            // three attempts are for. A 4xx is the receiver rejecting *this
+            // request*, and the request is byte-identical next time.
+            if (isPermanentStatus(res.status)) {
+                throw new PermanentFailure(
+                    message,
+                    "the receiver rejected the request itself, and it is the same request each time",
+                );
+            }
+            throw new Error(message);
         }
 
         ctx.step("sent", { format, bytes: request.body.length, status: res.status });

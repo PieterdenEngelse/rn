@@ -430,6 +430,51 @@ test("a Deno refusal is named as one, with the hosts to add", async () => {
     );
 });
 
+test("a Deno refusal fails on the first attempt rather than three", async () => {
+    let calls = 0;
+    globalThis.fetch = (async (): Promise<Response> => {
+        calls += 1;
+        throw new Error(
+            'Requires net access to "a.example:443", run again with the --allow-net flag',
+        );
+    }) as typeof fetch;
+
+    const started = Date.now();
+    // The shipped job, retry: 3 / 30s and all. Under the old behaviour this
+    // test took a minute to ask a fixed permission grant the same question
+    // three times.
+    await assert.rejects(
+        runJob(watchFeeds, "manual", undefined, { feeds: "https://a.example/f.xml" }),
+        /network allowlist/,
+    );
+
+    assert.equal(calls, 1, "asked once");
+    assert.ok(Date.now() - started < 5_000, "no backoff was served");
+    const [run] = history.list();
+    assert.equal(run?.attempts, 1);
+    const [skipped] = (run?.steps ?? []).filter((s) => s.name === "retry-skipped");
+    assert.match(String(skipped?.detail.reason), /fixed at startup/);
+});
+
+test("a feed that is merely down is still retried", async () => {
+    let calls = 0;
+    globalThis.fetch = (async (): Promise<Response> => {
+        calls += 1;
+        throw new Error("connect ECONNREFUSED");
+    }) as typeof fetch;
+
+    // The counterpart to the test above, and the reason the marker is per
+    // error rather than per job: this is the same job and the same failure
+    // path, and it gets every one of its attempts.
+    const fast: Job = { ...watchFeeds, retry: { attempts: 3, backoffMs: 0 } };
+    await assert.rejects(
+        runJob(fast, "manual", undefined, { feeds: "https://a.example/f.xml" }),
+        /ECONNREFUSED/,
+    );
+    assert.equal(calls, 3);
+    assert.equal(history.list()[0]?.attempts, 3);
+});
+
 test("an ordinary failure is not dressed up as a permission problem", async () => {
     serve({});
     await assert.rejects(

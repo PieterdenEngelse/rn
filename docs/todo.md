@@ -10,42 +10,13 @@ item.
 
 ---
 
-## 1. A permanent rejection is retried as if it were transient
-
-`notify` declares `retry: { attempts: 3, backoffMs: 15_000 }`, which is right
-for the failures it was written for — a 502 from a webhook relay, a phone off
-wifi. It is wrong for a 400. A receiver that says `invalid_payload` will say it
-again in fifteen seconds and again in thirty, and the run takes ninety seconds
-to conclude what it knew immediately.
-
-Found while writing the tests, where every failure case sat through the full
-sequence. The tests now use a copy of the job with the policy removed and pin
-the real policy separately, so the suite is fast — but that is the test working
-around the behaviour, not the behaviour being right.
-
-**Why it is not fixed here**: the runner's retry loop is generic and a job has
-no way to say "this one will not get better". `UnretryableError` exists inside
-`run.ts` for the abort case and is not something a job can throw. The honest
-options are to let a job mark an error as permanent, or to let a job supply a
-predicate — and neither is worth designing off one case. A second job that
-talks to an HTTP API will say which.
-
-The cost while it stands is bounded and visible: ninety seconds, three attempts
-on the record, and the parent job held in flight for that long because
-`onChange` is awaited.
-
-**A second case, now observed rather than reasoned about.** Verifying the Deno
-refusal path (the old item 2) produced exactly this shape from a different
-direction: a runtime permission denial is permanent by construction — the grant
-is fixed at spawn and cannot change while the process lives — and
-`watch-upstreams` still spent **60.2s and three attempts** on it, with two
-30-second waits recorded as `retry` steps between three identical
-`Requires net access to "nodejs.org:443"` failures. So the "second job that
-talks to an HTTP API" this item was waiting on is no longer the only way in:
-there are two classes of never-going-to-improve error now, and a permission
-denial is the easier of the two to recognise, since `netPermissionHint()` —
-now one shared function in `be/src/jobs/net-permission.ts` rather than a copy
-per job — already has the predicate that identifies it.
+**Nothing is open right now.** That is a real state rather than a lost file:
+the three items that were here — the Deno refusal nobody had watched happen,
+the all-or-nothing job memory, and the retry policy that could not be told an
+error was permanent — were each closed by doing the thing they asked for. New
+items go here, numbered from 1, and they arrive the way every one of those did:
+by building something and running into it. The decisions below are a different
+list and are still waiting.
 
 ---
 

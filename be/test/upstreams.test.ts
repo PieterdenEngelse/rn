@@ -200,6 +200,50 @@ test("an unknown ecosystem is named rather than silently dropped", async () => {
     assert.notEqual(named, undefined, "a typo'd ecosystem must appear in the trace");
 });
 
+test("a Deno refusal fails on the first attempt rather than three", async () => {
+    // fetch is replaced, so this still makes no network request — the point is
+    // the branch, not the registry. The wording was observed on deno 2.9.5
+    // against a scratch backend granted only rn's own ports.
+    const realFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = (async (): Promise<Response> => {
+        calls += 1;
+        throw new Error(
+            'Requires net access to "nodejs.org:443", run again with the --allow-net flag',
+        );
+    }) as typeof fetch;
+
+    const started = Date.now();
+    try {
+        await assert.rejects(
+            // The shipped job, with its real retry: 3 / 30s policy. That is the
+            // assertion — under the old behaviour this test took ninety seconds
+            // and asked the runtime the same refused question three times.
+            runJob(watchUpstreams, "manual", undefined, {
+                root: findRepoRoot(import.meta.dirname) ?? "",
+                ecosystems: "npm",
+            }),
+            /network allowlist/,
+        );
+    } finally {
+        globalThis.fetch = realFetch;
+    }
+
+    assert.ok(Date.now() - started < 5_000, "no backoff was served");
+    const [run] = history.list();
+    assert.equal(run?.attempts, 1);
+    const [skipped] = (run?.steps ?? []).filter((s) => s.name === "retry-skipped");
+    assert.match(
+        String(skipped?.detail.reason),
+        /fixed at startup/,
+        "and the record says why it only tried once",
+    );
+    // Narrowed to npm, so the advice names registry.npmjs.org and not the two
+    // hosts this run never touched.
+    assert.match(String(run?.error), /add registry\.npmjs\.org to the network allowlist/);
+    assert.ok(calls > 0, "the job did reach the fetch");
+});
+
 // The runner rule this job's cursor depends on — committed only on success,
 // discarded on failure, withheld under dry run — is pinned in state.test.ts,
 // which is where the store's contract lives. Duplicating it here would mean

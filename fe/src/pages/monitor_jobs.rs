@@ -165,7 +165,7 @@ const STEPS_WHAT: &str =
      reported. The shape is JobStep in shared/src/jobs.rs, so this list and the backend's \
      record cannot disagree about it.\n\nThe trigger column says how each run started: manual, \
      schedule, or \"on failure of <a job>\" for a run that exists because another job failed \
-     and named this one as its handler. See the on-failure button on that job's row.\n\nA run      that shows an attempt count retried: its trace carries a retry entry per attempt that      failed, with the error that attempt hit, since the record itself keeps only the last one.      A retry-abandoned entry means the opposite — the runner declined to try again because the      timed-out attempt was still running, and a second copy would have overlapped it.";
+     and named this one as its handler. See the on-failure button on that job's row.\n\nA run      that shows an attempt count retried: its trace carries a retry entry per attempt that      failed, with the error that attempt hit, since the record itself keeps only the last one.      A retry-abandoned entry means the opposite — the runner declined to try again because the      timed-out attempt was still running, and a second copy would have overlapped it. A      retry-skipped entry is the third case: the job itself said the error would not get      better — a 4xx, a bad input, a permission the runtime cannot widen while it runs — so a      run with retry: 3 that shows one attempt and a reason is working correctly.";
 
 const STEPS_WHY: &str =
     "It is the difference between a verdict and a record. A failed run's message says the last \

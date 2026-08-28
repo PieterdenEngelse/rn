@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join, isAbsolute } from "node:path";
 import { runJob, ABORT_GRACE_MS, STEP_HEAD, STEP_TAIL, STEP_TRUNCATED } from "../src/jobs/run.ts";
 import { JOBS, jobById, resolveInput } from "../src/jobs/index.ts";
+import { PermanentFailure, isPermanentStatus } from "../src/jobs/permanent.ts";
 import * as scheduler from "../src/jobs/scheduler.ts";
 import * as history from "../src/jobs/history.ts";
 import * as jobState from "../src/jobs/state.ts";
@@ -1150,6 +1151,92 @@ test("the errors the earlier attempts hit survive in the trace", async () => {
     assert.deepEqual(retries.map((s) => s.detail.error), ["boom 1", "boom 2"]);
     assert.deepEqual(retries.map((s) => s.detail.attempt), [1, 2]);
     assert.equal(run!.attempts, 3);
+});
+
+test("a failure the job calls permanent is not retried", async () => {
+    let calls = 0;
+    const job = probe({
+        retry: { attempts: 3, backoffMs: 60_000 },
+        async run() {
+            calls += 1;
+            throw new PermanentFailure("invalid_payload", "the receiver rejected the request");
+        },
+    });
+    const started = Date.now();
+    await assert.rejects(runJob(job), /invalid_payload/);
+
+    assert.equal(calls, 1, "one attempt, not three");
+    // The backoff is a minute. Without the branch this test would take two.
+    assert.ok(Date.now() - started < 1_000, "and no wait was served");
+
+    const [run] = history.list();
+    assert.equal(run!.attempts, 1);
+    assert.equal(run!.steps.filter((s) => s.name === "retry").length, 0);
+});
+
+test("skipping the retries says why, rather than looking like a policy that did not apply", async () => {
+    const job = probe({
+        retry: { attempts: 3, backoffMs: 0 },
+        async run() {
+            throw new PermanentFailure("boom", "the input is wrong and will be wrong next time");
+        },
+    });
+    await assert.rejects(runJob(job));
+
+    // The same obligation retry-abandoned has: a job that declares three
+    // attempts and takes one has to answer "why did it only run once".
+    const [skipped] = history.list()[0]!.steps.filter((s) => s.name === "retry-skipped");
+    assert.equal(skipped?.detail.reason, "the input is wrong and will be wrong next time");
+    assert.equal(skipped?.detail.error, "boom");
+    assert.equal(skipped?.detail.attempt, 1);
+    assert.equal(skipped?.detail.of, 3);
+    assert.equal(skipped?.detail.waitMs, 0, "the wait that did not happen is the point");
+});
+
+test("a permanent failure marks one error, not one job", async () => {
+    // The policy is still in force for everything else the same job can hit.
+    let calls = 0;
+    const job = probe({
+        retry: { attempts: 3, backoffMs: 0 },
+        async run() {
+            calls += 1;
+            if (calls === 1) throw new Error("a bad minute");
+            if (calls === 2) return { summary: { files: 1 }, changed: true };
+            throw new Error("unreachable");
+        },
+    });
+    await runJob(job);
+    assert.equal(calls, 2, "the transient failure was retried as before");
+});
+
+test("a job with no retry policy that fails permanently records no skip", async () => {
+    // Nothing was skipped: there was no second attempt to decline. A step here
+    // would be an explanation for something that did not need one.
+    const job = probe({
+        async run() {
+            throw new PermanentFailure("boom", "never going to work");
+        },
+    });
+    await assert.rejects(runJob(job));
+    const [run] = history.list();
+    assert.equal(run!.attempts, 1);
+    assert.equal(run!.steps.filter((s) => s.name === "retry-skipped").length, 0);
+});
+
+test("4xx is permanent, 5xx is not, and the two 4xx that ask you to try again are not", () => {
+    for (const s of [400, 401, 403, 404, 409, 410, 422]) {
+        assert.equal(isPermanentStatus(s), true, `${s} is the receiver refusing this request`);
+    }
+    // 4xx by numbering, transient by meaning: one says it gave up waiting, the
+    // other asks for the same request later.
+    assert.equal(isPermanentStatus(408), false);
+    assert.equal(isPermanentStatus(429), false);
+    for (const s of [500, 502, 503, 504]) {
+        assert.equal(isPermanentStatus(s), false, `${s} is what the retry policy is for`);
+    }
+    // Not a failure at all — the callers only ask about !res.ok, but the
+    // function must not claim a success is permanently broken.
+    assert.equal(isPermanentStatus(200), false);
 });
 
 test("a successful first attempt never waits", async () => {

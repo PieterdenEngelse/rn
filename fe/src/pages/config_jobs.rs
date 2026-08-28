@@ -382,7 +382,14 @@ const RETRY_WHAT: &str =
      wait rather than a growing one. Exponential backoff earns its keep against a shared \
      service that needs the pressure taken off; these jobs are mostly local, and what is \
      worth having instead is a worst case you can state without arithmetic — which is the \
-     \"up to\" figure on this row.";
+     \"up to\" figure on this row.\n\nSome failures are not retried at all. A job can mark an \
+     error as permanent — a 4xx from a receiver that rejected the request itself, a malformed \
+     input, a network permission the runtime cannot widen while it is running — and the \
+     runner stops on the spot and writes retry-skipped into the step trace with the reason. \
+     The policy still covers every other failure the same job can hit: it marks one error, \
+     not one job. The \"up to\" figure is unchanged, because it is a worst case and this is \
+     the best one — notify used to spend ninety seconds on a 400 to conclude what the first \
+     answer already said.";
 
 const RETRY_WHY: &str =
     "Without it a transient failure costs a full cycle. A job on a daily schedule that fails \
