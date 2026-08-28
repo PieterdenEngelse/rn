@@ -74,6 +74,7 @@ pub fn export_all(cfg: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     HistoryTier::export_all(cfg)?;
     NodeHistory::export_all(cfg)?;
     JobSource::export_all(cfg)?;
+    StateResetResponse::export_all(cfg)?;
     RunsResponse::export_all(cfg)?;
 
     ConnectionResponse::export_all(cfg)?;

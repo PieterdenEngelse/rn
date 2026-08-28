@@ -6,7 +6,8 @@
 
 use super::wire::{
     ConnectionResponse, EnvResponse, HealthResponse, JobErrors, JobRunResult, JobSource, JobsResponse, NodeHistory, NodeMetrics,
-    ParamsResponse, RestartOutcome, RunsResponse, SaveResponse, StatusResponse, StopOutcome,
+    ParamsResponse, RestartOutcome, RunsResponse, SaveResponse, StateResetResponse, StatusResponse,
+    StopOutcome,
 };
 
 /// Base URL of the backend API. In development the frontend is served by
@@ -304,6 +305,39 @@ pub async fn run_job(id: &str, input: &serde_json::Value) -> Result<JobRunResult
             .unwrap_or("the run failed")
             .to_string()),
         Err(_) => Err(format!("the run failed ({})", resp.status())),
+    }
+}
+
+/// Forget one job's memory — its cursors and its window of seen item ids.
+///
+/// Scoped to one job on purpose. What this replaces was telling people to
+/// delete `~/.config/rn/job-state.json`, which is the same act aimed at every
+/// job at once: making one report start over also made every other polling job
+/// reprocess whatever its source still holds, quietly.
+///
+/// A 409 means the job is running. Its memory commits when the run ends, so a
+/// reset now would be overwritten by writes the caller cannot see — the backend
+/// refuses rather than reporting a reset that will not survive the minute.
+///
+/// Zeroes in the response are an ordinary answer, not a failure: a job that has
+/// never run remembers nothing, and `was_empty` is there so the page can say
+/// that in words rather than showing "0 cursors".
+pub async fn reset_job_state(id: &str) -> Result<StateResetResponse, String> {
+    let resp = gloo_net::http::Request::delete(&format!("{API_BASE}/api/jobs/{id}/state"))
+        .send()
+        .await
+        .map_err(|e| format!("{e}"))?;
+
+    if resp.ok() {
+        return resp.json::<StateResetResponse>().await.map_err(|e| format!("{e}"));
+    }
+    match resp.json::<serde_json::Value>().await {
+        Ok(v) => Err(v
+            .get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("the reset failed")
+            .to_string()),
+        Err(_) => Err(format!("the reset failed ({})", resp.status())),
     }
 }
 

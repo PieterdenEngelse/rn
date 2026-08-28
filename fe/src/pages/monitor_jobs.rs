@@ -1,7 +1,7 @@
 use crate::api::{
-    fetch_job_errors, fetch_job_source, fetch_jobs, fetch_runs, run_job, CatalogueJob, JobErrors, JobRun,
-    JobInput, JobInputType, JobRunResult, JobSource, JobStep, JobsResponse, Outcome,
-    ScheduledJob, Trigger,
+    fetch_job_errors, fetch_job_source, fetch_jobs, fetch_runs, reset_job_state, run_job,
+    CatalogueJob, JobErrors, JobRun, JobInput, JobInputType, JobRunResult, JobSource, JobStep,
+    JobsResponse, Outcome, ScheduledJob, StateResetResponse, Trigger,
 };
 use crate::components::param::PARAM_INPUT_ROW_CLASS;
 use crate::components::{InfoButton, Panel};
@@ -96,6 +96,38 @@ const ON_CHANGE_IF_WRONG: &str =
      on reporting the same change every run — and this handler with it. The handler is disarmed \
      too, so it reports rather than sends, but the repetition is the safety switch showing \
      through and not a fault in the job.";
+
+const FORGET_WHAT: &str =
+    "Removes what this job remembers between runs — its cursors, and its window of recently \
+     seen item ids — and reports how many of each it dropped. This job only: every other job's \
+     memory is untouched, which is the whole point of it.\n\nIt takes effect immediately and \
+     is written to ~/.config/rn/job-state.json straight away, so it survives a restart. There \
+     is no undo, and there is nothing to undo it from: the store keeps counts, never copies.";
+
+const FORGET_WHY: &str =
+    "Before this, the supported way to make a job start over was deleting \
+     ~/.config/rn/job-state.json — the same act aimed at every job at once. That was harmless \
+     while rn had one polling job, and became a trap the moment it had two: you delete the file \
+     to re-run one report and silently re-trigger the other job's entire backlog, with nothing \
+     anywhere reporting it, because a cursor that was never there looks exactly like a first \
+     run.\n\nThe thing worth understanding before you press it is what it does to the *next* \
+     run, which is the opposite of what people expect. Both polling jobs treat an absent cursor \
+     as a first look: they read the source, record where it stands, and deliberately announce \
+     nothing. So the run after a reset is quieter than usual, not louder. If what you want is \
+     the standing list reported, that is what the jobs' own inputs are for — 'Report everything \
+     already behind' on the upstream watcher, 'Report a new feed's existing entries' on the \
+     feed watcher.";
+
+const FORGET_IF_WRONG: &str =
+    "Pressing it while the job is running is refused, and says so. A run stages its memory and \
+     commits when it finishes, so a reset in the middle would be quietly overwritten seconds \
+     later — you would be told it worked and it would not have.\n\nA job that has never run \
+     reports 'nothing to forget' rather than a count of zero, because zero reads as a failure \
+     when it is in fact the correct answer.\n\nThe misuse to avoid is reaching for this to \
+     re-read a source you think was missed. It does not re-report anything; it makes the job \
+     forget it ever looked, and both jobs answer that by taking a silent first look. Reaching \
+     for it a second time when the first appears to have done nothing is how someone ends up \
+     resetting a job twice and still seeing no report.";
 
 const ON_FAILURE_WHAT: &str =
     "The id of another job that runs when this one fails. The runner catches the failure, \
@@ -263,8 +295,15 @@ fn JobRow(
             .collect::<std::collections::BTreeMap<String, serde_json::Value>>()
     });
 
+    // The reset is two clicks, not one. It destroys something with no copy
+    // kept, and a single cyan word sitting between "Error log" and "Run now" is
+    // exactly the shape of a thing people click to find out what it does.
+    let mut confirming = use_signal(|| false);
+    let mut forgotten: Signal<Option<Result<StateResetResponse, String>>> = use_signal(|| None);
+
     let source_id = job.id.clone();
     let errors_id = job.id.clone();
+    let forget_id = job.id.clone();
     let id = job.id.clone();
     let start = move |_| {
         let id = id.clone();
@@ -377,6 +416,48 @@ fn JobRow(
                         },
                         if showing_errors() { "Hide errors" } else { "Error log" }
                     }
+                    // Not offered as "disabled while running": the backend is
+                    // the authority on whether a reset can land, and it refuses
+                    // with a reason worth reading. Hiding the button would make
+                    // the rule invisible instead of teaching it.
+                    if confirming() {
+                        span { class: "text-gray-300 text-xs", "Forget this job's memory?" }
+                        button {
+                            class: "cursor-pointer",
+                            style: "color: #22d3ee;",
+                            onclick: move |_| {
+                                confirming.set(false);
+                                let id = forget_id.clone();
+                                spawn(async move {
+                                    forgotten.set(Some(reset_job_state(&id).await));
+                                });
+                            },
+                            "Forget"
+                        }
+                        button {
+                            class: "text-gray-300 hover:text-gray-100 cursor-pointer",
+                            onclick: move |_| confirming.set(false),
+                            "Cancel"
+                        }
+                    } else {
+                        button {
+                            class: "cursor-pointer",
+                            style: "color: #22d3ee;",
+                            onclick: move |_| {
+                                forgotten.set(None);
+                                confirming.set(true);
+                            },
+                            "Forget memory"
+                        }
+                    }
+                    // Inline beside its own control rather than in the info
+                    // column — the exception CLAUDE.md names.
+                    InfoButton {
+                        title: "Forget memory".to_string(),
+                        what: FORGET_WHAT.to_string(),
+                        why: FORGET_WHY.to_string(),
+                        if_wrong: FORGET_IF_WRONG.to_string(),
+                    }
                     button {
                         class: "text-blue-400 hover:text-blue-300 cursor-pointer disabled:cursor-default",
                         onclick: start,
@@ -393,6 +474,27 @@ fn JobRow(
 
             if !job.inputs.is_empty() {
                 InputForm { fields: job.inputs.clone(), draft }
+            }
+
+            // What the reset actually removed, in counts. The refusal case gets
+            // the backend's own sentence rather than a generic failure, because
+            // "wait for the run to finish" is the whole of what to do next.
+            match &*forgotten.read() {
+                Some(Ok(r)) if r.was_empty => rsx! {
+                    p { class: "mt-2 text-xs text-gray-300",
+                        "Nothing to forget — this job had not remembered anything yet."
+                    }
+                },
+                Some(Ok(r)) => rsx! {
+                    p { class: "mt-2 text-xs text-gray-300",
+                        "Forgot {plural(r.cursors, \"cursor\")} and {plural(r.ids, \"item id\")}. \
+                         The next run reads the source as if for the first time, and reports nothing."
+                    }
+                },
+                Some(Err(e)) => rsx! {
+                    p { class: "mt-2 text-xs text-red-400", "{e}" }
+                },
+                None => rsx! {},
             }
 
             if outcome.read().is_none() {
@@ -1163,6 +1265,15 @@ fn FailureRow(run: JobRun, alt: bool) -> Element {
 }
 
 /// "5m", "30m", "2h" — a ceiling stated the way a person would say it.
+/// "1 cursor", "2 cursors" — the count and its noun, agreeing.
+///
+/// Separate from the sentence because the two numbers pluralise independently:
+/// "Forgot 1 cursor and 40 item ids" is the ordinary case for a feed watcher,
+/// and a single `s` appended to both is the version that reads as a bug.
+fn plural(n: u32, noun: &str) -> String {
+    if n == 1 { format!("{n} {noun}") } else { format!("{n} {noun}s") }
+}
+
 pub(crate) fn duration(ms: f64) -> String {
     let secs = (ms / 1000.0).round() as i64;
     if secs < 60 {

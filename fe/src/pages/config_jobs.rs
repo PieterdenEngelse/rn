@@ -605,10 +605,13 @@ const STATE_IF_WRONG: &str =
      oldest id falls off when the cap is passed, and an item whose id has aged out is new \
      again — so a source that emits more than the cap between two runs needs a timestamp cursor \
      instead. It works for months and then reprocesses a backlog after one outage, at which \
-     point nobody suspects the cap.\n\nDeleting ~/.config/rn/job-state.json is the supported \
-     way to make a job report from scratch, and there is no way back: the next run treats \
-     everything its source still holds as new. Nothing else notices the file is gone, because \
-     an absent cursor is exactly what a first run looks like.";
+     point nobody suspects the cap.\n\nOne job's memory is cleared from its row on Monitor → \
+     Jobs — 'Forget memory', which removes that job's cursors and item ids and no other \
+     job's. Deleting ~/.config/rn/job-state.json still works and is the whole-store version of \
+     the same act: it makes every polling job start over at once, which is rarely what someone \
+     re-running one report meant. Either way there is no way back, and the next run is quieter \
+     rather than louder — an absent cursor is what a first run looks like, and both polling \
+     jobs answer a first look by recording where the source stands and reporting nothing.";
 
 const HISTORY_IF_WRONG: &str =
     "Too small and the evidence is gone before you go looking — a job on a fifteen-minute \

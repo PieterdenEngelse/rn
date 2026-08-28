@@ -439,6 +439,47 @@ export function stats(): { jobs: number; cursors: number; ids: number } {
     };
 }
 
+/** What a targeted reset removed. Counts, because the store never reveals values. */
+export interface Forgotten {
+    cursors: number;
+    ids: number;
+}
+
+/**
+ * Forget everything one job remembers, and say how much that was.
+ *
+ * The alternative was deleting `~/.config/rn/job-state.json`, which is the same
+ * act aimed at every job at once: making one job start over also made every
+ * other polling job reprocess whatever its source still holds. That was
+ * tolerable while rn had one polling job and stopped being tolerable when it
+ * had two, which is the whole reason this exists.
+ *
+ * **Idempotent, and a job with nothing stored is not an error.** `{cursors: 0,
+ * ids: 0}` is the honest answer for a job that has never run, and reporting
+ * that as a failure would make a fresh install look broken at the one moment a
+ * person is checking whether the button works.
+ *
+ * **Not the same as making the job report its backlog.** Both polling jobs
+ * treat an absent cursor as a first look — they record where the source stands
+ * and deliberately announce nothing, so the run after a reset is *quieter* than
+ * usual rather than louder. Reporting what is already there is what the jobs'
+ * own catch-up inputs are for. Worth knowing before reaching for this to
+ * answer "show me everything again", because it does the opposite.
+ *
+ * Refusing while the job is running is the caller's job, not this function's —
+ * see the endpoint in `server.ts`. The rule is the same one `open()` rests on:
+ * one handle at a time, and a run whose staged writes commit after this would
+ * put back what it just removed.
+ */
+export function forget(jobId: string): Forgotten {
+    const held = store[jobId];
+    if (held === undefined) return { cursors: 0, ids: 0 };
+    const removed = { cursors: Object.keys(held.cursors).length, ids: held.seen.length };
+    delete store[jobId];
+    save();
+    return removed;
+}
+
 /** Test seam, matching history.reset() and running.reset(). */
 export function reset(): void {
     store = {};

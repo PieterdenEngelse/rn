@@ -331,6 +331,76 @@ test("stats() counts what is remembered, never what it is", () => {
     assert.deepEqual(state.stats(), { jobs: 2, cursors: 3, ids: 1 });
 });
 
+// ---- forgetting one job --------------------------------------------------
+
+test("forgetting one job leaves every other job's memory alone", () => {
+    const a = state.open("alpha");
+    a.set("since", 1);
+    a.seen("i1");
+    a.seen("i2");
+    a.commit();
+    const b = state.open("beta");
+    b.set("since", 2);
+    b.seen("i3");
+    b.commit();
+
+    // The whole point of the function. Deleting job-state.json does this to
+    // every job at once, so re-running one report used to re-trigger the other
+    // job's entire backlog — quietly, since nothing reports a cursor that was
+    // never there.
+    assert.deepEqual(state.forget("alpha"), { cursors: 1, ids: 2 });
+
+    assert.equal(state.open("alpha").get("since"), undefined);
+    assert.equal(state.open("beta").get("since"), 2);
+    assert.equal(state.open("beta").seen("i3"), true);
+});
+
+test("forgetting a job that remembers nothing is not an error", () => {
+    // A fresh install, or a job that has never run. Reporting this as a failure
+    // would make the control look broken at the one moment someone is checking
+    // whether it works.
+    assert.deepEqual(state.forget("never-run"), { cursors: 0, ids: 0 });
+    // Idempotent, which is what the DELETE method promises: asking twice is
+    // fine and the second answer is zeroes.
+    const a = state.open("alpha");
+    a.set("since", 1);
+    a.commit();
+    assert.deepEqual(state.forget("alpha"), { cursors: 1, ids: 0 });
+    assert.deepEqual(state.forget("alpha"), { cursors: 0, ids: 0 });
+});
+
+test("what was forgotten does not come back after a restart", async () => {
+    const a = state.open("alpha");
+    a.set("since", 1);
+    a.seen("i1");
+    a.commit();
+    state.forget("alpha");
+
+    // forget() writes the file, rather than only clearing the in-memory store
+    // the way the reset() test seam does. Without the save, the next boot reads
+    // the old entry back and the reset silently un-happens — the failure would
+    // show up as "I reset it yesterday and it still skips everything".
+    const restarted = await import(`../src/jobs/state.ts?forget=${Date.now()}`);
+    assert.equal(restarted.open("alpha").get("since"), undefined);
+    assert.equal(restarted.open("alpha").seen("i1"), false);
+});
+
+test("an id recorded again after a reset counts as new", () => {
+    const a = state.open("alpha");
+    a.seen("i1");
+    a.commit();
+    assert.equal(state.open("alpha").seen("i1"), true);
+
+    state.forget("alpha");
+    // Which is the point, and the thing to understand before pressing it: the
+    // job stops knowing it handled that item. For rn's polling jobs that means
+    // the next run treats the source as unseen — and both of them respond to
+    // that by taking a first look and reporting nothing, not by re-announcing
+    // the backlog. See forget()'s own note.
+    const after = state.open("alpha");
+    assert.equal(after.seen("i1"), false);
+});
+
 // ---- through the runner --------------------------------------------------
 
 /** A job whose run body the test supplies. */

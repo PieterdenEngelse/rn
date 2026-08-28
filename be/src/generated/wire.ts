@@ -1027,6 +1027,33 @@ schedule: string,
 nextRunAt: number, };
 
 /**
+ * DELETE /api/jobs/:id/state — what a targeted reset removed.
+ *
+ * Counts, never the values removed. `docs/token-sec.md` is the argument:
+ * a cursor is whatever the source uses as an identifier — a message id, a
+ * URL, an account reference — and reporting that something was forgotten
+ * is a different act from showing what it was. The same reason Config →
+ * Jobs reports how many cursors are held and offers no way to read one.
+ *
+ * Zeroes are an ordinary answer, not a failure: a job that has never run
+ * remembers nothing, and the reset succeeded in the only sense it can.
+ */
+export type StateResetResponse = { id: string, 
+/**
+ * Cursor keys removed.
+ */
+cursors: number, 
+/**
+ * Item ids dropped from the seen window.
+ */
+ids: number, 
+/**
+ * True when the job had nothing stored, so the page can say "nothing
+ * to forget" rather than "forgot 0 cursors", which reads as a failure.
+ */
+wasEmpty: boolean, };
+
+/**
  * `GET /api/status`: what is running, under what, since when.
  *
  * Carries the two counts the header light needs so it does not cost a

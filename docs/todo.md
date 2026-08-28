@@ -10,20 +10,7 @@ item.
 
 ---
 
-## 1. There is no way to reset one job's memory
-
-There is no targeted reset at all. `be/src/jobs/state.ts` exports `reset()`,
-which is the test seam that clears the in-memory store without saving, and
-nothing else removes anything. The supported answer is to delete
-`~/.config/rn/job-state.json`, which is all-or-nothing: making one job report
-from scratch also makes every other polling job reprocess everything its source
-still holds.
-
-Not urgent while there is one polling job. It becomes a real edge the moment
-there are two, and the failure is quiet — a person deletes the file to re-run
-one report and silently re-triggers another job's whole backlog.
-
-## 2. A permanent rejection is retried as if it were transient
+## 1. A permanent rejection is retried as if it were transient
 
 `notify` declares `retry: { attempts: 3, backoffMs: 15_000 }`, which is right
 for the failures it was written for — a 502 from a webhook relay, a phone off

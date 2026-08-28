@@ -557,6 +557,30 @@ wire! {
     }
 }
 
+wire! {
+    /// DELETE /api/jobs/:id/state — what a targeted reset removed.
+    ///
+    /// Counts, never the values removed. `docs/token-sec.md` is the argument:
+    /// a cursor is whatever the source uses as an identifier — a message id, a
+    /// URL, an account reference — and reporting that something was forgotten
+    /// is a different act from showing what it was. The same reason Config →
+    /// Jobs reports how many cursors are held and offers no way to read one.
+    ///
+    /// Zeroes are an ordinary answer, not a failure: a job that has never run
+    /// remembers nothing, and the reset succeeded in the only sense it can.
+    #[serde(rename_all = "camelCase")]
+    pub struct StateResetResponse {
+        pub id: String,
+        /// Cursor keys removed.
+        pub cursors: u32,
+        /// Item ids dropped from the seen window.
+        pub ids: u32,
+        /// True when the job had nothing stored, so the page can say "nothing
+        /// to forget" rather than "forgot 0 cursors", which reads as a failure.
+        pub was_empty: bool,
+    }
+}
+
 /// serde default for [`JobRun::attempts`]: a run that reports nothing ran once.
 fn one_attempt() -> u32 {
     1

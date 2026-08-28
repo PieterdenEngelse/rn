@@ -25,6 +25,7 @@ import type {
     ParamsResponse,
     RestartOutcome,
     SaveResponse,
+    StateResetResponse,
     StatusResponse,
     StopOutcome,
 } from "./generated/wire.ts";
@@ -507,6 +508,54 @@ export function createApp() {
                 runsRetained: counts.runs,
                 failuresRetained: counts.failures,
             });
+            return done(200);
+        }
+
+        // Forget one job's memory, without touching any other job's.
+        //
+        // The alternative, and what this replaces, was telling people to delete
+        // ~/.config/rn/job-state.json — the same act aimed at every job at
+        // once. That was fine while rn had one polling job and became a quiet
+        // trap when it had two: you delete the file to re-run one report and
+        // silently re-trigger the other job's whole backlog.
+        //
+        // DELETE rather than POST because it removes a resource and nothing
+        // else, and because it is idempotent in the way the method promises:
+        // asking twice is not an error, and the second answer is zeroes.
+        if (url.pathname.startsWith("/api/jobs/") && url.pathname.endsWith("/state")
+            && req.method === "DELETE") {
+            const id = decodeURIComponent(
+                url.pathname.slice("/api/jobs/".length, -"/state".length),
+            );
+            const job = jobById(id);
+            if (!job) {
+                send(res, 404, { message: `No job with id "${id}".` });
+                return done(404);
+            }
+            // Refused rather than raced. A run holds a staged handle that
+            // commits when it finishes, so forgetting underneath it would be
+            // undone moments later by writes the caller cannot see — and the
+            // page would report a reset that did not survive the minute. See
+            // state.open(): one handle at a time is the rule this rests on.
+            if (running.isRunning(job.id)) {
+                send(res, 409, {
+                    id: job.id,
+                    message:
+                        `"${job.id}" is running. Its memory is committed when the run ends, ` +
+                        `so forgetting now would be overwritten — wait for it to finish.`,
+                });
+                return done(409);
+            }
+            const removed = jobState.forget(job.id);
+            send(res, 200, {
+                id: job.id,
+                cursors: removed.cursors,
+                ids: removed.ids,
+                // Said explicitly rather than left to the reader: "forgot 0
+                // cursors" reads as a failure, and "nothing to forget" is what
+                // actually happened on a job that has never run.
+                wasEmpty: removed.cursors === 0 && removed.ids === 0,
+            } satisfies StateResetResponse);
             return done(200);
         }
 

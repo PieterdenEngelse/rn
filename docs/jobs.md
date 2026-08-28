@@ -277,10 +277,29 @@ the source uses as an identifier, a message id or a URL or an account
 reference, and `docs/token-sec.md` is the argument for why reporting that
 something is remembered is a different act from showing what.
 
-**Deleting `~/.config/rn/job-state.json` is the supported way to start over.**
-The next run of every polling job treats everything its source still holds as
-new. Nothing else notices the file is gone, because an absent cursor is exactly
-what a first run looks like — which is also why nothing prunes the entries of a
-job that has left the catalogue. Commenting a job out of `JOBS` for an afternoon
+**One job's memory is cleared from its row on Monitor → Jobs**, and the whole
+store by deleting `~/.config/rn/job-state.json`. The targeted one is
+`DELETE /api/jobs/:id/state`, which removes that job's cursors and its seen-id
+window and reports how many of each it dropped — counts, never values, for the
+reason the paragraph above gives. It is refused with a 409 while the job is
+running: a run stages its memory and commits when it finishes, so a reset in the
+middle would be overwritten seconds later by writes the caller cannot see, and
+being told a reset worked when it did not is worse than being told to wait.
+
+It exists because the whole-store version stopped being adequate the moment
+there were two polling jobs. Deleting the file to re-run one report also makes
+every other polling job reprocess whatever its source still holds — silently,
+since an absent cursor is indistinguishable from a first run.
+
+**Either way, the next run is quieter rather than louder**, which is the part
+that surprises people. A job whose memory is gone treats its source as unseen —
+and both polling jobs answer that by recording where it stands and announcing
+nothing, exactly as they do on a fresh install. Reaching for a reset to make a
+job "report everything again" gets you a silent run; the jobs' own catch-up
+inputs are what report the standing list.
+
+Nothing else notices a cursor is gone, because an absent one is exactly what a
+first run looks like — which is also why nothing prunes the entries of a job
+that has left the catalogue. Commenting a job out of `JOBS` for an afternoon
 should not silently delete the mark that stops it reprocessing its whole source
 when it comes back.
