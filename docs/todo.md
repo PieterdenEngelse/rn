@@ -28,22 +28,7 @@ batches.
 versions — a feed, a mailbox, an issue tracker. The same argument that produced
 `watch-upstreams`, one level in.
 
-## 2. Under Deno, `watch-upstreams` is refused and nobody has watched it happen
-
-The launcher grants Deno `--allow-net` for rn's own bind addresses plus the
-`netAllowlist` setting, and nothing else — see `launcher/src/layout.rs`. So
-`watch-upstreams` is the first thing in rn that outbound network permission
-touches at all, and under a Deno runtime every one of its lookups is refused.
-
-`netPermissionHint()` in the job turns that into a message naming the three
-hosts to add and where to add them. **It has never been executed.** The
-affirmative path was exercised live under Node; the refusal path is inference.
-
-**How to check it**, using the method that works here without disturbing a
-running backend: a scratch backend on 399x with its own state files, under the
-Deno runtime, and read what the run record says.
-
-## 3. There is no way to reset one job's memory
+## 2. There is no way to reset one job's memory
 
 There is no targeted reset at all. `be/src/jobs/state.ts` exports `reset()`,
 which is the test seam that clears the in-memory store without saving, and
@@ -56,7 +41,7 @@ Not urgent while there is one polling job. It becomes a real edge the moment
 there are two, and the failure is quiet — a person deletes the file to re-run
 one report and silently re-triggers another job's whole backlog.
 
-## 4. A permanent rejection is retried as if it were transient
+## 3. A permanent rejection is retried as if it were transient
 
 `notify` declares `retry: { attempts: 3, backoffMs: 15_000 }`, which is right
 for the failures it was written for — a 502 from a webhook relay, a phone off
@@ -80,16 +65,17 @@ The cost while it stands is bounded and visible: ninety seconds, three attempts
 on the record, and the parent job held in flight for that long because
 `onChange` is awaited.
 
-## 5. A screenshot saved under any other name can be committed by accident
-
-`.gitignore:22` ignores `scr-*.png` and nothing else, so a PNG saved as
-anything else is one `git add -A` away from being committed. That has already
-happened once (`shot.png`, caught by hand).
-
-**Either** widen it to `*.png` at the repository root, **or** agree the `scr-`
-prefix is the rule and say so in `CLAUDE.md`'s *Checking the page* section —
-where the screenshot command lives, and therefore where anyone about to save
-one is looking.
+**A second case, now observed rather than reasoned about.** Verifying the Deno
+refusal path (the old item 2) produced exactly this shape from a different
+direction: a runtime permission denial is permanent by construction — the grant
+is fixed at spawn and cannot change while the process lives — and
+`watch-upstreams` still spent **60.2s and three attempts** on it, with two
+30-second waits recorded as `retry` steps between three identical
+`Requires net access to "nodejs.org:443"` failures. So the "second job that
+talks to an HTTP API" this item was waiting on is no longer the only way in:
+there are two classes of never-going-to-improve error now, and a permission
+denial is the easier of the two to recognise, since `netPermissionHint()`
+already has the predicate that identifies it.
 
 ---
 
