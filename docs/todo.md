@@ -56,35 +56,9 @@ is fixed at spawn and cannot change while the process lives — and
 `Requires net access to "nodejs.org:443"` failures. So the "second job that
 talks to an HTTP API" this item was waiting on is no longer the only way in:
 there are two classes of never-going-to-improve error now, and a permission
-denial is the easier of the two to recognise, since `netPermissionHint()`
-already has the predicate that identifies it.
-
-## 3. The Deno permission hint is written twice
-
-`netPermissionHint()` exists in both `be/src/jobs/watch-upstreams.ts` and
-`be/src/jobs/watch-feeds.ts` — the same regular expression over the same three
-Deno error shapes, differing only in which hosts the message names. A third job
-that makes an outbound request writes it a third time, and the copy that goes
-stale is the one nobody is looking at.
-
-It was left duplicated on purpose until the refusal path had been watched
-rather than inferred — sharing a helper nothing has ever executed would make one
-unverified thing look like two. **That condition is now met.** Driven live on
-deno 2.9.5 against a scratch backend granted only rn's own ports, every lookup
-failed with `Requires net access to "nodejs.org:443"` — so of the three arms the
-regex tests, that is the one that actually fires, and the advice the hint gives
-was checked too: those hosts in `netAllowlist` plus a restart takes the same run
-to a clean report. Keep all three arms regardless; that is Deno's wording to
-change, and a hint that silently stops firing is worse than one that never did.
-
-So it is foldable now, and the shape is settled: `watch-feeds` takes its hosts
-as an argument, which is the general form, while `watch-upstreams` names three
-hosts inline. The remaining reason it has not been done is only that it wants
-both jobs in one tree, which is after both branches land.
-
-**The cost while it stands**: two regexes to keep in step, and a job author who
-copies the wrong one ships a message naming nodejs.org, registry.npmjs.org and
-crates.io for a job that talks to none of them.
+denial is the easier of the two to recognise, since `netPermissionHint()` —
+now one shared function in `be/src/jobs/net-permission.ts` rather than a copy
+per job — already has the predicate that identifies it.
 
 ---
 

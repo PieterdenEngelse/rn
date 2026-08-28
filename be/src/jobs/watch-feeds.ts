@@ -72,6 +72,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { netPermissionHint } from "./net-permission.ts";
 import { MAX_VALUE_BYTES, SEEN_CAPACITY } from "./state.ts";
 import type { Job, JobContext, JobResult } from "./types.ts";
 
@@ -318,34 +319,6 @@ export function itemKey(feed: string, rawId: string): string {
         .update(`${feedLabel(feed)} ${rawId}`)
         .digest("hex")
         .slice(0, 32);
-}
-
-/**
- * A Deno network refusal, told apart from an ordinary one.
- *
- * The same shape as `netPermissionHint` in `watch-upstreams`, with the hosts
- * taken from the feeds actually configured rather than from a fixed list —
- * which is the whole difference, since this job's hosts are whatever the user
- * typed, which is the more general of the two shapes.
- *
- * They are still two functions, and `docs/todo.md` carries the item for folding
- * them into one. Worth knowing before you touch this regex: the arm that
- * actually fires has been watched now, on deno 2.9.5 with only rn's own ports
- * granted, and it is `Requires net access` — not `PermissionDenied` and not
- * `NotCapable`. All three stay anyway. That is Deno's wording to change, and a
- * hint that quietly stops firing is worse than one that never fired, because
- * the run then reports a bare permission error and the person reading it has no
- * idea there is an allowlist.
- */
-function netPermissionHint(err: unknown, hosts: string[]): string | undefined {
-    const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
-    if (!/PermissionDenied|Requires net access|NotCapable/i.test(message)) return undefined;
-    const named = hosts.length === 0 ? "each feed's host" : hosts.join(", ");
-    return (
-        `The runtime refused the outbound request. Under Deno, add ${named} to the ` +
-        "network allowlist on Config → Connection and restart — the launcher grants Deno " +
-        "only rn's own addresses by default."
-    );
 }
 
 /** Run `work` over `items`, at most CONCURRENCY at a time, in order. */
