@@ -19,91 +19,28 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-export type JsRuntime = "node" | "bun" | "deno";
 /**
- * `app` is rn's own setting rather than the runtime's: no flag, no environment
- * variable, nothing for the launcher to deliver. It lives here anyway because
- * this registry is what gives a setting validation, an enforced info panel,
- * restart-pending tracking and a control on Config → Runtime — and a second
- * registry for "our settings" would be the drift this file exists to prevent.
+ * The shapes come from the shared crate, not from here.
  *
- * The launcher must skip these explicitly. Its `resolve()` falls through to
- * NODE_OPTIONS for any kind it does not recognise, so an unhandled one would
- * emit `NODE_OPTIONS="--schedulerTickMs=30000"` and stop Node booting — the
- * same trap the `launcher` kind carries a comment about.
+ * `RuntimeParam` and its five closed sets are read by `fe` as well, so they are
+ * defined once in `shared/src/params.rs` and regenerated into
+ * `be/src/generated/wire.ts` — a field renamed on one side is now a build
+ * failure on the other rather than an `undefined` in a panel. Re-exported
+ * rather than merely imported, so `settings.ts` and the launcher-facing
+ * generator keep importing everything they need from this file.
+ *
+ * What stays here is the data: `RUNTIME_PARAMS` below is still the only place
+ * the parameters themselves are described.
  */
-export type ParamKind = "env" | "node-option" | "launcher" | "runtime-flag" | "app";
-export type ParamType = "int" | "string" | "bool" | "enum" | "enum-open";
-export type AppliesAt = "restart" | "runtime";
-export type Category =
-    | "memory"
-    | "concurrency"
-    | "time"
-    | "network"
-    | "diagnostics"
-    | "output"
-    | "runtime"
-    | "security";
-
-export interface RuntimeParam {
-    /** Stable key used in settings.json. Never rename — it's persisted. */
-    id: string;
-    /** The env var name, or the Node flag. */
-    flag: string;
-    kind: ParamKind;
-    type: ParamType;
-    /** null means "unset — inherit the system default". */
-    default: string | number | boolean | null;
-    /**
-     * Key in the /api/params `effective` payload whose live value stands in
-     * for the default in the UI. For a setting whose default is "whatever the
-     * OS says", the word "unset" alone does not tell you what you are getting;
-     * this names the field that does.
-     */
-    defaultFrom?: string;
-    unit?: string;
-    min?: number;
-    max?: number;
-    /**
-     * Required when type is "enum": the allowed values, in display order.
-     * Optional when type is "enum-open", where they are suggestions rather
-     * than a closed set — the field still accepts anything typed into it.
-     *
-     * An option may carry its own info panel. When it does, the UI shows that
-     * one for the current selection instead of the parameter's — three runtimes
-     * flattened into a single panel is three explanations nobody reads.
-     */
-    options?: readonly {
-        value: string;
-        label: string;
-        info?: { what: string; why: string; ifWrong: string };
-    }[];
-    appliesAt: AppliesAt;
-    /**
-     * Runtimes this parameter actually does something on. Omitted means all of
-     * them. Bun and Deno tolerate NODE_OPTIONS they do not implement rather
-     * than refusing to start, so a Node-only flag under them is silently
-     * ignored — the UI has to say so, because nothing else will.
-     */
-    appliesTo?: readonly JsRuntime[];
-    /**
-     * Set when the flag belongs to V8 rather than to Node. It decides how the
-     * launcher delivers it: Node accepts V8 flags in NODE_OPTIONS, but Deno
-     * runs V8 while ignoring NODE_OPTIONS, so its V8 flags have to be folded
-     * into --v8-flags instead. A Node flag must never end up there.
-     */
-    engine?: "v8";
-    category: Category;
-    label: string;
-    info: {
-        /** What it does, mechanically. */
-        what: string;
-        /** Why a user would touch it. */
-        why: string;
-        /** What they will see if it's wrong. */
-        ifWrong: string;
-    };
-}
+export type {
+    RuntimeParam,
+    ParamKind,
+    ParamType,
+    AppliesAt,
+    Category,
+    JsRuntime,
+} from "./generated/wire.ts";
+import type { RuntimeParam } from "./generated/wire.ts";
 
 /**
  * The version of the runtime this install actually carries, read from the file

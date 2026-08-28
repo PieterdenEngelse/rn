@@ -9,6 +9,15 @@
 import type { JsonValue } from "./serde_json/JsonValue.ts";
 
 /**
+ * When a change takes hold.
+ *
+ * Almost everything is read once at process start by libuv, ICU or the
+ * TLS stack, so changing it means relaunching. That is not a limitation to
+ * hide: the UI says which of the two a control is, next to the control.
+ */
+export type AppliesAt = "restart" | "runtime";
+
+/**
  * One bucket of a long-window tier.
  */
 export type Bucket = { t: number, heapFloorMB: number, rssPeakMB: number, 
@@ -110,6 +119,11 @@ credentials: Array<CredentialRef>,
  * renders as nothing, rather than as a row saying "no webhook".
  */
 webhook?: WebhookInfo | null, };
+
+/**
+ * The board a parameter is filed under on Config → Runtime.
+ */
+export type Category = "memory" | "concurrency" | "time" | "network" | "diagnostics" | "output" | "runtime" | "security";
 
 /**
  * GET /api/connection.
@@ -218,6 +232,16 @@ event?: string | null, };
  * What Deno is permitted to do — the only runtime that can answer this.
  */
 export type DenoMetrics = { permissions: { [key in string]: string }, bindAddressAllowed: boolean, };
+
+/**
+ * Set when the flag belongs to V8 rather than to the runtime around it.
+ *
+ * It decides delivery, not presentation: Node accepts V8 flags in
+ * NODE_OPTIONS, but Deno runs V8 while ignoring NODE_OPTIONS, so its V8
+ * flags have to be folded into `--v8-flags` instead. A Node flag that ends
+ * up there does not boot.
+ */
+export type Engine = "v8";
 
 /**
  * One environment variable, as the file has it and as the process has it.
@@ -658,6 +682,11 @@ config: JobsConfig, scheduled: Array<ScheduledJob>,
  */
 lastRuns: Array<JobRun>, };
 
+/**
+ * A JavaScript runtime rn can be asked to run under.
+ */
+export type JsRuntime = "node" | "bun" | "deno";
+
 export type LargestSpace = { name: string, usedMB: number, };
 
 export type LoopPercentile = { label: string, ms: number, };
@@ -748,6 +777,122 @@ runqueueWaitMsPerSec: number, };
 export type Outcome = "changed" | "unchanged" | "skipped" | "failed";
 
 /**
+ * The three lines of an info panel, for a runtime parameter.
+ *
+ * The same shape a job's `JobInfo` carries, and rendered by the same
+ * `InfoButton` — see "Info buttons" in CLAUDE.md. Making the text data
+ * rather than markup is what stops a parameter being added without one.
+ */
+export type ParamInfo = { 
+/**
+ * What it does, mechanically.
+ */
+what: string, 
+/**
+ * Why a user would touch it.
+ */
+why: string, 
+/**
+ * What they will see if it is wrong.
+ */
+ifWrong: string, };
+
+/**
+ * How a parameter reaches the runtime, which decides who delivers it.
+ *
+ * `app` is rn's own setting rather than the runtime's: no flag, no
+ * environment variable, nothing for the launcher to pass on. The launcher
+ * must skip these explicitly — its `resolve()` falls through to
+ * NODE_OPTIONS for any kind it does not recognise, so an unhandled one
+ * would emit `NODE_OPTIONS="--schedulerTickMs=30000"` and stop Node
+ * booting before the first line of code runs.
+ */
+export type ParamKind = "env" | "node-option" | "launcher" | "runtime-flag" | "app";
+
+/**
+ * One allowed value of an `enum` parameter.
+ */
+export type ParamOption = { value: string, label: string, 
+/**
+ * Present when the option explains itself; the UI prefers it over the
+ * parameter's own panel for the current selection. Three runtimes
+ * flattened into a single panel is three explanations nobody reads.
+ */
+info?: ParamInfo | null, };
+
+/**
+ * What kind of value a parameter takes, which decides the control drawn
+ * for it and the validation applied to it.
+ *
+ * `enum-open` is a closed list of suggestions over a field that still
+ * accepts anything typed into it — the browser draws the list its own way
+ * and a browser that ignores the decoration still leaves a usable field.
+ */
+export type ParamType = "int" | "string" | "bool" | "enum" | "enum-open";
+
+/**
+ * `GET /api/params`: the registry, the live values, and the saved settings.
+ */
+export type ParamsResponse = { params: Array<RuntimeParam>, withheld: Array<Withheld>, 
+/**
+ * What the process is actually running with, keyed by parameter id.
+ */
+effective: JsonValue, 
+/**
+ * What is saved in settings.json, keyed by parameter id.
+ */
+settings: JsonValue, 
+/**
+ * True when a launcher supervises the backend and can restart it.
+ */
+supervised: boolean, pending: Array<PendingChange>, };
+
+/**
+ * A saved setting that the running process does not have.
+ *
+ * Computed by comparing what the settings resolve to against what the
+ * process actually got, rather than by remembering the last save — so the
+ * banner survives a reload, and clears itself once a restart has genuinely
+ * applied the change.
+ */
+export type PendingChange = { id: string, label: string, 
+/**
+ * What the settings ask for.
+ */
+want: string, 
+/**
+ * What the running process actually has.
+ */
+have: string, };
+
+/**
+ * `POST /api/restart`: whether it happened, was queued, or was refused.
+ *
+ * Refused is a real answer here — an unsupervised process that exits does
+ * not come back, so it says so instead of leaving a dead server and no
+ * explanation.
+ */
+export type RestartOutcome = { ok: boolean, 
+/**
+ * True when the restart is queued behind running work rather than
+ * done. Aborting a long automation to apply a setting is the failure
+ * this guards against.
+ */
+scheduled: boolean, message: string, 
+/**
+ * Set when the request was refused.
+ */
+error?: string | null, 
+/**
+ * Jobs still running, when a restart was queued behind them.
+ */
+running?: Array<RunningJob>, 
+/**
+ * Jobs a `when=now` restart interrupted.
+ */
+aborted?: Array<RunningJob>, };
+
+/**
  * How many times a failing job is tried again, and how long between.
  *
  * A fixed wait rather than a growing one. Exponential backoff earns its
@@ -803,6 +948,61 @@ matched: number,
 retained: number, };
 
 /**
+ * One user-editable runtime parameter, as the registry describes it.
+ *
+ * `be/src/runtime-params.ts` holds the entries; this is their shape. Two
+ * files are generated from those entries — `docs/node-parameters.md` and
+ * `be/runtime-params.json`, the latter read by the Rust launcher — so a
+ * field added here has three readers before it has a control.
+ */
+export type RuntimeParam = { 
+/**
+ * Stable key used in settings.json. Never rename — it is persisted.
+ */
+id: string, 
+/**
+ * The environment variable name, or the flag.
+ */
+flag: string, kind: ParamKind, type: ParamType, 
+/**
+ * `null` means "unset — inherit the system default".
+ */
+default: JsonValue, 
+/**
+ * Key in the `effective` payload whose live value stands in for the
+ * default. Set where the default is whatever the OS reports, so the
+ * field can name it instead of just saying the value is unset.
+ */
+defaultFrom?: string | null, unit?: string | null, min?: number | null, max?: number | null, 
+/**
+ * Required when `value_type` is `Enum`; suggestions when `EnumOpen`.
+ */
+options?: Array<ParamOption> | null, 
+/**
+ * Runtimes this parameter does anything on. `None` means all of them.
+ * Bun and Deno tolerate a NODE_OPTIONS they do not implement rather
+ * than refusing to start, so a Node-only flag under them is silently
+ * ignored — the UI has to say so, because nothing else will.
+ */
+appliesTo?: Array<JsRuntime> | null, engine?: Engine | null, appliesAt: AppliesAt, category: Category, label: string, info: ParamInfo, };
+
+/**
+ * One rejected setting, named so the UI can mark the control rather than
+ * the form.
+ */
+export type SaveError = { id: string, message: string, };
+
+/**
+ * `PUT /api/settings`: what was taken, what needs a restart, what failed.
+ */
+export type SaveResponse = { ok: boolean, 
+/**
+ * Settings that took effect immediately, so the UI's "(immediate)"
+ * label is true rather than aspirational.
+ */
+applied?: Array<string>, restartRequired?: Array<string>, errors?: Array<SaveError>, };
+
+/**
  * When a job runs on its own.
  *
  * Two forms rather than cron: a parser is a liability in a project with no
@@ -825,6 +1025,45 @@ schedule: string,
  * was down, so this is the only place a skipped run becomes visible.
  */
 nextRunAt: number, };
+
+/**
+ * `GET /api/status`: what is running, under what, since when.
+ *
+ * Carries the two counts the header light needs so it does not cost a
+ * second request per poll.
+ */
+export type StatusResponse = { supervised: boolean, pid: number, 
+/**
+ * A string rather than a number: it arrives from the environment, and
+ * `null` when nothing is supervising.
+ */
+launcherPid: string | null, uptimeMs: number, node: string, execPath: string, settingsPath: string, url: string, jobs: number, restartPending: boolean, 
+/**
+ * Saved settings not yet in effect — drives the amber header light.
+ */
+pendingCount: number, 
+/**
+ * Jobs whose most recent run failed — drives the red header light.
+ * Most-recent, not ever-failed, so a successful re-run clears it.
+ */
+failedJobs: number, };
+
+/**
+ * `POST /api/stop`: the same three answers as a restart, minus the queue.
+ */
+export type StopOutcome = { ok: boolean, message: string, 
+/**
+ * Set when the request was refused — work in progress, without force.
+ */
+error?: string | null, 
+/**
+ * Jobs whose presence refused the request.
+ */
+running?: Array<RunningJob>, 
+/**
+ * Jobs the stop interrupted.
+ */
+aborted?: Array<RunningJob>, };
 
 /**
  * How a run was started.
@@ -869,3 +1108,11 @@ credential: string,
  * prefix or a length of one.
  */
 secretSet: boolean, };
+
+/**
+ * A flag the registry deliberately does not offer, and why.
+ *
+ * Listed rather than omitted: a control that is missing looks like an
+ * oversight, and the reason it is missing is usually the interesting part.
+ */
+export type Withheld = { flag: string, reason: string, };

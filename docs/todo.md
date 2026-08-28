@@ -43,23 +43,7 @@ affirmative path was exercised live under Node; the refusal path is inference.
 running backend: a scratch backend on 399x with its own state files, under the
 Deno runtime, and read what the run record says.
 
-## 3. Eleven wire types are still hand-written on both ends
-
-`fe/src/api/wire.rs` still defines eleven structs by hand — the runtime
-parameter and config surface: `RuntimeParam`, `ParamsResponse`, `SaveResponse`,
-`StatusResponse` and the rest. Every one is a shape `be` also knows and neither
-end can be made to agree with the other by the compiler.
-
-This is the drift `shared/` was created to remove: a field renamed in `be`
-reaches the browser as `undefined`, at runtime, in whichever panel reads it
-first.
-
-`CLAUDE.md` now names these eleven as the remainder and the next to move — it
-previously said the crate "covered the jobs surface only", which was the
-dangerous half: acting on it meant hand-writing a monitor type that already
-existed in `shared/src/monitor.rs`.
-
-## 4. There is no way to reset one job's memory
+## 3. There is no way to reset one job's memory
 
 There is no targeted reset at all. `be/src/jobs/state.ts` exports `reset()`,
 which is the test seam that clears the in-memory store without saving, and
@@ -72,7 +56,7 @@ Not urgent while there is one polling job. It becomes a real edge the moment
 there are two, and the failure is quiet — a person deletes the file to re-run
 one report and silently re-triggers another job's whole backlog.
 
-## 5. A permanent rejection is retried as if it were transient
+## 4. A permanent rejection is retried as if it were transient
 
 `notify` declares `retry: { attempts: 3, backoffMs: 15_000 }`, which is right
 for the failures it was written for — a 502 from a webhook relay, a phone off
@@ -96,7 +80,7 @@ The cost while it stands is bounded and visible: ninety seconds, three attempts
 on the record, and the parent job held in flight for that long because
 `onChange` is awaited.
 
-## 6. A screenshot saved under any other name can be committed by accident
+## 5. A screenshot saved under any other name can be committed by accident
 
 `.gitignore:22` ignores `scr-*.png` and nothing else, so a PNG saved as
 anything else is one `git add -A` away from being committed. That has already

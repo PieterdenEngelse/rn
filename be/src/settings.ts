@@ -12,6 +12,7 @@ import { getHeapStatistics } from "node:v8";
 import { availableParallelism } from "node:os";
 import { dirname } from "node:path";
 import { RUNTIME_PARAMS, paramById, type RuntimeParam } from "./runtime-params.ts";
+import type { PendingChange, SaveError } from "./generated/wire.ts";
 import { display as displayPath } from "./paths.ts";
 // Safe despite the layering it implies: nothing under jobs/ imports this
 // module, so there is no cycle to fall into. Checked rather than assumed —
@@ -25,10 +26,12 @@ import * as dry from "./dry-run.ts";
 export type SettingValue = string | number | boolean | null;
 export type Settings = Record<string, SettingValue>;
 
-export interface ValidationError {
-    id: string;
-    message: string;
-}
+/**
+ * One rejected setting. Structurally the wire's `SaveError`, which is what
+ * `PUT /api/settings` sends it as — aliased rather than redeclared so the two
+ * cannot drift apart in the direction that matters.
+ */
+export type ValidationError = SaveError;
 
 /** Validate one value against its parameter definition. */
 export function validate(id: string, value: SettingValue): ValidationError | null {
@@ -40,10 +43,12 @@ export function validate(id: string, value: SettingValue): ValidationError | nul
         if (typeof value !== "number" || !Number.isInteger(value)) {
             return { id, message: `${p.label} must be a whole number` };
         }
-        if (p.min !== undefined && value < p.min) {
+        // `!= null` rather than `!== undefined`: the wire type allows an
+        // explicit null as well as an absent key, and both mean "no bound".
+        if (p.min != null && value < p.min) {
             return { id, message: `${p.label} must be at least ${p.min}` };
         }
-        if (p.max !== undefined && value > p.max) {
+        if (p.max != null && value > p.max) {
             return { id, message: `${p.label} must be at most ${p.max}` };
         }
     }
@@ -281,14 +286,9 @@ export function isSupervised(): boolean {
     return process.env.RN_ENV_SEALED === "1";
 }
 
-export interface PendingChange {
-    id: string;
-    label: string;
-    /** What the settings ask for. */
-    want: string;
-    /** What this process actually has. */
-    have: string;
-}
+// Defined in `shared/src/params.rs` and regenerated into generated/wire.ts —
+// the restart banner in `fe` reads the same four fields.
+export type { PendingChange } from "./generated/wire.ts";
 
 /**
  * Settings that are saved but not in effect in THIS process.

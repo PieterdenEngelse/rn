@@ -17,11 +17,13 @@ pub mod connection;
 pub mod env;
 pub mod jobs;
 pub mod monitor;
+pub mod params;
 
 pub use connection::*;
 pub use env::*;
 pub use jobs::*;
 pub use monitor::*;
+pub use params::*;
 
 /// Write every wire type to the TypeScript module, in one call.
 ///
@@ -79,6 +81,24 @@ pub fn export_all(cfg: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     HealthResponse::export_all(cfg)?;
     EnvEntry::export_all(cfg)?;
     EnvResponse::export_all(cfg)?;
+
+    ParamKind::export_all(cfg)?;
+    ParamType::export_all(cfg)?;
+    AppliesAt::export_all(cfg)?;
+    Category::export_all(cfg)?;
+    JsRuntime::export_all(cfg)?;
+    Engine::export_all(cfg)?;
+    ParamInfo::export_all(cfg)?;
+    ParamOption::export_all(cfg)?;
+    RuntimeParam::export_all(cfg)?;
+    Withheld::export_all(cfg)?;
+    PendingChange::export_all(cfg)?;
+    ParamsResponse::export_all(cfg)?;
+    SaveError::export_all(cfg)?;
+    SaveResponse::export_all(cfg)?;
+    RestartOutcome::export_all(cfg)?;
+    StopOutcome::export_all(cfg)?;
+    StatusResponse::export_all(cfg)?;
     Ok(())
 }
 

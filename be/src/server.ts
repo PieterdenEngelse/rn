@@ -18,6 +18,16 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
 import { RUNTIME_PARAMS, WITHHELD } from "./runtime-params.ts";
+// The response shapes are defined in `shared/src/params.rs`, so `satisfies`
+// below is what makes a field renamed there a build failure here rather than an
+// `undefined` in whichever panel reads it first.
+import type {
+    ParamsResponse,
+    RestartOutcome,
+    SaveResponse,
+    StatusResponse,
+    StopOutcome,
+} from "./generated/wire.ts";
 import {
     applyRuntimeSettings,
     isSupervised,
@@ -154,13 +164,15 @@ export function createApp() {
         if (url.pathname === "/api/params" && req.method === "GET") {
             const settings = load(config.settingsPath);
             send(res, 200, {
-                params: RUNTIME_PARAMS,
-                withheld: WITHHELD,
+                // Spread rather than passed: the registries are `readonly`
+                // arrays, which a mutable `Array<T>` field will not accept.
+                params: [...RUNTIME_PARAMS],
+                withheld: [...WITHHELD],
                 effective: effectiveValues(),
                 settings,
                 supervised: isSupervised(),
                 pending: pendingRestart(settings),
-            });
+            } satisfies ParamsResponse);
             return done(200);
         }
 
@@ -196,7 +208,7 @@ export function createApp() {
                     const last = jobHistory.lastFor(j.id);
                     return last !== undefined && jobHistory.outcome(last) === "failed";
                 }).length,
-            });
+            } satisfies StatusResponse);
             return done(200);
         }
 
@@ -265,10 +277,14 @@ export function createApp() {
                     error: "jobs running",
                     message: "Work is in progress. Stop anyway with force, or wait for it to finish.",
                     running: runningJobs,
-                });
+                } satisfies StopOutcome);
                 return done(409);
             }
-            send(res, 200, { ok: true, message: "stopping", aborted: runningJobs });
+            send(res, 200, {
+                ok: true,
+                message: "stopping",
+                aborted: runningJobs,
+            } satisfies StopOutcome);
             done(200);
             step("stop-requested", { force, aborting: runningJobs.length });
             closeListeners(server);
@@ -553,10 +569,13 @@ export function createApp() {
                 // than leaving the user with a dead server and no explanation.
                 send(res, 409, {
                     ok: false,
+                    // Stated rather than left out: a refusal is not a restart
+                    // that happens to be pending, and the type says so.
+                    scheduled: false,
                     error: "not supervised",
                     message:
                         "No launcher is managing this process, so it cannot restart itself. Start it with the rn binary, or restart manually.",
-                });
+                } satisfies RestartOutcome);
                 return done(409);
             }
             // "now" restarts regardless; the default waits for running work.
@@ -578,7 +597,7 @@ export function createApp() {
                     scheduled: true,
                     message: "Restart scheduled — waiting for running work to finish.",
                     running: runningJobs,
-                });
+                } satisfies RestartOutcome);
                 return done(202);
             }
 
@@ -587,7 +606,7 @@ export function createApp() {
                 scheduled: false,
                 message: "restarting",
                 aborted: when === "now" ? runningJobs : [],
-            });
+            } satisfies RestartOutcome);
             done(200);
             step("restart-requested", { when, aborting: runningJobs.length });
             doRestart();
@@ -600,7 +619,7 @@ export function createApp() {
                     const body = (await readJson(req)) as Settings;
                     const errors = validateAll(body);
                     if (errors.length > 0) {
-                        send(res, 400, { ok: false, errors });
+                        send(res, 400, { ok: false, errors } satisfies SaveResponse);
                         return done(400);
                     }
                     save(config.settingsPath, body);
@@ -609,10 +628,17 @@ export function createApp() {
                     const applied = applyRuntimeSettings(body);
                     const restart = needsRestart(Object.keys(body)).map((p) => p.id);
                     step("settings-saved", { applied, restart });
-                    send(res, 200, { ok: true, applied, restartRequired: restart });
+                    send(res, 200, {
+                        ok: true,
+                        applied,
+                        restartRequired: restart,
+                    } satisfies SaveResponse);
                     done(200);
                 } catch (err) {
-                    send(res, 400, { ok: false, errors: [{ id: "-", message: String(err) }] });
+                    send(res, 400, {
+                        ok: false,
+                        errors: [{ id: "-", message: String(err) }],
+                    } satisfies SaveResponse);
                     done(400);
                 }
             })();

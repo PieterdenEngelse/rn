@@ -40,18 +40,24 @@ whichever panel reads it first. One definition makes that a build failure.
 - **Node consumes generated TypeScript, never hand-written types.** `shared/`
   emits `be/src/generated/wire.ts`. Regenerate with `cd be && npm run
   types:build`; `be/test/generated.test.ts` fails if the committed file is stale.
-- **Covers the jobs and monitor surfaces.** The eleven runtime-parameter and
-  config types in `fe/src/api/wire.rs` are the remainder and the next to move,
-  still hand-written on both ends — `be/src/runtime-params.ts` and
-  `be/src/settings.ts` define the same shapes independently, agreeing only
-  because someone was careful. Anything added to a covered surface goes in
-  `shared/`.
+- **Covers every surface that crosses the boundary.** Jobs, monitor,
+  connection, env, and — since the runtime-parameter and config types moved —
+  Config → Runtime as well. `fe/src/api/wire.rs` now defines nothing at all; it
+  re-exports. Anything new goes in `shared/`, without exception.
+- **A closed set is an enum, not a string.** `ParamKind`, `ParamType`,
+  `AppliesAt`, `Category` and `JsRuntime` are enums so the TypeScript stays the
+  literal union `be` had before the move — `category: "memry"` is still a build
+  failure in a registry of a thousand lines. Their wire spellings are pinned by
+  a test in `shared/src/params.rs`: rename a variant without a
+  `#[serde(rename)]` and `fe` stops parsing `/api/params` outright, which is a
+  blank page rather than one `undefined` field.
 - **`fe` takes it `default-features = false`**, switching off the `typescript`
   feature so `ts-rs` never reaches the wasm bundle. Verify with `cargo tree
   --target wasm32-unknown-unknown -i ts-rs` — it should find nothing.
 - **`fe` cannot `impl` a shared type** (orphan rule). Behaviour hanging off a
-  wire type is a free function or extension trait in `fe` — see `api/history.rs`
-  and `trigger_label` in `pages/monitor_jobs.rs`.
+  wire type is a free function or extension trait in `fe` — see `api/history.rs`,
+  and `trigger_label` and `runtime_key` in `pages/monitor_jobs.rs` and
+  `pages/config.rs`.
 - **The Rust definition is the source of truth.** Edit `shared/src/`,
   regenerate, commit both together. Hand-editing the generated file is a bug,
   exactly like hand-editing `output.css`.

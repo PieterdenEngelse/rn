@@ -1,5 +1,6 @@
 use crate::api::{
-    diagnose_offline, fetch_params, save_settings, OfflineReason, ParamsResponse, RuntimeParam,
+    diagnose_offline, fetch_params, save_settings, AppliesAt, Category, Engine, JsRuntime,
+    OfflineReason, ParamType, ParamsResponse, RuntimeParam,
 };
 use crate::components::param::*;
 use crate::components::{EnvPanel, InfoButton, Panel, ProcessPanel, RestartBanner, RuntimeBoard};
@@ -143,17 +144,31 @@ pub fn Config() -> Element {
     }
 }
 
-fn category_title(cat: &str) -> &str {
+fn category_title(cat: Category) -> &'static str {
     match cat {
-        "memory" => "Memory",
-        "concurrency" => "Concurrency",
-        "time" => "Time",
-        "network" => "Network",
-        "diagnostics" => "Diagnostics",
-        "output" => "Output",
-        "runtime" => "Runtime",
-        "security" => "Security",
-        other => other,
+        Category::Memory => "Memory",
+        Category::Concurrency => "Concurrency",
+        Category::Time => "Time",
+        Category::Network => "Network",
+        Category::Diagnostics => "Diagnostics",
+        Category::Output => "Output",
+        Category::Runtime => "Runtime",
+        Category::Security => "Security",
+    }
+}
+
+/// The wire spelling of a runtime, for comparing against the settings value.
+///
+/// `jsRuntime` arrives as a JSON string — from the saved settings and from the
+/// draft the user is editing — while the registry names runtimes as
+/// [`JsRuntime`]. A free function rather than an `impl`: `fe` cannot add
+/// inherent methods to a type it does not own, which is the orphan rule doing
+/// its job. Same pattern as `trigger_label` in `pages/monitor_jobs.rs`.
+fn runtime_key(r: JsRuntime) -> &'static str {
+    match r {
+        JsRuntime::Node => "node",
+        JsRuntime::Bun => "bun",
+        JsRuntime::Deno => "deno",
     }
 }
 
@@ -173,10 +188,10 @@ fn ParamBoards(
     let mut status = use_signal(|| Option::<String>::None);
     let mut error = use_signal(|| Option::<String>::None);
 
-    let mut categories: Vec<String> = Vec::new();
+    let mut categories: Vec<Category> = Vec::new();
     for p in &resp.params {
         if !categories.contains(&p.category) {
-            categories.push(p.category.clone());
+            categories.push(p.category);
         }
     }
 
@@ -186,8 +201,9 @@ fn ParamBoards(
     // is tuned, so it gets its own section rather than sitting between Memory
     // and Network. The measured state sits beside the controls that set it.
     let runtime_rows: Vec<RuntimeParam> =
-        params.iter().filter(|p| p.category == "runtime").cloned().collect();
-    let tuning: Vec<String> = categories.into_iter().filter(|c| c != "runtime").collect();
+        params.iter().filter(|p| p.category == Category::Runtime).cloned().collect();
+    let tuning: Vec<Category> =
+        categories.into_iter().filter(|c| *c != Category::Runtime).collect();
     let runtime_rows_empty = runtime_rows.is_empty();
 
     let running = resp
@@ -210,31 +226,31 @@ fn ParamBoards(
     // Settings split by who owns them. A parameter naming runtimes belongs to
     // those runtimes; one naming none belongs to all of them.
     let applies_here = |p: &RuntimeParam| -> bool {
-        p.applies_to.as_ref().is_some_and(|l| l.iter().any(|r| r == &selected))
+        p.applies_to.as_ref().is_some_and(|l| l.iter().any(|r| runtime_key(*r) == selected))
     };
     // A V8 flag is not the selected runtime's setting. It belongs to the engine
     // underneath it, is shared with every other runtime on that engine, and
     // stores one value between them — so it gets its own tile rather than
     // appearing in two runtime tiles as though it were two settings.
-    let is_engine = |p: &RuntimeParam| p.engine.as_deref() == Some("v8");
+    let is_engine = |p: &RuntimeParam| p.engine == Some(Engine::V8);
     let owned_by_running = move |p: &RuntimeParam| applies_here(p) && !is_engine(p);
     let owned_by_engine = move |p: &RuntimeParam| applies_here(p) && is_engine(p);
     let is_universal = |p: &RuntimeParam| -> bool { p.applies_to.is_none() };
 
-    let runtime_tuning: Vec<String> = tuning
+    let runtime_tuning: Vec<Category> = tuning
         .iter()
-        .filter(|c| params.iter().any(|p| &p.category == *c && owned_by_running(p)))
-        .cloned()
+        .filter(|c| params.iter().any(|p| p.category == **c && owned_by_running(p)))
+        .copied()
         .collect();
-    let engine_tuning: Vec<String> = tuning
+    let engine_tuning: Vec<Category> = tuning
         .iter()
-        .filter(|c| params.iter().any(|p| &p.category == *c && owned_by_engine(p)))
-        .cloned()
+        .filter(|c| params.iter().any(|p| p.category == **c && owned_by_engine(p)))
+        .copied()
         .collect();
-    let shared_tuning: Vec<String> = tuning
+    let shared_tuning: Vec<Category> = tuning
         .iter()
-        .filter(|c| params.iter().any(|p| &p.category == *c && is_universal(p)))
-        .cloned()
+        .filter(|c| params.iter().any(|p| p.category == **c && is_universal(p)))
+        .copied()
         .collect();
 
     rsx! {
@@ -403,7 +419,7 @@ fn ParamBoards(
                                     .collect();
                                 rsx! {
                                     CategoryBoard {
-                                        title: category_title(&category).to_string(),
+                                        title: category_title(category).to_string(),
                                         rows,
                                         draft,
                                         effective: resp.effective.clone(),
@@ -449,7 +465,7 @@ fn ParamBoards(
                                 .collect();
                             rsx! {
                                 CategoryBoard {
-                                    title: category_title(&category).to_string(),
+                                    title: category_title(category).to_string(),
                                     rows,
                                     draft,
                                     effective: resp.effective.clone(),
@@ -536,7 +552,7 @@ fn ParamBoards(
                             .collect();
                         rsx! {
                             CategoryBoard {
-                                title: category_title(&category).to_string(),
+                                title: category_title(category).to_string(),
                                 rows,
                                 draft,
                                 effective: resp.effective.clone(),
@@ -690,7 +706,7 @@ fn CategoryBoard(
     #[props(default = String::new())]
     width_class: String,
 ) -> Element {
-    let all_restart = rows.iter().all(|p| p.applies_at == "restart");
+    let all_restart = rows.iter().all(|p| p.applies_at == AppliesAt::Restart);
     let board_class = if width_class.is_empty() {
         PARAM_BOARD_CLASS.to_string()
     } else {
@@ -755,7 +771,7 @@ fn ParamBlock(
     let ignored = param
         .applies_to
         .as_ref()
-        .is_some_and(|list| !list.iter().any(|r| r == &running));
+        .is_some_and(|list| !list.iter().any(|r| runtime_key(*r) == running));
 
     // Placeholder shows the default, so an empty field reads as "unset —
     // inheriting the default" rather than as a missing value. A null default
@@ -817,13 +833,13 @@ fn ParamBlock(
                 code { class: "text-gray-400 text-[10px]", "{param.flag}" }
                 if show_applies {
                     span { class: PARAM_BOARD_NOTE_CLASS,
-                        if param.applies_at == "runtime" { "(immediate)" } else { "(restart)" }
+                        if param.applies_at == AppliesAt::Runtime { "(immediate)" } else { "(restart)" }
                     }
                 }
             }
             div { class: PARAM_INPUT_ROW_CLASS,
-                match param.value_type.as_str() {
-                    "int" => rsx! {
+                match param.value_type {
+                    ParamType::Int => rsx! {
                         input {
                             r#type: "number",
                             class: PARAM_NUMBER_INPUT_CLASS,
@@ -846,7 +862,7 @@ fn ParamBlock(
                     // common values, typing accepts anything else. A `select`
                     // could not do the second half, and 600 IANA zones in one
                     // is not a list anybody scrolls.
-                    "enum-open" => {
+                    ParamType::EnumOpen => {
                         let options = param.options.clone().unwrap_or_default();
                         let list_id = format!("{}-options", param.id);
                         rsx! {
@@ -876,7 +892,7 @@ fn ParamBlock(
                             }
                         }
                     },
-                    "enum" => {
+                    ParamType::Enum => {
                         // Options come from the backend registry, so a value
                         // cannot appear here without its explanation.
                         let options = param.options.clone().unwrap_or_default();
@@ -907,7 +923,7 @@ fn ParamBlock(
                             }
                         }
                     },
-                    "bool" => rsx! {
+                    ParamType::Bool => rsx! {
                         input {
                             r#type: "checkbox",
                             class: "toggle toggle-sm !border !border-white",
@@ -922,7 +938,9 @@ fn ParamBlock(
                             },
                         }
                     },
-                    _ => rsx! {
+                    // Named rather than `_`: a type added to the registry should
+                    // stop the build here, not silently render as a text box.
+                    ParamType::Str => rsx! {
                         input {
                             r#type: "text",
                             class: PARAM_TEXT_INPUT_CLASS,
