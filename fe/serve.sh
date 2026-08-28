@@ -2,43 +2,26 @@
 # Dev server for the rn frontend. dx defaults to :8080 — the port only comes
 # from this flag, there is no Dioxus.toml key for it in dx 0.7.
 #
-# One server per worktree, addressed by the worktree's own name.
+# $PORT overrides it, so parallel worktrees can each serve their own build
+# without three dx servers fighting over :1790. Unset, it stays :1790, which is
+# the port the backend's CORS default and the docs both name.
 #
-# dx watches the directory it is run from and nothing else, so a session
-# editing ~/cb sees no hot reload from a server running out of ~/rn: as far as
-# that watcher is concerned the file never changed. Running one server per
-# worktree is what makes every session's edits reload, and both things that
-# would otherwise collide — the port and the build directory — are derived
-# here rather than passed, so starting it is still just `./s`.
+# rn-grid.service already supplies it, one port per pane — ~/ca 1791, ~/cb
+# 1792, ~/cc 1793, and the ~/rn panes 1790, which are the four RN_CORS_ORIGIN
+# allows. Nothing here reproduces that mapping: a second copy of it could only
+# ever disagree with the first.
 cd "$(dirname "$0")"
 
+# The build directory is the part the environment gets wrong. That same service
+# exports one CARGO_TARGET_DIR into every pane, so without this override each
+# server writes crate `fe` over the others' output — the mismatched js/wasm
+# pair that serves a blank page, and the reason a second dx serve used to be
+# banned outright. ~/rn keeps the shared path, so its existing build is not
+# orphaned and the native artifacts every worktree's cargo shares stay shared.
 worktree="$(basename "$(cd .. && pwd)")"
-case "$worktree" in
-    rn) port_offset=0 ;;
-    ca) port_offset=1 ;;
-    cb) port_offset=2 ;;
-    cc) port_offset=3 ;;
-    # An unrecognised checkout gets the default port. Better a clear "address
-    # already in use" than a silent second server on a port nothing expects.
-    *)  port_offset=0 ;;
-esac
-
-# 1790–1793 are the four the backend already allows: RN_CORS_ORIGIN names each
-# of them for both localhost and 127.0.0.1. A fifth worktree needs adding there
-# too, or its fetches fail CORS with the page otherwise looking fine.
-: "${PORT:=$((1790 + port_offset))}"
-
-# The build directory has to differ per worktree, and the environment is
-# actively against that: rn-grid.service sets CARGO_TARGET_DIR for every pane,
-# so without this every server would write crate `fe` into one directory and
-# overwrite the others' output — the mismatched js/wasm pair that serves a
-# blank page. ~/rn keeps the original path so its existing build is not
-# orphaned; the rest get one named after themselves.
-if [ "$worktree" = "rn" ]; then
-    export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$HOME/.cache/rn-target}"
-else
+if [ "$worktree" != "rn" ]; then
     export CARGO_TARGET_DIR="$HOME/.cache/rn-target-$worktree"
 fi
 
-echo "serving $worktree on http://127.0.0.1:$PORT  (build dir $CARGO_TARGET_DIR)"
-exec dx serve --platform web --port "$PORT" "$@"
+echo "serving $worktree on http://127.0.0.1:${PORT:-1790}"
+exec dx serve --platform web --port "${PORT:-1790}" "$@"

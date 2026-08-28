@@ -341,7 +341,7 @@ nothing else, so a session editing `~/cb` gets no hot reload from the server
 running out of `~/rn` — as far as that watcher is concerned the file never
 changed, and pressing `r` rebuilds a tree that has not been touched. That is
 not a fault to debug; it is what one watcher on one directory means. `./s`
-therefore takes its port and its build directory from the worktree's own name:
+therefore serves the worktree it sits in, on that pane's own port:
 
 | worktree | port | build directory |
 |---|---|---|
@@ -350,12 +350,17 @@ therefore takes its port and its build directory from the worktree's own name:
 | `~/cb` | 1792 | `~/.cache/rn-target-cb` |
 | `~/cc` | 1793 | `~/.cache/rn-target-cc` |
 
-Those four ports are the ones `RN_CORS_ORIGIN` already allows, for `localhost`
-and `127.0.0.1` alike; a fifth worktree needs adding there too, or its fetches
-fail CORS while the page itself looks fine. The separate build directories are
-the point rather than tidiness: `rn-grid.service` exports one
-`CARGO_TARGET_DIR` into every pane, so without the override each server writes
-crate `fe` over the others' output.
+**The ports are not `serve.sh`'s doing** — `rn-grid.service` already exports a
+`PORT` per pane, and those are the four `RN_CORS_ORIGIN` allows for `localhost`
+and `127.0.0.1` alike. `serve.sh` reads it and does not reproduce the mapping;
+a second copy could only ever disagree with the first. A fifth worktree needs
+a port in the service and in `RN_CORS_ORIGIN`, or its fetches fail CORS while
+the page itself looks fine.
+
+The build directory is the part the environment gets wrong, and the only thing
+`serve.sh` overrides: that same service exports one `CARGO_TARGET_DIR` into
+every pane, so without it each server writes crate `fe` over the others'
+output.
 
 - To check the frontend compiles, run `cargo check` in `fe/`. It needs no port
   and is the answer nearly every time.
