@@ -158,10 +158,29 @@ pub fn ProcessPanel(
         // `w-fit` board here left the panel's remaining space as bare
         // background — and on a narrow window the same board pushed past the
         // panel edge instead. `flex-1` makes it absorb the difference either
-        // way, down to `min-w-64` — below that the status values break one
-        // character per line, so the row scrolls instead of squeezing further.
-        div { class: "{PARAM_BOARD_BASE_CLASS} flex-1 min-w-64 flex items-stretch gap-4",
-            div { class: "flex-1 min-w-0",
+        // way, down to `min-w-64`.
+        //
+        // `min-w-64` was not the floor it was written to be. It bounds the
+        // board, but the board holds two halves side by side, and the right one
+        // is `shrink-0` around a full command path — so at 16rem the right half
+        // kept its width, the left half was left with almost none, and the
+        // status values broke one character per line while "Restart Backend"
+        // overflowed its half and printed on top of "Status:". That is the
+        // state the page has actually been in, at every window width: the row
+        // never scrolled, because nothing was asking for the space.
+        //
+        // So the halves wrap. The left one carries a real minimum, which is
+        // what makes the wrap happen — a `flex-1 min-w-0` half has a base size
+        // of zero and will collapse silently forever rather than push its
+        // neighbour onto the next line. When there is room the board reads as
+        // it always did; when there is not, the status block drops below the
+        // rows instead of squeezing them.
+        div { class: "{PARAM_BOARD_BASE_CLASS} flex-1 min-w-64 flex flex-wrap items-stretch gap-4",
+            // 12rem in a style rather than a `min-w-48` class: the stylesheet is
+            // generated from the class names Tailwind has seen, and only
+            // min-w-0, min-w-6 and min-w-64 are in it. A class it has not seen
+            // is not a smaller rule, it is no rule at all.
+            div { class: "flex-1 min-w-0", style: "min-width: 12rem;",
                 div { class: "flex items-center gap-2 mb-3",
                     span { class: PARAM_BOARD_TITLE_CLASS, "Restart Backend" }
                 }
@@ -313,7 +332,14 @@ pub fn ProcessPanel(
             // the buttons cannot cover — nothing on this page can start a
             // backend that is not running to answer the request, so the
             // command is shown to be copied rather than offered as a button.
-            div { class: "shrink-0 flex flex-col",
+            // `shrink-0` is what makes this half wrap rather than be crushed
+            // when the board is narrow — but on its own line it was still
+            // sized to its widest child, so the sentence and the command ran
+            // past the board's edge. The cap stops that; `max-width` overrides
+            // the max-content sizing that `shrink-0` otherwise gets, without
+            // letting the half be squeezed while it is still beside the rows.
+            // Inline, because `max-w-full` is not in the generated stylesheet.
+            div { class: "shrink-0 flex flex-col", style: "max-width: 100%;",
                 // Both halves stretch, so both headings start at the top of the
                 // board and sit level. The centring below is done inside this
                 // half — by `flex-1 justify-center` on the block under the
@@ -343,7 +369,11 @@ pub fn ProcessPanel(
                     // command's own width — the block is right-aligned, so a Copy
                     // on the end of the line would read as the end of the command.
                     div { class: "flex flex-col items-center gap-1",
-                        code { class: "text-gray-200 bg-gray-900 rounded px-2 py-1", "{START_COMMAND}" }
+                        // Wraps rather than overflowing. The block is opaque,
+                        // so an overflow here did not merely stick out — it
+                        // painted over the Listening value behind it and hid
+                        // part of the URL.
+                        code { class: "text-gray-200 bg-gray-900 rounded px-2 py-1 break-all", "{START_COMMAND}" }
                         button {
                             class: "text-xs cursor-pointer hover:underline bg-transparent border-0 p-0",
                             style: "color: #22d3ee;",
