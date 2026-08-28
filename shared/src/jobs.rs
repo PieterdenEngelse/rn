@@ -180,6 +180,14 @@ wire! {
         /// renders as nothing, rather than as a row saying "no webhook".
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub webhook: Option<WebhookInfo>,
+        /// What this job remembers between runs, as counts.
+        ///
+        /// Sent for every job, zeroed for the ones that hold nothing, so the
+        /// row can say what is held and offer to forget it only where there is
+        /// something to forget. A control that is always present on a job with
+        /// no memory reads as though the job has one.
+        #[serde(default)]
+        pub remembered: Remembered,
     }
 }
 
@@ -554,6 +562,29 @@ wire! {
         pub id: String,
         pub path: String,
         pub content: String,
+    }
+}
+
+wire! {
+    /// How much one job is holding between runs.
+    ///
+    /// Counts, never values, for the reason the reset response gives. It is on
+    /// the catalogue rather than fetched separately because the row needs it to
+    /// decide what to render at all, and a second request per job would make
+    /// the board's shape depend on a race.
+    ///
+    /// Zero is the ordinary state of a job that does not poll — most of them —
+    /// and of a polling job that has never run — which is also why it derives
+    /// Default: the field is `#[serde(default)]` on the catalogue, so a payload
+    /// written before this existed reads as "holding nothing" rather than
+    /// failing to parse.
+    #[derive(Copy, Eq, Default)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Remembered {
+        /// Cursor keys held.
+        pub cursors: u32,
+        /// Item ids in the seen window.
+        pub ids: u32,
     }
 }
 

@@ -118,7 +118,16 @@ credentials: Array<CredentialRef>,
  * Set when this job accepts a webhook. Absent is the common case and
  * renders as nothing, rather than as a row saying "no webhook".
  */
-webhook?: WebhookInfo | null, };
+webhook?: WebhookInfo | null, 
+/**
+ * What this job remembers between runs, as counts.
+ *
+ * Sent for every job, zeroed for the ones that hold nothing, so the
+ * row can say what is held and offer to forget it only where there is
+ * something to forget. A control that is always present on a job with
+ * no memory reads as though the job has one.
+ */
+remembered: Remembered, };
 
 /**
  * The board a parameter is filed under on Config → Runtime.
@@ -864,6 +873,30 @@ want: string,
  * What the running process actually has.
  */
 have: string, };
+
+/**
+ * How much one job is holding between runs.
+ *
+ * Counts, never values, for the reason the reset response gives. It is on
+ * the catalogue rather than fetched separately because the row needs it to
+ * decide what to render at all, and a second request per job would make
+ * the board's shape depend on a race.
+ *
+ * Zero is the ordinary state of a job that does not poll — most of them —
+ * and of a polling job that has never run — which is also why it derives
+ * Default: the field is `#[serde(default)]` on the catalogue, so a payload
+ * written before this existed reads as "holding nothing" rather than
+ * failing to parse.
+ */
+export type Remembered = { 
+/**
+ * Cursor keys held.
+ */
+cursors: number, 
+/**
+ * Item ids in the seen window.
+ */
+ids: number, };
 
 /**
  * `POST /api/restart`: whether it happened, was queued, or was refused.

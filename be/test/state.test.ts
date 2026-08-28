@@ -331,6 +331,46 @@ test("stats() counts what is remembered, never what it is", () => {
     assert.deepEqual(state.stats(), { jobs: 2, cursors: 3, ids: 1 });
 });
 
+test("statsFor() answers for one job, and zero is an answer", () => {
+    const a = state.open("alpha");
+    a.set("since", 1);
+    a.set("etag", "x");
+    a.seen("i1");
+    a.commit();
+    const b = state.open("beta");
+    b.set("since", 2);
+    b.commit();
+
+    // Per job, not the store's total split up: alpha's two cursors and one id
+    // are alpha's, and beta's single cursor does not leak into them. The row on
+    // Monitor → Jobs says "remembers 2 cursors and 1 item id" from this, so a
+    // count borrowed from a neighbour would be a sentence about the wrong job.
+    assert.deepEqual(state.statsFor("alpha"), { cursors: 2, ids: 1 });
+    assert.deepEqual(state.statsFor("beta"), { cursors: 1, ids: 0 });
+
+    // The one that decides whether anything renders at all. A job that has
+    // never run has no entry in the store, and the page reads zeroes here as
+    // "nothing to forget" and draws no control — so this returning undefined,
+    // or throwing, would put a reset button on every job that never stores a
+    // thing.
+    assert.deepEqual(state.statsFor("never-run"), { cursors: 0, ids: 0 });
+});
+
+test("a job that has forgotten reports nothing held", () => {
+    const a = state.open("alpha");
+    a.set("since", 1);
+    a.seen("i1");
+    a.commit();
+    assert.deepEqual(state.statsFor("alpha"), { cursors: 1, ids: 1 });
+
+    // forget() removes the entry outright, so this is the missing-entry answer
+    // again — which is the point. A job that has just been reset and a job that
+    // has never run are the same job as far as the row is concerned, and the
+    // control goes away in both cases instead of lingering with nothing to do.
+    state.forget("alpha");
+    assert.deepEqual(state.statsFor("alpha"), { cursors: 0, ids: 0 });
+});
+
 // ---- forgetting one job --------------------------------------------------
 
 test("forgetting one job leaves every other job's memory alone", () => {

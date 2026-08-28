@@ -357,6 +357,17 @@ export function createApp() {
                     // fail at 03:00 for want of a token otherwise looks exactly
                     // like one that will work.
                     credentials: (j.credentials ?? []).map((name) => secrets.describe(name)),
+                    // How much this job is holding between runs. Counts only,
+                    // for the reason state.stats() gives: a cursor is whatever
+                    // a source uses as an identifier, and reporting that
+                    // something is remembered is a different act from showing
+                    // what.
+                    //
+                    // Per job rather than as an aggregate, because the row uses
+                    // it to decide whether it has anything to offer at all —
+                    // "forget this job's memory" on a job with no memory reads
+                    // as though it has one.
+                    remembered: jobState.statsFor(j.id),
                 })),
                 dryRun: dryRun(),
                 // The knobs every run is subject to, whichever job it is.

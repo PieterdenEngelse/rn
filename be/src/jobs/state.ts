@@ -439,6 +439,20 @@ export function stats(): { jobs: number; cursors: number; ids: number } {
     };
 }
 
+/**
+ * What one job is holding, for the page that offers to forget it.
+ *
+ * `stats()` answers the same question across every job at once, which is the
+ * right shape for a board reporting the store's size and the wrong shape for a
+ * row deciding whether it has anything to offer. Counts either way — see
+ * `stats()` for why there is no way to ask what is in there.
+ */
+export function statsFor(jobId: string): Forgotten {
+    const held = store[jobId];
+    if (held === undefined) return { cursors: 0, ids: 0 };
+    return { cursors: Object.keys(held.cursors).length, ids: held.seen.length };
+}
+
 /** What a targeted reset removed. Counts, because the store never reveals values. */
 export interface Forgotten {
     cursors: number;

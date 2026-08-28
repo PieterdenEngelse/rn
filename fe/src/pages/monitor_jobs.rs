@@ -295,6 +295,17 @@ fn JobRow(
             .collect::<std::collections::BTreeMap<String, serde_json::Value>>()
     });
 
+    // What this job is holding, and the words for it. Zero on every job that
+    // does not poll, which is what decides whether the control appears at all.
+    let held = job.remembered.cursors + job.remembered.ids;
+    let remembered_label = match (job.remembered.cursors, job.remembered.ids) {
+        // Both numbers when both are there, because they are different things:
+        // a cursor is one mark per source, an item id is one per thing handled.
+        (c, 0) => plural(c, "cursor"),
+        (0, i) => plural(i, "item id"),
+        (c, i) => format!("{} and {}", plural(c, "cursor"), plural(i, "item id")),
+    };
+
     // The reset is two clicks, not one. It destroys something with no copy
     // kept, and a single cyan word sitting between "Error log" and "Run now" is
     // exactly the shape of a thing people click to find out what it does.
@@ -416,11 +427,23 @@ fn JobRow(
                         },
                         if showing_errors() { "Hide errors" } else { "Error log" }
                     }
+                    // Only where there is something to forget. A control that
+                    // is always there implies every job has a memory, and most
+                    // of them do not — notify and the webhook echo never store
+                    // a thing, so offering to clear their memory taught
+                    // something untrue about how the store works.
+                    //
+                    // What is held is said out loud beside it, because the
+                    // button appearing on some rows and not others is otherwise
+                    // a mystery the page never explains.
+                    if held > 0 {
+                        span { class: "text-gray-400 text-xs", "remembers {remembered_label}" }
+                    }
                     // Not offered as "disabled while running": the backend is
                     // the authority on whether a reset can land, and it refuses
                     // with a reason worth reading. Hiding the button would make
                     // the rule invisible instead of teaching it.
-                    if confirming() {
+                    if held > 0 && confirming() {
                         span { class: "text-gray-300 text-xs", "Forget this job's memory?" }
                         button {
                             class: "cursor-pointer",
@@ -439,7 +462,7 @@ fn JobRow(
                             onclick: move |_| confirming.set(false),
                             "Cancel"
                         }
-                    } else {
+                    } else if held > 0 {
                         button {
                             class: "cursor-pointer",
                             style: "color: #22d3ee;",
@@ -451,12 +474,16 @@ fn JobRow(
                         }
                     }
                     // Inline beside its own control rather than in the info
-                    // column — the exception CLAUDE.md names.
-                    InfoButton {
-                        title: "Forget memory".to_string(),
-                        what: FORGET_WHAT.to_string(),
-                        why: FORGET_WHY.to_string(),
-                        if_wrong: FORGET_IF_WRONG.to_string(),
+                    // column — the exception CLAUDE.md names. Shown with the
+                    // control and not without it: an info button explaining a
+                    // control that is not there is worse than neither.
+                    if held > 0 {
+                        InfoButton {
+                            title: "Forget memory".to_string(),
+                            what: FORGET_WHAT.to_string(),
+                            why: FORGET_WHY.to_string(),
+                            if_wrong: FORGET_IF_WRONG.to_string(),
+                        }
                     }
                     button {
                         class: "text-blue-400 hover:text-blue-300 cursor-pointer disabled:cursor-default",
