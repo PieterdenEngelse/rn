@@ -395,6 +395,14 @@ export const watchUpstreams: Job = {
 
     source: import.meta.filename,
 
+    // Every lookup is a GET against a public registry, and the only thing this
+    // job writes is the cursor recording what it saw. That declaration is what
+    // keeps the report incremental on an install that is not armed — without
+    // it, a disarmed run remembers nothing and re-announces the same eleven
+    // releases tomorrow, and the only cure was arming prune-profiles' deletions
+    // along with it. See Job.effectFree.
+    effectFree: true,
+
     // Around twenty small requests, four at a time, against three registries
     // that are occasionally slow. Two minutes is generous for that and still
     // bounds the case worth bounding: a registry that accepts the connection
@@ -729,16 +737,18 @@ export const watchUpstreams: Job = {
 
         if (ctx.dryRun) {
             // The report is the same either way — this job only ever reads —
-            // so what dry run withholds is the *remembering*, and saying that
-            // plainly is the difference between "why do I get this every day"
-            // having an answer and not.
+            // and because it declares `effectFree`, so is the remembering: the
+            // cursor moved, and tomorrow reports what moved after today. What
+            // dry run still withholds here is `changed`, which is the handoff
+            // to `onChange`: a disarmed install reports the news on the page
+            // and tells nobody, which is the difference worth stating.
             return {
                 summary,
                 changed: false,
                 skipped:
                     `${news.length} release(s) to report, listed in the steps. DRY_RUN is on, ` +
-                    `so this run is not remembered and tomorrow's will report them again — ` +
-                    `arm rn on Config → Runtime to make the report incremental.`,
+                    `so tomorrow's run reports only what moves after this one, but nothing is ` +
+                    `handed to a follow-up job — arm rn on Config → Runtime for that.`,
             };
         }
 

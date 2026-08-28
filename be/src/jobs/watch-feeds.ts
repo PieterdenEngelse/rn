@@ -424,6 +424,13 @@ export const watchFeeds: Job = {
 
     source: import.meta.filename,
 
+    // Every request is a GET and the only write is the record of which entries
+    // have been seen, so the hourly report stays incremental on an install that
+    // is not armed. Hourly is where withholding hurt most: twenty-four
+    // identical reports a day is the definition of the hum this job's memory
+    // exists to remove. See Job.effectFree.
+    effectFree: true,
+
     // A handful of GETs against hosts that are occasionally slow, with a hard
     // ceiling on how much of each response is read. Two minutes bounds the case
     // worth bounding: a host that accepts the connection and then stops talking.
@@ -778,17 +785,18 @@ export const watchFeeds: Job = {
         }
 
         if (ctx.dryRun) {
-            // The report is the same either way — this job only ever reads — so
-            // what dry run withholds is the *remembering*, and saying that
-            // plainly is the difference between "why do I get this every hour"
-            // having an answer and not.
+            // The report is the same either way — this job only ever reads —
+            // and `effectFree` means the remembering is too, so the next hour
+            // reports only what appeared after this one. What dry run still
+            // withholds is `changed`, and with it the handoff to `onChange`:
+            // the news reaches the page and nothing carries it further.
             return {
                 summary,
                 changed: false,
                 skipped:
                     `${news.length} entr(ies) to report, listed in the steps. DRY_RUN is on, ` +
-                    `so nothing is remembered and the next run will report them again — arm ` +
-                    `rn on Config → Runtime to make the report incremental.`,
+                    `so the next run reports only what appears after this one, but nothing is ` +
+                    `handed to a follow-up job — arm rn on Config → Runtime for that.`,
             };
         }
 

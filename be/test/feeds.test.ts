@@ -545,7 +545,7 @@ test("a configuration too big for the window says so before it misbehaves", asyn
     assert.equal(warned?.detail?.capacity, jobState.SEEN_CAPACITY);
 });
 
-test("a dry run reports the same entries every time, and says why", async () => {
+test("a dry run remembers what it saw, and says what it still withholds", async () => {
     serve({ "https://a.example/f.xml": RSS });
     dry.setDryRun(true);
     const first = await runJob(noRetry, "manual", undefined, {
@@ -556,13 +556,18 @@ test("a dry run reports the same entries every time, and says why", async () => 
     assert.match(String(first.skipped), /DRY_RUN is on/);
     assert.equal(first.summary.reported, 2);
 
-    // The cursor is the only thing withheld, so an unarmed install reports the
-    // same entries forever — correctly. That is the switch working.
+    // This job declares effectFree, so the cursor survives a disarmed run and
+    // the second has nothing new to say. Until it did, this line asserted 2
+    // again: an hourly job announcing the same entries twenty-four times a day,
+    // curable only by arming every other job in the install with it.
     const second = await runJob(noRetry, "manual", undefined, {
         feeds: "https://a.example/f.xml",
         catchUp: true,
     });
-    assert.equal(second.summary.reported, 2);
+    assert.equal(second.summary.reported, 0);
+    // What dry run still withholds, and the reason arming is still a decision:
+    // `changed` is what an onChange handler fires on, and it stays false.
+    assert.equal(second.changed, false);
 });
 
 test("the entries examined per run stop at the limit", async () => {

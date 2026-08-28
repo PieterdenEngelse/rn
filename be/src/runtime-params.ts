@@ -838,7 +838,12 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
                 "there is no override, which is what makes \"is anything armed right now\" a " +
                 "question with one answer. Read when each job starts, so changing it applies " +
                 "to the next run and never to one already going under the value it began " +
-                "with.",
+                "with.\n\nOne thing it no longer withholds from every job: a job that " +
+                "declares it changes nothing outside rn — every request a GET — keeps the " +
+                "cursor recording what it saw, so its report stays incremental while this is " +
+                "on. Config → Jobs names those jobs on the \"While disarmed\" row. Nothing " +
+                "else changes: such a run still reports changed: false, so it hands off to " +
+                "no follow-up job.",
             why:
                 "Because this is an automation tool, and the failure mode of a mistake is not " +
                 "a crash — it is something irreversible happening to your files or to someone " +

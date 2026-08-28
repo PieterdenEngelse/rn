@@ -106,6 +106,18 @@ onChange?: string | null,
  */
 retry?: RetryPolicy | null, 
 /**
+ * Set when a run of this job changes nothing outside rn's own
+ * bookkeeping — every request a GET, the cursor its only write.
+ *
+ * Sent because it changes what the safety switch does to this job:
+ * an effect-free job keeps its cursor while the install is disarmed,
+ * so its report is incremental where every other job's would repeat
+ * itself. A user reading "dry run is on" on one page and an
+ * incremental report on another needs the two reconciled somewhere,
+ * and this is the field that does it.
+ */
+effectFree: boolean, 
+/**
  * What this job accepts for a single run. Empty for a job that takes
  * none, which is most of them.
  */

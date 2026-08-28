@@ -320,6 +320,30 @@ fn JobConfigRow(
                     }
                 }
 
+                dt { class: "text-gray-400", "While disarmed" }
+                dd { class: "text-gray-300 flex items-center gap-2 flex-wrap",
+                    if job.effect_free {
+                        span { "remembers what it saw — the report stays incremental" }
+                        span { class: "text-gray-400",
+                            "— this job declares it changes nothing outside rn"
+                        }
+                    } else {
+                        span { class: "text-gray-400",
+                            "remembers nothing — every run reports what the last one did"
+                        }
+                    }
+                    // Inline, like Retry: this row explains the interaction
+                    // between two settings rather than the job above it, and
+                    // it is the answer to why one board's report repeats
+                    // itself and another's does not.
+                    InfoButton {
+                        title: "While disarmed".to_string(),
+                        what: EFFECT_FREE_WHAT.to_string(),
+                        why: EFFECT_FREE_WHY.to_string(),
+                        if_wrong: EFFECT_FREE_IF_WRONG.to_string(),
+                    }
+                }
+
                 dt { class: "text-gray-400", "Credentials" }
                 dd { class: "text-gray-300 flex items-center gap-2 flex-wrap",
                     if job.credentials.is_empty() {
@@ -413,6 +437,23 @@ const RETRY_IF_WRONG: &str =
      \"up to\" figure: a job whose worst case exceeds its own interval will still be running \
      when its next slot arrives, and the scheduler skips a slot rather than stacking a second \
      copy.";
+
+const EFFECT_FREE_WHAT: &str =
+    "What DRY_RUN does to this job's memory. Every job honours the safety switch by doing all      of its work except the part that writes — and a cursor, the note of how far a job got,      is a write. So a disarmed run of an ordinary job reads, compares, reports, and then      forgets, which means the next run sees exactly what this one saw.
+
+A job that only      ever issues GETs can say so in its own file, with effectFree: true. The runner then      commits that job's cursor even while the install is disarmed, and the step trace says      which of the two happened: state-committed with the reason, or state-withheld.
+
+What      stays withheld either way is changed. A disarmed run reports changed: false whatever it      found, so the handoff to an On change job does not fire — the news reaches this app and      goes no further.";
+
+const EFFECT_FREE_WHY: &str =
+    "Because without it, watching something is a daily hum. watch-upstreams found eleven      pins behind their upstreams, forgot, and reported the same eleven the next morning, and      the morning after — correctly, and forever. The release that actually matters then      arrives indistinguishable from the twenty announcements that came before it, which is      the failure the cursor exists to prevent.
+
+The only cure used to be arming the whole      install, because DRY_RUN is one switch for every job. That is a bad trade: to make one      read-only report incremental you also arm the job that deletes files. This declaration      separates the two questions — may this job change the world, and may it remember what      it saw — which were never the same question for a job that reads.";
+
+const EFFECT_FREE_IF_WRONG: &str =
+    "The declaration is reviewed, not enforced. Nothing in the runner can check that a job      which claims to change nothing actually changes nothing, so a job that declares      effectFree and then writes a file would keep its cursor while you believed the install      was disarmed. It belongs on a job whose every request is a GET, and adding it to a job      that acts is a bug that will not announce itself.
+
+Read the other way: a watcher      without it looks broken. It reports the same items every run, and the honest reading —      that it is disarmed and forgetting on purpose — is not visible on the report itself,      only in the run's step trace on Monitor → Jobs.";
 
 const CREDENTIALS_WHAT: &str =
     "The credentials this job needs, by name, and whether each one is configured on this \

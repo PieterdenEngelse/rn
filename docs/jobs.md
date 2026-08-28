@@ -220,8 +220,13 @@ ways nothing reports afterwards, so `runJob` enforces the three that matter:
   that all fifty were handled — and the record says only that a run failed.
 - **Each retry attempt starts from what is committed.** An attempt that failed
   halfway cannot leak its cursor into the attempt that succeeds.
-- **A dry run commits nothing.** `DRY_RUN` means make no change, and a cursor is
-  the change that makes the *next* run wrong rather than this one.
+- **A dry run commits nothing** — unless the job declares `effectFree`.
+  `DRY_RUN` means make no change, and a cursor is the change that makes the
+  *next* run wrong rather than this one: a rehearsal that advanced past fifty
+  items would tell the following run they were handled when nothing was. A job
+  that handles nothing cannot fail that way, so a job whose every request is a
+  GET says `effectFree: true` in its own file and keeps its cursor while the
+  install is disarmed. `watch-upstreams` and `watch-feeds` both do.
 
 Both outcomes are on the record: a run that moved a cursor leaves a
 `state-committed` step naming each key and what it moved from and to, and a dry
@@ -229,12 +234,26 @@ run leaves `state-withheld` saying why. A cursor that silently did not move is
 the explanation for a run that reported nothing, and without the step you are
 left comparing timestamps to work out why.
 
-**One consequence worth knowing before arming anything.** For a job that only
-reads and reports, the cursor is the *only* thing dry run withholds — so an
-unarmed install reports the same items every single run, correctly and forever.
-That is not a bug in the switch, but it does mean `DRY_RUN` changes what a
-polling job *shows you* rather than only what it touches. `watch-upstreams`
-says so in its skip line rather than leaving you to work it out.
+**Why the exception exists, since it weakens a rule worth keeping.** For a job
+that only reads and reports, the cursor is the *only* thing dry run withholds —
+so an unarmed install reported the same items every single run, correctly and
+forever, and the release that mattered arrived indistinguishable from the twenty
+announcements before it. The one cure was arming the whole install, because
+`DRY_RUN` is a single switch: to make one read-only report incremental you also
+armed the job that deletes files. That trade was made and reverted here inside
+two minutes, which is how the coupling was found.
+
+`effectFree` separates the two questions that were never the same one for a
+watcher — *may this job change the world*, and *may it remember what it saw*.
+What it does not touch is `changed`: a disarmed run still reports `changed:
+false` whatever it found, so the `onChange` handoff stays silent and the news
+reaches the page and goes no further. Both watchers say so in their skip line.
+
+**Reviewed, not enforced**, and worth being uncomfortable about. Nothing in the
+runner can check the claim, so a job that declares `effectFree` and then writes
+a file would keep its cursor while you believed the install was disarmed. The
+declaration belongs on a job whose every request is a GET; Config → Jobs shows
+which jobs carry it, on the "While disarmed" row.
 
 The store is deliberately small enough that it cannot become a database:
 thirty-two cursor keys per job, four kilobytes per value, and a bounded window

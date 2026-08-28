@@ -326,6 +326,12 @@ export function createApp() {
                     // is to tell you something, wired to nothing, still looks
                     // like a job that is working.
                     ...(j.onChange === undefined ? {} : { onChange: j.onChange }),
+                    // Always sent, never conditional: "this job remembers even
+                    // while disarmed" is the answer to why one report is
+                    // incremental and the next one repeats, and a field that
+                    // vanishes when false makes the page infer that from an
+                    // absence.
+                    effectFree: j.effectFree === true,
                     // Whether a hook is configured and whether its secret is
                     // there — never the secret, and never the URL. A tunnel
                     // address is a bearer capability: anyone holding it can

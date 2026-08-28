@@ -493,6 +493,38 @@ test("a run that fails leaves the cursor where it was", async () => {
     assert.equal(stepsOf("failer").includes("state-committed"), false);
 });
 
+test("a dry run of an effect-free job commits its cursor anyway", async () => {
+    dry.setDryRun(true);
+    const job = probe("reader", async (ctx) => {
+        ctx.state.set("since", 100);
+        return { changed: false, summary: {} };
+    });
+    await runJob({ ...job, effectFree: true });
+
+    // The point of the declaration: the next run of a watcher reports what
+    // moved since this one, on an install nobody has armed. Without it the
+    // same items are announced every run, forever, and the only cure was
+    // arming every other job in the install alongside it.
+    assert.equal(state.open("reader").get("since"), 100);
+    assert.equal(stepsOf("reader").includes("state-committed"), true);
+    assert.equal(stepsOf("reader").includes("state-withheld"), false);
+});
+
+test("an effect-free job still reports changed as the job returned it", async () => {
+    dry.setDryRun(true);
+    const job = probe("quiet-reader", async (ctx) => {
+        ctx.state.set("since", 1);
+        return { changed: false, summary: {} };
+    });
+    await runJob({ ...job, effectFree: true });
+
+    // What the declaration does not buy: the handoff. A disarmed watcher puts
+    // its news on the page and tells nobody, exactly as before — `changed` is
+    // what onChange fires on, and this is the half of dry run that still
+    // applies to a job that only reads.
+    assert.equal(history.lastFor("quiet-reader")?.changed, false);
+});
+
 test("a dry run stages a cursor, reports it, and remembers nothing", async () => {
     dry.setDryRun(true);
     await runJob(
@@ -503,9 +535,9 @@ test("a dry run stages a cursor, reports it, and remembers nothing", async () =>
     );
 
     assert.equal(state.open("rehearsal").get("since"), undefined);
-    // Reported rather than silent, because for a read-only job the cursor is
-    // the only thing dry run withholds — so the same items are reported every
-    // run, correctly and forever, and this step is the explanation.
+    // The rule for a job that does not declare `effectFree`, which is every
+    // job that acts. Reported rather than silent, because the withheld cursor
+    // is the explanation for a run that announced what the last one did.
     assert.equal(stepsOf("rehearsal").includes("state-withheld"), true);
 });
 

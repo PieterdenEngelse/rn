@@ -602,10 +602,19 @@ export async function runJob(
             // remembers none of it, because remembering is a change, and it is
             // the change that makes the *next* run wrong rather than this one.
             //
-            // Both branches leave a step, because a cursor that did not move is
+            // Unless the job declares `effectFree`, which says the run changed
+            // nothing outside this store in the first place. Then there is no
+            // "next run wrong" to protect: nothing was handled, so a cursor
+            // cannot claim it was, and withholding only buys the daily
+            // re-announcement the cursor exists to stop. See Job.effectFree.
+            //
+            // Every branch leaves a step, because a cursor that did not move is
             // the explanation for a run that reported nothing new, and a silent
-            // one leaves you comparing timestamps to work out why.
-            const withheld = dryRun();
+            // one leaves you comparing timestamps to work out why. The armed
+            // and the effect-free commits are told apart by the reason, so the
+            // trace never leaves you wondering whether the switch was off.
+            const disarmed = dryRun();
+            const withheld = disarmed && job.effectFree !== true;
             const moved = withheld ? staged.pending() : staged.commit();
             if (!state.isEmpty(moved)) {
                 note(withheld ? "state-withheld" : "state-committed", {
@@ -620,6 +629,14 @@ export async function runJob(
                               reason:
                                   "DRY_RUN is on — nothing was remembered, so the next run " +
                                   "sees exactly what this one saw",
+                          }
+                        : {}),
+                    ...(disarmed && !withheld
+                        ? {
+                              reason:
+                                  "DRY_RUN is on, but this job declares it changes nothing " +
+                                  "outside rn — so what it saw is remembered and the next " +
+                                  "run reports only what moved after it",
                           }
                         : {}),
                 });

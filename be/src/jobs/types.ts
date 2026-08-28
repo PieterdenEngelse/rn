@@ -186,6 +186,31 @@ export interface Job {
     timeoutMs?: number;
 
     /**
+     * Declares that a run of this job changes nothing outside rn's own
+     * bookkeeping: it reads, it compares, it reports.
+     *
+     * What it buys is one thing — `DRY_RUN` stops withholding the cursor.
+     * "A dry run commits nothing" is aimed at the job that *acts*: a rehearsal
+     * that advanced past fifty items would tell the next run they were handled
+     * when nothing was, which is the failure the rule exists to prevent. That
+     * failure cannot reach a job which handles nothing. What withholding costs
+     * such a job is the whole point of its memory: an unarmed install
+     * re-reports the same eleven releases every morning, the background hum the
+     * cursor exists to remove, and the only way out was arming every other job
+     * in the install along with it.
+     *
+     * This is not "write anyway". A disarmed run of an effect-free job still
+     * writes nothing but the record of what it saw, and still reports `changed:
+     * false`, so `onChange` stays silent exactly as before.
+     *
+     * **Reviewed, not enforced.** Nothing here can check the claim — a job that
+     * declares this and then deletes a file would commit its cursor while
+     * disarmed. It is a statement made in the registry and read by whoever
+     * reviews the job, and it belongs on a job whose every request is a GET.
+     */
+    effectFree?: boolean;
+
+    /**
      * The id of another job to run when this one fails.
      *
      * The answer to "nothing pushes" that does not require building a
