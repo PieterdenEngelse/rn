@@ -505,10 +505,21 @@ fn MonitorBoards(
                                         fill_height: true,
                                         height: 44,
                                         show_legend: false,
-                                        // Lifted with the host plot's readings,
-                                        // so the whole right-hand column moves
-                                        // as one.
-                                        labels_shift: Some("-5mm".to_string()),
+                                        // Not lifted, unlike the host plot above.
+                                        // That lift exists because a reading's
+                                        // block is taller than the line it
+                                        // names, and lifting both gutters used
+                                        // to keep them apart — but it moves
+                                        // every label off its own line, and it
+                                        // pushed these two up into the host
+                                        // plot's block, which is three lines
+                                        // hanging off a much shorter plot. The
+                                        // host plot keeps its lift, which takes
+                                        // it further away; dropping the lift
+                                        // here takes these further down. The
+                                        // two now clear each other, and rss
+                                        // sits on its own curve rather than
+                                        // 5mm above it.
                                         // Said under the rss reading below instead:
                                         // the peak is the top of the scale, and on
                                         // this plot the line that reaches it is
