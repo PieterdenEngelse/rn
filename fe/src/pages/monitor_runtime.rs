@@ -420,6 +420,10 @@ fn MonitorBoards(
                                         side_labels: vec![
                                             SideLabel {
                                                 value: m.host.total_mem_mb - m.host.free_mem_mb,
+                                                // One series on this plot, so
+                                                // there is nothing a swatch
+                                                // would disambiguate.
+                                                color: None,
                                                 content: rsx! {
                                                     div { class: "w-full",
                                                         Metric {
@@ -472,14 +476,15 @@ fn MonitorBoards(
                                 class: "flex flex-col flex-1 min-h-0",
                                 style: "margin-top: 2mm;",
                                 div {
-                                    // Ten rem, not eight. The two readings pinned
-                                    // in the gutter are three lines each and are
-                                    // placed by value: squeeze the plot and the
-                                    // gap between the lines shrinks below the
-                                    // height their labels need, and rss's peak
-                                    // lands on heap used's name. This is a floor
-                                    // for the labels, not for the curve — the
-                                    // curve reads fine much smaller.
+                                    // Ten rem, not eight. This used to be the
+                                    // only thing keeping the two readings apart:
+                                    // squeeze the plot and the gap between the
+                                    // lines shrank below the height their labels
+                                    // need, and rss's peak landed on heap used's
+                                    // name. Sparkline now spaces them itself, so
+                                    // this is back to being about the curve —
+                                    // which reads fine much smaller, but has
+                                    // room here to show the steps in rss.
                                     class: "mb-1 flex flex-col flex-1 min-h-0 max-h-40",
                                     Sparkline {
                                             before_start: h.before_start_fraction(),
@@ -517,6 +522,12 @@ fn MonitorBoards(
                                         // scale rss is always the upper one, so the
                                         // two readings labelled each other's curve.
                                         //
+                                        // Position is no longer the only thing saying
+                                        // which curve a reading belongs to: each
+                                        // carries its series' colour, so a label that
+                                        // has been spaced away from its line is still
+                                        // unambiguous.
+                                        //
                                         // `w-56` so both rows are one width: the
                                         // param-row rule pushes each info button to
                                         // that edge, which is what keeps the two
@@ -524,22 +535,19 @@ fn MonitorBoards(
                                         side_labels: vec![
                                             SideLabel {
                                                 value: m.memory.rss_mb,
+                                                color: Some("#60a5fa".to_string()),
                                                 content: rsx! {
-                                                    // Nudged half a centimetre below
-                                                    // the line it names. The block is
-                                                    // centred on the curve, and with
-                                                    // three lines of its own — name,
-                                                    // reading, peak — centring puts
-                                                    // the name level with the curve
-                                                    // and the reading under it. The
-                                                    // offset moves the block as a
-                                                    // whole so the curve runs above
-                                                    // it rather than through it.
+                                                    // No nudge. This block used to
+                                                    // carry a hand-set 27px push
+                                                    // downwards, to keep it clear of
+                                                    // the heap reading below — which
+                                                    // moved it off the line it names,
+                                                    // and still collided whenever the
+                                                    // two values read close together.
+                                                    // Spacing is the plot's job now,
+                                                    // applied only when it is needed.
                                                     div {
                                                     class: "w-full",
-                                                    // The 0.75rem the `mt-3` was,
-                                                    // plus 4mm on top of it.
-                                                    style: "margin-top: calc(0.75rem + 4mm);",
                                         Metric {
                                         label: "rss",
                                         value: format!("{} MB", m.memory.rss_mb),
@@ -563,6 +571,7 @@ fn MonitorBoards(
                                             },
                                             SideLabel {
                                                 value: m.memory.heap_used_mb,
+                                                color: Some("#22c55e".to_string()),
                                                 content: rsx! {
                                                     div { class: "w-full",
                                                         Metric {

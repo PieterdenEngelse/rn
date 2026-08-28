@@ -56,6 +56,22 @@ pub fn Sparkline(
     /// appears when there is one to show.
     #[props(default = true)]
     show_legend: bool,
+    /// The least vertical distance allowed between two adjacent side labels,
+    /// as a CSS length.
+    ///
+    /// Labels are placed by value, so two series that happen to read close
+    /// together get two blocks competing for the same few pixels: at the
+    /// default three lines apiece they overprint, and each ends up sitting
+    /// beside the other's curve. The gap is a floor, applied only where it is
+    /// needed — a label whose neighbour is far enough away is untouched and
+    /// still sits exactly on its own line.
+    ///
+    /// In `rem` rather than `%` because what must not overlap is the text,
+    /// whose height is set by the font and not by how tall the plot happens to
+    /// be. CSS `max()` resolves the two against each other at layout time,
+    /// which is the only place both are known.
+    #[props(default = String::from("3.75rem"))]
+    label_min_gap: String,
     /// A CSS length to shift the label gutter by, negative to lift it. The
     /// labels are placed against the plot's scale, which is the right anchor
     /// for where they point — but the block around each reading is taller than
@@ -89,6 +105,46 @@ pub fn Sparkline(
             div { class: "text-gray-400 text-xs", "collecting…" }
         };
     }
+
+    // Where each reading is pinned, resolved against its neighbours.
+    //
+    // A label's own place is the height of its value, exactly like the curve it
+    // names, and that is right until two values read close together. The blocks
+    // are three lines tall while the gap between two curves can be a few
+    // pixels, so both get drawn over the same space and each ends up beside the
+    // other's line — the readings then label each other, which is worse than
+    // either being slightly off. So the labels are walked top down and each is
+    // held at least `label_min_gap` below the one above it. Only a label that
+    // would have collided moves; the rest keep the position their value gives
+    // them.
+    //
+    // The floor is a CSS `max()` rather than a number worked out here, because
+    // only one of the two quantities is known at this point: the percentage is,
+    // the label's height in pixels is not — it depends on the font the browser
+    // actually resolves. `max()` is evaluated at layout time, where both are
+    // known, so the spacing stays correct when the plot is resized, the window
+    // is narrowed or the page is zoomed.
+    let label_tops: Vec<String> = {
+        let value_top = |l: &SideLabel| (1.0 - (l.value / scale)).clamp(0.0, 1.0) * 100.0;
+        let mut order: Vec<usize> = (0..side_labels.len()).collect();
+        order.sort_by(|a, b| {
+            value_top(&side_labels[*a])
+                .partial_cmp(&value_top(&side_labels[*b]))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let mut tops = vec![String::new(); side_labels.len()];
+        let mut above: Option<String> = None;
+        for i in order {
+            let own = format!("{:.2}%", value_top(&side_labels[i]));
+            let placed = match above {
+                None => own,
+                Some(prev) => format!("max({own}, calc({prev} + {label_min_gap}))"),
+            };
+            tops[i] = placed.clone();
+            above = Some(placed);
+        }
+        tops
+    };
 
     /// The runs of consecutive readings in a series, as polyline paths.
     ///
@@ -244,11 +300,35 @@ pub fn Sparkline(
                     // label and the line it names cannot disagree. The
                     // half-height shift centres the block on the line rather
                     // than hanging it below.
-                    for l in side_labels.iter() {
+                    //
+                    // `label_tops` has already spread any pair that would have
+                    // overprinted; where nothing was in the way the value's own
+                    // position is what comes back.
+                    for (i, l) in side_labels.iter().enumerate() {
                         div {
                             class: "absolute left-0 right-0 -translate-y-1/2",
-                            style: "top: {(1.0 - (l.value / scale)).clamp(0.0, 1.0) * 100.0:.2}%",
-                            {l.content.clone()}
+                            style: "top: {label_tops[i]};",
+                            // The swatch is what makes spreading safe. Once a
+                            // label can be nudged off its line, position alone
+                            // no longer says which curve it names, so the
+                            // colour does — the same square the legend row uses,
+                            // so the two agree on what a colour means.
+                            if let Some(c) = l.color.as_ref() {
+                                div { class: "flex items-start gap-2",
+                                    span {
+                                        // `mt-1` centres an 8px square on the
+                                        // 16px first line, and both utilities
+                                        // are ones the stylesheet already
+                                        // carries — a class Tailwind has not
+                                        // seen is simply absent at runtime.
+                                        class: "inline-block w-2 h-2 rounded-sm shrink-0 mt-1",
+                                        style: "background-color: {c};",
+                                    }
+                                    div { class: "flex-1 min-w-0", {l.content.clone()} }
+                                }
+                            } else {
+                                {l.content.clone()}
+                            }
                         }
                     }
                 }
@@ -295,6 +375,10 @@ pub struct SideLabel {
     /// The figure this label names, in the same units as the series — its
     /// position is computed from it.
     pub value: f64,
+    /// The colour of the curve this reading belongs to, drawn as a swatch
+    /// beside it. `None` where the plot has one series and there is nothing to
+    /// tell apart.
+    pub color: Option<String>,
     pub content: Element,
 }
 
