@@ -493,6 +493,38 @@ test("a refusal identified only by its error class is still recognised", async (
     );
 });
 
+test("a refusal known only by its class is permanent, not merely described", async () => {
+    // Where the two changes meet, and neither one proves this alone. The hint
+    // firing is what marks a failure permanent, so recognising a refusal by its
+    // error class is not only about the sentence — it decides whether a fixed
+    // permission grant is asked the same question three times.
+    //
+    // Before the thrown error was carried through, this run served two 30s
+    // backoffs to re-ask a grant that cannot widen while the process lives.
+    let calls = 0;
+    globalThis.fetch = (async (): Promise<Response> => {
+        calls += 1;
+        const err = new Error("net access denied by the runtime");
+        err.name = "NotCapable";
+        throw err;
+    }) as typeof fetch;
+
+    const started = Date.now();
+    await assert.rejects(
+        // The shipped job, retry policy and all.
+        runJob(watchFeeds, "manual", undefined, { feeds: "https://a.example/f.xml" }),
+        /network allowlist/,
+    );
+    assert.equal(calls, 1, "asked once");
+    assert.ok(Date.now() - started < 5_000, "no backoff was served");
+    const [run] = history.list();
+    assert.equal(run?.attempts, 1);
+    assert.match(
+        String((run?.steps ?? []).find((s) => s.name === "retry-skipped")?.detail.reason),
+        /fixed at startup/,
+    );
+});
+
 test("an ordinary failure is not dressed up as a permission problem", async () => {
     serve({});
     await assert.rejects(
