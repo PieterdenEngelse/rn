@@ -371,6 +371,17 @@ async function pool<T, R>(items: T[], work: (item: T) => Promise<R>): Promise<R[
  * whatever is in the netAllowlist setting, and nothing else — so this job is
  * the first thing in rn that a runtime switch can break, and it breaks with a
  * message about permissions that says nothing about where to grant them.
+ *
+ * Watched happen, rather than inferred, on deno 2.9.5: every one of the twenty
+ * lookups failed with `Requires net access to "nodejs.org:443", run again with
+ * the --allow-net flag` — the `Requires net access` arm of the test below, not
+ * the `PermissionDenied`/`NotCapable` ones, which are what an older Deno and a
+ * denied `Deno.permissions` query say. All three stay: the wording is theirs to
+ * change, and a hint that stops firing is a hint nobody notices is gone.
+ *
+ * The advice was checked too, not just the trigger: putting exactly those three
+ * hosts in netAllowlist and restarting takes the same run to a clean first-look
+ * report. The recipe for repeating it is in docs/dev.md.
  */
 function netPermissionHint(err: unknown): string | undefined {
     const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err);

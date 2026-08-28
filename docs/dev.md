@@ -47,6 +47,43 @@ instead is the mistake `CLAUDE.md` explains.
 
 ---
 
+## A scratch backend on another runtime
+
+For checking something that only happens under Bun or Deno — a permission
+refusal, a runtime flag, a startup failure — without touching the backend on
+:3010 or the real run history.
+
+**Point `HOME` somewhere else.** That is the whole trick, and it is not
+optional: the launcher passes `RN_SETTINGS_PATH` through to the child but *not*
+`RN_JOB_RUNS_PATH`, `RN_JOB_STATE_PATH` or `RN_HISTORY_PATH` (see the
+`allow_var` list in `launcher/src/main.rs`), so a scratch backend started any
+other way writes its runs and its cursors into the real `~/.config/rn/`. With
+`HOME` moved, every one of those defaults follows it, and so does the
+launcher's own view of the settings file.
+
+    S=/tmp/rn-scratch && mkdir -p "$S/.config/rn"
+    echo '{"jsRuntime": "deno"}' > "$S/.config/rn/settings.json"
+
+    # The runtime is found relative to the launcher binary: <root>/be/runtime/bin/node
+    # for the bundled Node, <root>/be/runtime-deno/bin/deno for this one. Both
+    # directories are gitignored, and a symlink into an existing install is enough.
+    mkdir -p be/runtime-deno/bin && ln -sfn "$(which deno)" be/runtime-deno/bin/deno
+
+    # --print-env resolves everything and spawns nothing — check the argv first.
+    env HOME="$S" BACKEND_PORT=3990 BACKEND_HOOKS_PORT=3991 ./target/debug/rn --print-env
+    env HOME="$S" BACKEND_PORT=3990 BACKEND_HOOKS_PORT=3991 ./target/debug/rn
+
+    curl -sS -X POST http://127.0.0.1:3990/api/jobs/<id> -d '{}'
+    python3 -m json.tool "$S/.config/rn/job-runs.json"   # the run record
+    env HOME="$S" ./target/debug/rn --stop
+
+Two things that will waste time otherwise. `current_exe()` resolves symlinks, so
+the launcher must be a real file under the worktree — a symlink to a shared
+`CARGO_TARGET_DIR` makes it look upward from the cache directory and report *no
+Node runtime found*. And `--print-env` shortens the scratch `HOME` to `~` in its
+output like any other path, so `settings ~/.config/rn/settings.json` there is
+the scratch file, not the real one.
+
 ## Hex equivalents for raw-CSS surfaces
 
 The Tailwind palette values behind the UI Color Rules in `CLAUDE.md`. Use these
