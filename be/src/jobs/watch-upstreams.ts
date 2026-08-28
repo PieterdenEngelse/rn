@@ -73,6 +73,7 @@ import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { display } from "../paths.ts";
 import { netPermissionHint } from "./net-permission.ts";
+import { PermanentFailure } from "./permanent.ts";
 import type { Job, JobContext, JobResult } from "./types.ts";
 
 /** Sent on every request. crates.io refuses an anonymous one outright. */
@@ -615,10 +616,21 @@ export const watchUpstreams: Job = {
                 first,
                 [...ecosystems].map((e) => ECOSYSTEM_HOSTS[e] ?? e),
             );
-            throw new Error(
+            const message =
                 `every lookup failed (${checked.length}) — first: ${first}` +
-                    (hint === undefined ? "" : `. ${hint}`),
-            );
+                (hint === undefined ? "" : `. ${hint}`);
+            // The hint firing *is* the classification: a runtime permission
+            // grant is fixed when the process starts and cannot widen while it
+            // runs, so the second and third attempts are guaranteed to be told
+            // the same thing. Everything else here — a 503, a DNS blip, a
+            // laptop whose wifi has not woken up — is what the policy is for.
+            if (hint !== undefined) {
+                throw new PermanentFailure(
+                    message,
+                    "the runtime's network grant is fixed at startup and cannot widen while it runs",
+                );
+            }
+            throw new Error(message);
         }
         for (const f of failed) {
             ctx.step("lookup-failed", { upstream: f.u.key, error: f.error ?? "" });

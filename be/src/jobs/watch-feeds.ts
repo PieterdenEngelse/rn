@@ -73,6 +73,7 @@
 
 import { createHash } from "node:crypto";
 import { netPermissionHint } from "./net-permission.ts";
+import { PermanentFailure } from "./permanent.ts";
 import { MAX_VALUE_BYTES, SEEN_CAPACITY } from "./state.ts";
 import type { Job, JobContext, JobResult } from "./types.ts";
 
@@ -638,10 +639,20 @@ export const watchFeeds: Job = {
             const first = failed[0]!.error ?? "unknown";
             const hosts = [...new Set(usable.map((u) => new URL(u).host))];
             const hint = netPermissionHint(first, hosts);
-            throw new Error(
+            const message =
                 `every feed failed (${polled.length}) — first: ${first}` +
-                    (hint === undefined ? "" : `. ${hint}`),
-            );
+                (hint === undefined ? "" : `. ${hint}`);
+            // The hint firing *is* the classification — see the same branch in
+            // watch-upstreams.ts. A permission grant is fixed when the process
+            // starts, so attempts two and three are told the same thing; a feed
+            // that 503s or times out is what the policy is actually for.
+            if (hint !== undefined) {
+                throw new PermanentFailure(
+                    message,
+                    "the runtime's network grant is fixed at startup and cannot widen while it runs",
+                );
+            }
+            throw new Error(message);
         }
         for (const f of failed) {
             ctx.step("feed-failed", { feed: f.label, error: f.error ?? "" });

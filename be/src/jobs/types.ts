@@ -258,6 +258,13 @@ export interface Job {
      * trace rather than silently running once. Passing `ctx.signal` on is what
      * makes retries work for slow jobs.
      *
+     * **A failure the job knows is permanent is not retried.** Throwing
+     * `PermanentFailure` from `./permanent.ts` — a 4xx from a receiver, a
+     * malformed input, a runtime permission the process cannot be granted while
+     * it runs — fails the run on the spot and writes `retry-skipped` into the
+     * trace with the reason. The policy stays declared and still covers every
+     * other failure in the same job: it marks one error, not one job.
+     *
      * One run record covers the whole sequence, carrying `attempts`; the errors
      * the earlier attempts hit are in `steps` as `retry` entries.
      */

@@ -63,10 +63,17 @@ after(async () => {
 /**
  * The job with its retry policy removed.
  *
- * Every failure test below would otherwise sit through three attempts and two
- * fifteen-second waits — ninety seconds of real time to assert a message. The
- * policy itself is pinned in its own test, so removing it here checks the
- * behaviour without also checking the clock.
+ * It used to carry every failure test here, because each one would otherwise
+ * sit through three attempts and two fifteen-second waits — ninety seconds of
+ * real time to assert a message. That was the test working around the
+ * behaviour rather than the behaviour being right, and it is why docs/todo.md
+ * carried the item for as long as it did.
+ *
+ * The permanent failures no longer need it: a bad format, a malformed
+ * credential and a 4xx all fail on the first attempt under the shipped policy,
+ * and those tests now run against `notify` itself — which is a far better
+ * assertion, since it checks the job a person actually gets. What is left here
+ * is the case that is still genuinely transient.
  */
 const noRetry: Job = (() => {
     const copy: Job = { ...notify };
@@ -199,7 +206,7 @@ test("an unknown format is refused before anything is sent", async () => {
     }) as typeof fetch;
 
     await assert.rejects(
-        runJob(noRetry, "manual", undefined, { format: "telegram" }),
+        runJob(notify, "manual", undefined, { format: "telegram" }),
         /not a body format/,
     );
     assert.equal(called, false);
@@ -224,7 +231,7 @@ test("a rejection by the receiver is recorded with its complaint, not the URL", 
     globalThis.fetch = (async () =>
         new Response("invalid_payload", { status: 400, statusText: "Bad Request" })) as typeof fetch;
 
-    await assert.rejects(runJob(noRetry, "change", changedRun()), /400/);
+    await assert.rejects(runJob(notify, "change", changedRun()), /400/);
 
     const [failure] = history.failuresFor("notify");
     // The receiver's own words are where the answer usually is — Slack says
@@ -238,7 +245,7 @@ test("a credential that is not a URL is refused without echoing it", async () =>
     process.env[secrets.envVarFor("notifyWebhook")] = "ntfy.sh/rn-forgot-the-scheme";
     globalThis.fetch = (async () => new Response("", { status: 200 })) as typeof fetch;
 
-    await assert.rejects(runJob(noRetry, "change", changedRun()), (err: Error) => {
+    await assert.rejects(runJob(notify, "change", changedRun()), (err: Error) => {
         assert.match(err.message, /not an http\(s\) URL/);
         // "Starts with" is enough to confirm a guess — see docs/token-sec.md.
         assert.equal(err.message.includes("ntfy.sh"), false);
@@ -254,6 +261,63 @@ test("the job refuses to start when the credential is absent", async () => {
     // that something is missing. This is also why nothing names notify in its
     // onChange by default.
     await assert.rejects(runJob(noRetry, "change", changedRun()), /RN_SECRET_NOTIFY_WEBHOOK/);
+});
+
+test("a 4xx is not retried, and the shipped job is what proves it", async () => {
+    dry.setDryRun(false);
+    let calls = 0;
+    globalThis.fetch = (async () => {
+        calls += 1;
+        return new Response("invalid_payload", { status: 400, statusText: "Bad Request" });
+    }) as typeof fetch;
+
+    const started = Date.now();
+    await assert.rejects(runJob(notify, "change", changedRun()), /invalid_payload/);
+
+    // Under the real policy — three attempts, fifteen seconds apart. Before
+    // this, that was ninety seconds to conclude what the first answer said.
+    assert.equal(calls, 1, "sent once");
+    assert.ok(Date.now() - started < 1_000, "and nothing was waited out");
+
+    const [failure] = history.failuresFor("notify");
+    assert.equal(failure?.attempts, 1);
+    const [skipped] = failure!.steps.filter((s) => s.name === "retry-skipped");
+    assert.match(String(skipped?.detail.reason), /the receiver rejected the request itself/);
+});
+
+test("a 5xx is still retried, because that is the failure the policy was written for", async () => {
+    dry.setDryRun(false);
+    let calls = 0;
+    globalThis.fetch = (async () => {
+        calls += 1;
+        return new Response("", { status: 503, statusText: "Service Unavailable" });
+    }) as typeof fetch;
+
+    // The shipped backoff is fifteen seconds and this asserts the count, not
+    // the clock, so the wait is taken out and the policy pinned separately.
+    const fast: Job = { ...notify, retry: { attempts: 3, backoffMs: 0 } };
+    await assert.rejects(runJob(fast, "change", changedRun()), /503/);
+
+    assert.equal(calls, 3, "a relay having a bad minute is asked again");
+    const [failure] = history.failuresFor("notify");
+    assert.equal(failure?.attempts, 3);
+    assert.equal(failure!.steps.filter((s) => s.name === "retry-skipped").length, 0);
+});
+
+test("408 and 429 are 4xx that mean try again, and are treated that way", async () => {
+    dry.setDryRun(false);
+    for (const status of [408, 429]) {
+        history.reset();
+        let calls = 0;
+        globalThis.fetch = (async () => {
+            calls += 1;
+            return new Response("", { status });
+        }) as typeof fetch;
+
+        const fast: Job = { ...notify, retry: { attempts: 2, backoffMs: 0 } };
+        await assert.rejects(runJob(fast, "change", changedRun()));
+        assert.equal(calls, 2, `${status} asks for the same request later, so it is sent again`);
+    }
 });
 
 test("the shipped job retries, because the failures are somebody else's", () => {

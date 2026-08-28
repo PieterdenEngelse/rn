@@ -303,3 +303,50 @@ first run looks like — which is also why nothing prunes the entries of a job
 that has left the catalogue. Commenting a job out of `JOBS` for an afternoon
 should not silently delete the mark that stops it reprocessing its whole source
 when it comes back.
+
+## 7. When a failure is not worth retrying
+
+A job declares `retry: { attempts, backoffMs }` and the runner honours it for
+every failure — which is right for the ones a retry policy is written for. A
+502 from a webhook relay, a registry having a bad minute, a laptop whose wifi
+has not woken up: all answered by asking again.
+
+Some failures answer identically every time, and the runner cannot tell which
+from the outside. **Throw `PermanentFailure` from `be/src/jobs/permanent.ts`**
+and the run fails on the spot:
+
+```ts
+if (isPermanentStatus(res.status)) {
+    throw new PermanentFailure(message, "the receiver rejected the request itself");
+}
+throw new Error(message);        // a 502 is what the three attempts are for
+```
+
+The second argument is the reason, and it is not decoration: it lands in the
+step trace as `retry-skipped`, and it is the answer to *"why did my `retry: 3`
+job only run once"* — a question that has to have one, the same way
+`retry-abandoned` does.
+
+**It marks one error, not one job.** The policy stays declared and still covers
+everything else the same job can hit. `watch-feeds` refuses to retry a
+permission denial and still gets all three attempts on a feed that is merely
+down.
+
+**Three shapes qualify**, all of them in the tree today:
+
+- **A 4xx from something you POSTed to.** `isPermanentStatus()` is the test, and
+  it excludes 408 and 429 — 4xx by numbering, "try again" by meaning.
+- **A malformed input or credential.** A format string with a typo in it is
+  still a typo on the third attempt.
+- **A runtime permission.** Under Deno the network grant is fixed when the
+  process starts and cannot widen while it runs, so `netPermissionHint()`
+  returning a string *is* the classification — see `be/src/jobs/net-permission.ts`.
+
+**Do not reach for it on a hunch.** The cost of retrying a permanent failure is
+bounded and visible — three attempts and two waits, on the record. The cost of
+marking a transient failure permanent is a job that gives up on a blip and
+reports a failure a retry would have absorbed, and nothing on the page will say
+so. When it is not obvious, retry.
+
+Why the job marks it rather than the runner asking, and why not a predicate:
+the doc comment at the top of `be/src/jobs/permanent.ts`.

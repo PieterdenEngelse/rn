@@ -33,6 +33,7 @@ import * as state from "./state.ts";
 import { jobById } from "./index.ts";
 import { record, type Trigger } from "./history.ts";
 import { resolveInput } from "./input.ts";
+import { PermanentFailure } from "./permanent.ts";
 import * as secrets from "../secrets.ts";
 import type { JobRun, JobStep } from "../generated/wire.ts";
 import type { JsonValue } from "../generated/serde_json/JsonValue.ts";
@@ -553,6 +554,22 @@ export async function runJob(
                         cause instanceof Error ? cause.message : String(cause);
 
                     if (attempts >= maxAttempts) throw cause;
+                    if (cause instanceof PermanentFailure) {
+                        // Recorded for the same reason retry-abandoned is: a
+                        // job that declares three attempts and takes one has to
+                        // say why, or the policy on the Config page is a lie
+                        // the record does not correct. The wait that did not
+                        // happen is the point — waitMs: 0 rather than the
+                        // policy's backoff.
+                        note("retry-skipped", {
+                            attempt: attempts,
+                            of: maxAttempts,
+                            error: message,
+                            reason: cause.reason,
+                            waitMs: 0,
+                        });
+                        throw cause;
+                    }
                     if (stillRunning) {
                         // Recorded rather than silently degrading to no retry:
                         // "why did my retry:3 job only run once" has to have an
