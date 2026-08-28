@@ -254,6 +254,22 @@ set can do that job. It is worth saying because of how it fails: correctly for
 months, and then a reprocessed backlog after one outage, at which point nobody
 suspects the cap.
 
+**`watch-feeds` is the consumer, and it is where the bound becomes arithmetic.**
+A feed cannot use a cursor at all — entries arrive backdated, entries are edited
+in place, and newest-first is a convention rather than a contract, so a
+timestamp cursor silently skips the post published on Tuesday and syndicated on
+Thursday. Per-item identity has none of those failures, which is what `seen()`
+is for. What that job had to work out is that the number to watch is not the
+capacity but the product: *feeds x entries examined per run* has to stay under
+the window, or one run pushes out ids the same run recorded. It checks that
+before it does any work and puts a `window-too-small` step on the record, since
+the alternative is finding out months later. Two things it added on top of the
+store are worth copying: an id is hashed and **qualified by its source**, because
+two feeds hand out the same guid all the time and an unqualified id would make
+the second copy read as already handled; and the entries below the per-run line
+are never asked about, so they stay new to the next run rather than being
+consumed by a question nobody acted on.
+
 **Config → Jobs reports it**, on the same board as the run-history capacities:
 the two caps, how many cursors are held, and across how many jobs. Counts only,
 and there is no endpoint that will return a stored value — a cursor is whatever

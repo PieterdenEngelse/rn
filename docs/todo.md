@@ -10,25 +10,7 @@ item.
 
 ---
 
-## 1. `seen()` has no consumer
-
-`ctx.state` is reached in exactly two places in the repo — `get` and `changed`,
-both in `watch-upstreams`. The bounded item-id window has thirty-six tests and
-no real caller.
-
-That is the situation `docs/n8n.md` rejects in as many words: *"a store with no
-consumer is the solution-looking-for-a-problem this project's rules reject."*
-The cursor half of the store was shaped by a job that needed it and is right
-because of that; the `seen()` half was designed on paper, and nothing has yet
-told us whether a thousand ids is the useful bound or whether the
-asking-records-it rule survives contact with a source that hands out items in
-batches.
-
-**What settles it**: a second real automation that polls *items* rather than
-versions — a feed, a mailbox, an issue tracker. The same argument that produced
-`watch-upstreams`, one level in.
-
-## 2. There is no way to reset one job's memory
+## 1. There is no way to reset one job's memory
 
 There is no targeted reset at all. `be/src/jobs/state.ts` exports `reset()`,
 which is the test seam that clears the in-memory store without saving, and
@@ -41,7 +23,7 @@ Not urgent while there is one polling job. It becomes a real edge the moment
 there are two, and the failure is quiet — a person deletes the file to re-run
 one report and silently re-triggers another job's whole backlog.
 
-## 3. A permanent rejection is retried as if it were transient
+## 2. A permanent rejection is retried as if it were transient
 
 `notify` declares `retry: { attempts: 3, backoffMs: 15_000 }`, which is right
 for the failures it was written for — a 502 from a webhook relay, a phone off
@@ -76,6 +58,24 @@ talks to an HTTP API" this item was waiting on is no longer the only way in:
 there are two classes of never-going-to-improve error now, and a permission
 denial is the easier of the two to recognise, since `netPermissionHint()`
 already has the predicate that identifies it.
+
+## 3. The Deno permission hint is written twice
+
+`netPermissionHint()` exists in both `be/src/jobs/watch-upstreams.ts` and
+`be/src/jobs/watch-feeds.ts` — the same regular expression over the same three
+Deno error shapes, differing only in which hosts the message names. A third job
+that makes an outbound request writes it a third time, and the copy that goes
+stale is the one nobody is looking at.
+
+Deliberately not folded together yet, and the reason is item 1: neither copy has
+ever been executed. Sharing a helper that nothing has watched run would make one
+unverified thing look like two. Once item 1 has driven the refusal path under
+Deno for real, the verified copy becomes the shared one, taking its hosts as an
+argument.
+
+**The cost while it stands**: two regexes to keep in step, and a job author who
+copies the wrong one ships a message naming nodejs.org, registry.npmjs.org and
+crates.io for a job that talks to none of them.
 
 ---
 
