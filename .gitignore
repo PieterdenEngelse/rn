@@ -18,8 +18,14 @@ node_modules/
 
 # Screenshots taken while checking a page — see "Checking the page" in
 # CLAUDE.md. They accumulate fast and are working files, not documentation.
-# Anything worth keeping belongs in docs/ under a name that says what it shows.
-scr-*.png
+# Every PNG is ignored rather than only the scr- prefix: a shot saved under any
+# other name was one `git add -A` away from being committed, and that has
+# already happened once. Anything worth keeping belongs in docs/ or in the
+# frontend's assets, both of which are un-ignored below, under a name that says
+# what it shows.
+*.png
+!docs/**/*.png
+!fe/assets/**/*.png
 
 # LibreOffice writes these beside an open document and removes them on close.
 # One was committed by accident, which is what it takes to notice them.

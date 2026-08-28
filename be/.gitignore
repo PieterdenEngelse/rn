@@ -1,9 +1,15 @@
-node_modules/
-runtime/
+# No trailing slashes on any of these. In a worktree they are symlinks into the
+# main checkout rather than real directories, and git sees a symlink as a file:
+# `runtime/` matched the directory in ~/rn and missed the symlink in ~/cb, which
+# left a machine-specific `be/runtime -> /home/pde/rn/be/runtime` sitting
+# untracked, one `git add -A` from being committed. The slash-less form covers
+# both.
+node_modules
+runtime
 # Alternative bundled runtimes, resolved by launcher/src/layout.rs
-runtime-bun/
-runtime-deno/
-runtime-node*/
+runtime-bun
+runtime-deno
+runtime-node*
 .env
 
 # Profiling artifacts dropped in cwd by --cpu-prof / --heap-prof and V8 logging

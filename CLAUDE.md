@@ -297,6 +297,12 @@ because the data looked right.
 The PNG can be read directly. The user's own screenshots come off the clipboard
 with `xclip -selection clipboard -t image/png -o > /tmp/p.png`.
 
+**A screenshot saved inside the repository is ignored whatever you call it.**
+`.gitignore` covers `*.png`, so a shot dropped anywhere in the tree cannot ride
+along on a `git add -A` — which is how `shot.png` was committed once. The two
+exceptions are `docs/**` and `fe/assets/**`, where a PNG is kept on purpose; a
+screenshot worth keeping goes to `docs/` under a name that says what it shows.
+
 **Check whether a change is built by looking for it, not by reading a
 timestamp** — grep the built wasm for a string unique to the change:
 
