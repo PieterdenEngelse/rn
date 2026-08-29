@@ -118,7 +118,13 @@ fn EnvRow(entry: EnvEntry) -> Element {
                     div { class: "text-gray-400 text-[10px]", "not a setting rn knows" }
                 }
             }
-            td { class: "pr-6 py-1 align-top {value_class}",
+            // `break-all`, because these values wrap nowhere on their own.
+            // RN_CORS_ORIGIN is four origins joined by commas and contains no
+            // space, so CSS treats the whole thing as one word: it ran off the
+            // right edge of the board, ending mid-token, with the rest reachable
+            // only by scrolling the table sideways. Breaking mid-string is the
+            // right trade for a value that is a list rather than prose.
+            td { class: "pr-6 py-1 align-top break-all {value_class}",
                 match (entry.known, entry.in_file, entry.file_value.as_ref()) {
                     (_, false, _) => rsx! { span { class: "text-gray-400", "—" } },
                     (false, true, _) => rsx! { span { class: "text-gray-400", "set, not shown" } },
@@ -129,7 +135,9 @@ fn EnvRow(entry: EnvEntry) -> Element {
                     (true, true, None) => rsx! { span { class: "text-gray-400", "—" } },
                 }
             }
-            td { class: "py-1 align-top {value_class}",
+            // Same for the process column: it holds the same kind of value,
+            // and is where a drifted one is read most carefully.
+            td { class: "py-1 align-top break-all {value_class}",
                 match (entry.known, entry.process_value.as_ref()) {
                     (false, _) => rsx! { span { class: "text-gray-400", "not shown" } },
                     (true, Some(v)) if v.is_empty() => {
