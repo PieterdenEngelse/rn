@@ -1,0 +1,39 @@
+#!/bin/bash
+# Dev backend for this worktree, restarting itself on every save.
+#
+# The twin of fe/s, and deliberately not be/s. That one is the launcher — it
+# supervises a *packaged* runtime, does not watch source, and is what the :3010
+# backend is; picking up a change there still means restarting it by hand. This
+# is the development sibling, and the two want different names because they do
+# different things to the same port.
+#
+# Between this and fe/s a change becomes visible without anyone merging it
+# anywhere: dx rebuilds the frontend it watches, `node --watch` restarts the
+# backend it watches, and both are the ones sitting in the tree being edited.
+cd "$(dirname "$0")"
+
+# shellcheck source=../scripts/dev-ports.sh
+. ../scripts/dev-ports.sh
+
+# Separate state per worktree, for the same reason each gets its own build
+# directory: four backends writing one job-state.json would have one worktree's
+# run clear another's cursors, and the store gives no sign of whose entry it
+# was. ~/rn keeps the real config, so the install a person actually uses is
+# untouched by whatever the other panes are doing.
+worktree="$(basename "$(cd .. && pwd)")"
+if [ "$worktree" != "rn" ]; then
+    state="$HOME/.cache/rn-state-$worktree"
+    mkdir -p "$state"
+    export RN_SETTINGS_PATH="$state/settings.json"
+    export RN_HISTORY_PATH="$state/history.json"
+    export RN_JOB_STATE_PATH="$state/job-state.json"
+    export RN_JOB_RUNS_PATH="$state/job-runs.json"
+fi
+
+echo "backend for $worktree on http://127.0.0.1:$BACKEND_PORT (hooks :$BACKEND_HOOKS_PORT)"
+
+# server.ts, not main.ts. `npm run dev` watches main.ts, which prints the boot
+# banner and exits — a watcher on a program that does not listen, which looks
+# like a backend that died a second after starting. server.ts is the half that
+# binds the port.
+exec npm run dev:serve "$@"

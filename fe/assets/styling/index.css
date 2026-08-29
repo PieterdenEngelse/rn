@@ -28,6 +28,17 @@ input[type="number"].input-xs {
   padding-right: 0.5rem !important;
 }
 
+/* …except where the placeholder is a sentence, not a number. A parameter with
+ * no default shows what "unset" resolves to on this machine — "unset — 2048" —
+ * and 4rem truncates that to "unset —", hiding the one figure the field exists
+ * to report. Wide enough for that phrasing, still narrow enough to read as a
+ * number box. The !important is not decoration: the rule above uses it, so an
+ * exception without it loses. */
+input[type="number"].input-xs.param-number-wide {
+  max-width: 9rem !important;
+  min-width: 9rem !important;
+}
+
 /* Hide spinners — they leave a gray block when disabled */
 input[type="number"]::-webkit-outer-spin-button,
 input[type="number"]::-webkit-inner-spin-button {

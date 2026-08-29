@@ -18,6 +18,11 @@ cd be && npm run params:build
 # Regenerate the TypeScript wire types from the shared crate
 cd shared && cargo run --bin gen-types
 
+# This worktree's own pair — each watches the tree it sits in, so an edit is
+# live without merging it anywhere. Ports per pane: see CLAUDE.md.
+cd be && ./d
+cd fe && ./s
+
 # Backend run / watch / test
 cd be && npm run dev
 cd be && npm run start:sealed         # against the bundled runtime — what users get
@@ -26,7 +31,7 @@ cd be && npm test && npm run typecheck
 # Frontend CSS build (Tailwind v4 + daisyUI)
 cd fe && npm install && npm run css:build
 
-# Frontend live preview (serves on :1790 — the user's; see CLAUDE.md)
+# Frontend live preview (this worktree's port, not always :1790 — see CLAUDE.md)
 cd fe && ./serve.sh
 
 # Frontend compile check

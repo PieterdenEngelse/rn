@@ -12,6 +12,12 @@
 # ever disagree with the first.
 cd "$(dirname "$0")"
 
+# Which backend this build talks to. fe compiles the address in, so it has to
+# be decided here rather than in the browser — and it has to agree with what
+# be/s binds, which is why both read the one file.
+# shellcheck source=../scripts/dev-ports.sh
+. ../scripts/dev-ports.sh
+
 # The build directory is the part the environment gets wrong. That same service
 # exports one CARGO_TARGET_DIR into every pane, so without this override each
 # server writes crate `fe` over the others' output — the mismatched js/wasm
@@ -52,5 +58,5 @@ if [ -n "$holder" ]; then
     exit 1
 fi
 
-echo "serving $worktree on http://127.0.0.1:$port"
+echo "serving $worktree on http://127.0.0.1:$port → API $RN_API_BASE"
 exec dx serve --platform web --port "$port" "$@"

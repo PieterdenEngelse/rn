@@ -137,6 +137,27 @@ gives you http://localhost:8080 instead.
 never hand-edit `output.css`. Re-run `npm run css:build` after adding class
 names Tailwind hasn't seen yet, or keep `npm run css:watch` running.
 
+**A running `dx` does not re-bundle the stylesheet.** It hashes assets at build
+time and an incremental rebuild reuses the copy it already has, so a Rust change
+appears within seconds while a CSS change does not appear at all — the wasm
+carries the new class name and the served stylesheet has no rule for it. That
+looks exactly like a utility that does not work, and it cost an hour once. After
+`npm run css:build`, restart the dev server, then confirm by fetching the
+stylesheet the page actually links (its name is hashed) rather than reading the
+file on disk:
+
+    href=$(chromium --headless=new --no-sandbox --disable-gpu \
+      --virtual-time-budget=8000 --dump-dom http://localhost:PORT/config \
+      | grep -o 'href="[^"]*\.css"' | head -1 | sed 's/href="//;s/"//')
+    curl -s "http://127.0.0.1:PORT$href" | grep -c 'your-new-class'
+
+**A `w-*` utility on a number input does nothing.** `index.css` caps every
+`input[type="number"].input-xs` at `max-width: 4rem !important`, which outranks
+any Tailwind width — `!w-24`, `!w-32` and `!w-64` all render identically, which
+is how `PARAM_NUMBER_INPUT_CLASS` carried an inert width for as long as it
+existed. A field that needs more room takes `PARAM_NUMBER_INPUT_WIDE_CLASS`,
+whose exception is written beside the cap in `index.css`.
+
 ## Page width
 
 Pages fill the browser window. The page container is `p-6 w-full space-y-4` — no
@@ -380,9 +401,40 @@ output.
   ppid= -p <pid>`. More than one session works in this repo, so the process
   holding a port is often not the one you started.
 
-The backend on **:3010** is launcher-supervised: manage it with
-`./target/debug/rn --stop` and `--status`. Restarting it to pick up a registry
-change is normal and expected.
+**A worktree backs itself too.** `be/d` is the twin of `fe/s` (`be/s` is the launcher, and stays that): `node --watch`
+on this pane's own port, restarting itself on every save. Between the two, a
+change becomes visible in the tree it was made in — which is the whole point,
+since the alternative was merging into `~/rn` and restarting its backend to
+look at anything.
+
+| worktree | frontend | API | hooks | state |
+|---|---|---|---|---|
+| `~/rn` | 1790 | 3010 | 3011 | `~/.config/rn` |
+| `~/ca` | 1791 | 3020 | 3021 | `~/.cache/rn-state-ca` |
+| `~/cb` | 1792 | 3030 | 3031 | `~/.cache/rn-state-cb` |
+| `~/cc` | 1793 | 3040 | 3041 | `~/.cache/rn-state-cc` |
+
+Those numbers live in `scripts/dev-ports.sh` and nowhere else — `fe/serve.sh`
+and `be/d` both source it, because a frontend pointed at a backend that is not
+there renders "backend unreachable", which reads as a broken build rather than
+a mismatched pair. They derive from the `PORT` the service exports, so a fifth
+worktree needs a port there and in `RN_CORS_ORIGIN`, not an edit here.
+
+`fe` compiles its API address in — a wasm bundle has no environment to read at
+runtime — so `serve.sh` passes `RN_API_BASE` to the build. One consequence
+worth knowing: `option_env!` is read at compile time and Cargo does not rebuild
+when it changes, so if a pane's port ever moves, that worktree needs a clean
+build before the frontend believes it.
+
+`~/rn` keeps the real `~/.config/rn`. Every other pane gets its own state, for
+the reason each gets its own build directory: four backends sharing one
+`job-state.json` would have one worktree's run clear another's cursors, with
+nothing in the store to say whose entry it was.
+
+The backend on **:3010** is launcher-supervised — that is the packaged runtime,
+not `be/d`, and it does not watch source: manage it with `./target/debug/rn
+--stop` and `--status`, or the `be/s` shorthand for the same binary. Restarting it to pick up a registry change is normal and
+expected.
 
 **But it can still be orphaned, and has been.** The launcher runs in the
 foreground and does not daemonize, so a session that starts it in the background

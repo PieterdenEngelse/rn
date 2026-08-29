@@ -11,9 +11,18 @@ use super::wire::{
 };
 
 /// Base URL of the backend API. In development the frontend is served by
-/// `dx serve` on :1790 and the API lives on :3010, so this is absolute.
+/// `dx serve` and the API is a separate process, so this is absolute.
 /// A packaged install serves both from one origin — see docs/packaging.md.
-pub const API_BASE: &str = "http://127.0.0.1:3010";
+///
+/// Compiled in, because a wasm bundle has no environment to read at runtime:
+/// `fe/serve.sh` sets `RN_API_BASE` from the pane's port so a worktree serving
+/// itself talks to its own backend rather than to whichever one happens to
+/// hold :3010. Unset — a packaged build, or a bare `dx serve` — it stays the
+/// literal every doc names, so nothing about the default install changes.
+pub const API_BASE: &str = match option_env!("RN_API_BASE") {
+    Some(base) => base,
+    None => "http://127.0.0.1:3010",
+};
 
 pub async fn fetch_params() -> Result<ParamsResponse, String> {
     let resp = gloo_net::http::Request::get(&format!("{API_BASE}/api/params"))

@@ -807,6 +807,15 @@ fn ParamBlock(
     } else {
         param.default.to_string().trim_matches('"').to_string()
     };
+    // "unset — 2048" needs room a number box does not have; "10" does not.
+    // Decided from the text rather than from the parameter's identity, so any
+    // future null default with a live value gets the same treatment without
+    // anyone remembering to add it here.
+    let number_input_class = if placeholder.len() > 8 {
+        PARAM_NUMBER_INPUT_WIDE_CLASS
+    } else {
+        PARAM_NUMBER_INPUT_CLASS
+    };
 
     let text_value = current
         .as_ref()
@@ -858,7 +867,7 @@ fn ParamBlock(
                     ParamType::Int => rsx! {
                         input {
                             r#type: "number",
-                            class: PARAM_NUMBER_INPUT_CLASS,
+                            class: number_input_class,
                             min: param.min.map(|v| v.to_string()).unwrap_or_default(),
                             max: param.max.map(|v| v.to_string()).unwrap_or_default(),
                             placeholder,

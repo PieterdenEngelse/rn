@@ -16,6 +16,15 @@ pub const PARAM_LABEL_CLASS: &str = "text-gray-400 whitespace-nowrap";
 pub const PARAM_INPUT_ROW_CLASS: &str = "param-row flex items-end gap-2 w-full";
 pub const PARAM_NUMBER_INPUT_CLASS: &str =
     "input input-xs input-bordered bg-gray-700 text-gray-200 !w-24";
+/// The same box, widened for a placeholder that is a sentence rather than a
+/// number. `index.css` caps every number input at 4rem — snug, and correct
+/// while the widest thing one had to show was a figure. A null default whose
+/// live value is spelled out ("unset — 2048") does not fit, and the cap wins
+/// over any `w-*` utility, so the exception has to be made in the stylesheet
+/// too. Verified the hard way: `!w-24`, `!w-32` and `!w-64` all render
+/// identically, because none of them ever outranked that rule.
+pub const PARAM_NUMBER_INPUT_WIDE_CLASS: &str =
+    "input input-xs input-bordered bg-gray-700 text-gray-200 param-number-wide";
 pub const PARAM_TEXT_INPUT_CLASS: &str =
     "input input-xs input-bordered bg-gray-700 text-gray-200 w-56";
 /// No `select-bordered`: daisyUI 5 dropped the `*-bordered` modifiers and
