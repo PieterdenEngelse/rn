@@ -344,6 +344,22 @@ fn JobRow(
             div { class: PARAM_INPUT_ROW_CLASS,
                 div { class: "flex items-center gap-3",
                     span { class: "text-gray-200 font-medium", "{job.label}" }
+                    // Beside the name, because "what is this job?" is a
+                    // question about the name. This panel used to sit at the
+                    // far end of the row after "Run now", where it read as that
+                    // button's explanation — a reader wanting to know what an
+                    // automation does looked at the title, found nothing, and
+                    // had no reason to suspect the answer was attached to a
+                    // control eight inches to the right.
+                    //
+                    // Inline rather than in the info column: the title is a
+                    // header, which is the exception CLAUDE.md names.
+                    InfoButton {
+                        title: job.label.clone(),
+                        what: job.info.what.clone(),
+                        why: job.info.why.clone(),
+                        if_wrong: job.info.if_wrong.clone(),
+                    }
                     code { class: "text-gray-400 text-xs", "{job.id}" }
                     if running {
                         span { class: "text-gray-300 text-xs", "running…" }
@@ -489,12 +505,6 @@ fn JobRow(
                         class: "text-blue-400 hover:text-blue-300 cursor-pointer disabled:cursor-default",
                         onclick: start,
                         if busy() { "Running…" } else { "Run now" }
-                    }
-                    InfoButton {
-                        title: job.label.clone(),
-                        what: job.info.what.clone(),
-                        why: job.info.why.clone(),
-                        if_wrong: job.info.if_wrong.clone(),
                     }
                 }
             }

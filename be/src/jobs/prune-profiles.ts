@@ -101,7 +101,15 @@ export const pruneProfiles: Job = {
             "isolate-*-v8.log, jit-*.dump, *.cpuprofile and *.heapprofile — and " +
             "deletes the ones older than the retention window. Nothing else is " +
             "touched: the patterns are anchored so an application log named " +
-            "something.log can never match.",
+            "something.log can never match.\n\n" +
+            "Those files exist only because someone asked for them. Starting the " +
+            "backend with --cpu-prof, --heap-prof or --prof tells V8 to record what " +
+            "the process spent its time and memory on, and it writes the recording " +
+            "to disk when the process exits. Normal operation produces none of them, " +
+            "so an install that has never been profiled will find nothing here and " +
+            "the job will say so rather than fail.\n\n" +
+            "They land in the working directory because that is the only place V8 " +
+            "will put them — not a temp directory, and not anywhere configurable.",
         why:
             "The profiler writes into the working directory and never cleans up, " +
             "and the files are gitignored so they never appear in git status. One " +
