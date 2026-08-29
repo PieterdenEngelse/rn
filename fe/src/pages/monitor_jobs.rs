@@ -3,9 +3,11 @@ use crate::api::{
     CatalogueJob, JobErrors, JobRun, JobInput, JobInputType, JobRunResult, JobSource, JobStep,
     JobsResponse, Outcome, ScheduledJob, StateResetResponse, Trigger,
 };
+use crate::app::Route;
 use crate::components::param::PARAM_INPUT_ROW_CLASS;
 use crate::components::{InfoButton, Panel};
 use dioxus::prelude::*;
+use dioxus_router::Link;
 
 /// Monitor → Jobs. What can be run, what is running, and what the last run did.
 #[component]
@@ -227,7 +229,14 @@ fn DryRunBanner() -> Element {
                 p { class: "text-gray-300 mt-1 max-w-3xl",
                     "Jobs will do all of their reading and deciding, report exactly what they "
                     "would change, and change nothing. This is the default. Turn it off on "
-                    code { class: "text-gray-200", "Config → Runtime" }
+                    // A link rather than a name: this banner's whole purpose is
+                    // to send somebody to that switch, and naming a page you
+                    // then have to find yourself is an instruction, not a route.
+                    Link {
+                        to: Route::Config {},
+                        class: "text-blue-400 hover:text-blue-300",
+                        code { "Config → Runtime" }
+                    }
                     ", which takes effect on the next job to start — no restart. "
                     code { class: "text-gray-200", "DRY_RUN" }
                     " in "
