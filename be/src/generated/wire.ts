@@ -1020,6 +1020,19 @@ default: JsonValue,
  */
 defaultFrom?: string | null, unit?: string | null, min?: number | null, max?: number | null, 
 /**
+ * What the "no value chosen" entry of a nullable enum should read.
+ *
+ * A dropdown cannot show a placeholder the way a text field can, so an
+ * unset enum needs a real option to sit on, and that option needs
+ * wording only the registry has: "unset" is true but says nothing,
+ * while `nodeVersion`'s "Bundled runtime — no version pinned" says
+ * what happens. It lives here for the reason every other string on a
+ * parameter does — the page must not be able to invent copy about a
+ * setting. Absent falls back to "unset", which is right for a value
+ * whose default needs no explanation.
+ */
+unsetLabel?: string | null, 
+/**
  * Required when `value_type` is `Enum`; suggestions when `EnumOpen`.
  */
 options?: Array<ParamOption> | null, 

@@ -174,6 +174,18 @@ wire! {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[cfg_attr(feature = "typescript", ts(type = "number | null"))]
         pub max: Option<i64>,
+        /// What the "no value chosen" entry of a nullable enum should read.
+        ///
+        /// A dropdown cannot show a placeholder the way a text field can, so an
+        /// unset enum needs a real option to sit on, and that option needs
+        /// wording only the registry has: "unset" is true but says nothing,
+        /// while `nodeVersion`'s "Bundled runtime — no version pinned" says
+        /// what happens. It lives here for the reason every other string on a
+        /// parameter does — the page must not be able to invent copy about a
+        /// setting. Absent falls back to "unset", which is right for a value
+        /// whose default needs no explanation.
+        #[serde(default, skip_serializing_if = "Option::is_none", rename = "unsetLabel")]
+        pub unset_label: Option<String>,
         /// Required when `value_type` is `Enum`; suggestions when `EnumOpen`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub options: Option<Vec<ParamOption>>,

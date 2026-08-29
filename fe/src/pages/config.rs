@@ -904,10 +904,24 @@ fn ParamBlock(
                         // cannot appear here without its explanation.
                         let options = param.options.clone().unwrap_or_default();
                         let nullable = param.default.is_null();
+                        // A select has no placeholder, so the trick the text
+                        // fields use — show the default in grey and leave the
+                        // value empty — draws a blank box here instead. An
+                        // unset enum with a real default therefore sits on that
+                        // default: "JavaScript runtime" and "Log level" both
+                        // read empty on a fresh install, while node and info
+                        // were what the process was actually doing. Display
+                        // only; nothing is written to the draft until somebody
+                        // picks something, so unset stays unset in settings.
+                        let shown = if text_value.is_empty() && !nullable {
+                            param.default.to_string().trim_matches('"').to_string()
+                        } else {
+                            text_value.clone()
+                        };
                         rsx! {
                             select {
                                 class: PARAM_SELECT_CLASS,
-                                value: text_value,
+                                value: shown,
                                 onchange: move |evt| {
                                     let raw = evt.value();
                                     let mut d = draft.write();
@@ -918,11 +932,19 @@ fn ParamBlock(
                                     }
                                 },
                                 if nullable {
-                                    // "default (bundled)" said nothing: it named
-                                    // the internal state rather than the choice.
-                                    // This entry means "pin nothing, run what
-                                    // ships inside rn".
-                                    option { value: "", "Bundled runtime — no version pinned" }
+                                    // The registry's wording, not this page's.
+                                    // It read "Bundled runtime — no version
+                                    // pinned" for every nullable enum, because
+                                    // that sentence was written for nodeVersion
+                                    // and hardcoded here — so the unhandled
+                                    // rejection policy offered a runtime bundle
+                                    // as one of its choices. "unset" is the
+                                    // fallback: true of any parameter, and all
+                                    // that can be said without knowing which.
+                                    option {
+                                        value: "",
+                                        {param.unset_label.clone().unwrap_or_else(|| "unset".to_string())}
+                                    }
                                 }
                                 for o in options.iter() {
                                     option { value: "{o.value}", "{o.label}" }

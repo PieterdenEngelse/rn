@@ -202,6 +202,9 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
         kind: "launcher",
         type: "enum",
         default: null,
+        // The dropdown's own "nothing chosen" entry. Without it the row reads
+        // "unset", which is true and useless — this says what unset does.
+        unsetLabel: "Bundled runtime — no version pinned",
         options: [
             {
                 value: "20",

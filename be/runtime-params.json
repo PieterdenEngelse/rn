@@ -66,6 +66,7 @@
       "kind": "launcher",
       "type": "enum",
       "default": null,
+      "unsetLabel": "Bundled runtime — no version pinned",
       "options": [
         {
           "value": "20",
