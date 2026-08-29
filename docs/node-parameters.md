@@ -64,6 +64,8 @@ Default: unset (system default) · Takes effect: on restart · Settings key: `ne
 
 **What it does.** Which Node major line the app should run on. Unset means 'use whatever is bundled', which is the value in be/.nvmrc — currently v24.19.0.
 
+Two entries in this list look like the same thing, and today they are: 'Bundled runtime — no version pinned' and 'Node 24 — current (bundled)' both start v24.19.0. What separates them is the next upgrade. Unpinned follows whatever ships, so an install that moves to Node 26 takes you with it and there is nothing here to change. Pinning 24 says stay on 24 whatever happens — after that upgrade the setting names a line the install no longer carries, the launcher falls back to the bundled runtime and says so, and what you are left with is a setting that disagrees with the process. Leave it unpinned unless you have a reason to freeze the version.
+
 **Why you would change it.** Pin an older line when a native addon has not been rebuilt for a newer one yet. It buys compatibility at the cost of being on a clock: a maintenance line stops getting fixes before the others do.
 
 **If it's wrong.** The mismatch that actually bites is drift — settings asking for one line while the bundled binary is another. The active row above reports what the process really is, so trust that over this and treat any disagreement as the bug.
