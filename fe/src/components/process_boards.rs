@@ -33,21 +33,22 @@ pub fn ProcessBoards(status: StatusResponse) -> Element {
                 Reading {
                     label: "pid",
                     value: status.pid.to_string(),
-                    what: "Operating-system process id of the Node process answering this page.".to_string(),
-                    why: "The handle for everything outside the app — `ps`, `kill`, a profiler, or matching a log line to a process."
+                    what: "Operating-system process id of the Node process answering this page — the child, not the launcher.\n\nThis is the process holding the API socket on :3010 and the webhook socket on :3011, so it is what answers every request this page makes. rn runs as two processes, and the other one's id is the grey line under \"supervised\" below: a Rust launcher that spawns this Node child and watches it. Two pids is the normal, healthy state, not a duplicate."
                         .to_string(),
-                    if_wrong: "If it changes between reloads without you restarting, something is crashing and being restarted underneath you."
+                    why: "It is the handle for everything outside the app — `ps`, `kill`, a profiler, or matching a log line to a process. Which of the two you want depends on what you mean by \"the backend\".\n\nThe scopes differ, and confusing them is the usual way a restart appears not to work. POST /api/restart, and the Restart button on Config → Runtime, cycle this pid only and leave the launcher untouched — which is why a change to the launcher itself survives them. `rn --stop` ends the launcher and takes this child down with it.\n\nThe two start in the same second, because the launcher spawns the child as soon as it is up, so uptime does not tell them apart either."
+                        .to_string(),
+                    if_wrong: "If it changes between reloads without you restarting, something is crashing and the launcher is restarting it underneath you — it does that up to five times in quick succession before giving up and saying so in its console.\n\nIf this number equals the one under \"supervised\", something is reporting itself as its own parent; the two are always different processes."
                         .to_string(),
                 }
                 Reading {
                     label: "supervised",
                     value: supervised,
                     note: launcher,
-                    what: "Whether the launcher started this process, detected via the sealed-environment marker it sets."
+                    what: "Whether the launcher started this process, detected via the sealed-environment marker it sets.\n\nWhen it says yes, the grey `pid` underneath is the launcher's own process id — the parent of the pid above, and a second process rather than a second backend. The larger number above is the Node child answering requests; this one is the `rn` launcher itself, the Rust binary that spawned it."
                         .to_string(),
-                    why: "Only a supervised process can restart itself to apply settings. Unsupervised, the restart controls are disabled and settings changes need a manual restart."
+                    why: "Only a supervised process can restart itself to apply settings. Unsupervised, the restart controls are disabled and settings changes need a manual restart.\n\nThe two pids being different is rn's architecture rather than an accident. Node drives the automation; the launcher owns the process and, crucially, the environment it starts in — it clears the environment and allowlists what goes in, so a stray NODE_OPTIONS cannot stop the app booting. Nothing about that is enforceable from inside the child, which is why there is a parent at all. This row is where you can see whether that parent exists for the process you are looking at."
                         .to_string(),
-                    if_wrong: "If this says no when you started it with the rn binary, the environment was not sealed — treat any settings behaviour as suspect."
+                    if_wrong: "If this says no when you started it with the rn binary, the environment was not sealed — treat any settings behaviour as suspect.\n\nNo is also perfectly normal when you ran the backend by hand for development. It means the restart controls cannot work, because there is no supervisor to do the restarting, and the settings you save apply on your next manual start rather than on a button."
                         .to_string(),
                 }
                 Reading {
