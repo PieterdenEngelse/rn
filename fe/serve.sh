@@ -79,5 +79,16 @@ css_watch=$!
 exec 3> "$fifo"
 rm -f "$fifo"
 
-echo "serving $worktree on http://127.0.0.1:$port → API $RN_API_BASE (css:watch $css_watch)"
+# Only where the answer is not the documented one. This script stopped being
+# `exec dx` when it took on the watcher, so its own output now lands above dx's
+# startup box — and a second banner in the same terminal reads as a second
+# server, which is the thing this repo has twice gone hunting for. In ~/rn the
+# ports are 1790 and 3010, said in the docs and in the address bar, so the line
+# buys nothing and costs that confusion. Elsewhere they are neither, and which
+# backend a page is talking to is the first thing you need when it says the
+# backend is unreachable.
+if [ "$port" != "1790" ] || [ "$RN_API_BASE" != "http://127.0.0.1:3010" ]; then
+    echo "serving $worktree on http://127.0.0.1:$port → API $RN_API_BASE"
+fi
+
 dx serve --platform web --port "$port" "$@"
