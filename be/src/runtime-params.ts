@@ -298,6 +298,11 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
         kind: "node-option",
         type: "int",
         default: null,
+        // "unset" names the setting and says nothing about the state: V8 always
+        // has a ceiling, it is just one nobody typed. This points the empty
+        // field's placeholder at the live number, the way logLevel and dryRun
+        // already do for theirs.
+        defaultFrom: "oldSpaceMaxMB",
         unit: "MB",
         min: 64,
         max: 32768,
@@ -309,8 +314,10 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
         label: "Heap memory limit",
         info: {
             what:
-                "Caps V8's old-space heap. Unset, Node picks a limit from installed RAM — " +
-                "on this machine that came out at 2240 MB.",
+                "Caps V8's old-space heap. Unset, V8 derives a limit from installed RAM " +
+                "rather than leaving the heap unbounded — the field's placeholder shows " +
+                "what that came out as here, and Monitor → Runtime reports it beside what " +
+                "is actually in use.",
             why:
                 "Raise it when a large job dies with 'JavaScript heap out of memory'. " +
                 "Lower it to stop rn competing for memory on a shared machine.",

@@ -790,7 +790,16 @@ fn ParamBlock(
             .default_from
             .as_ref()
             .and_then(|key| effective.get(key))
-            .and_then(|v| v.as_str().map(str::to_string));
+            // Not `as_str()`: a live default is whatever type the value has,
+            // and the heap limit's is a number. Reading only strings made a
+            // numeric `defaultFrom` fall through to a bare "unset" with nothing
+            // to say it had been asked for and missed — the failure is a
+            // parameter that looks unwired rather than one that errors.
+            .and_then(|v| match v {
+                serde_json::Value::Null => None,
+                serde_json::Value::String(s) => Some(s.clone()),
+                other => Some(other.to_string()),
+            });
         match live {
             Some(v) if !v.is_empty() => format!("unset — {v}"),
             _ => "unset".to_string(),

@@ -14,6 +14,7 @@ import { dirname } from "node:path";
 import { RUNTIME_PARAMS, paramById, type RuntimeParam } from "./runtime-params.ts";
 import type { PendingChange, SaveError } from "./generated/wire.ts";
 import { display as displayPath } from "./paths.ts";
+import { oldSpaceMaxMB } from "./node_metrics.ts";
 // Safe despite the layering it implies: nothing under jobs/ imports this
 // module, so there is no cycle to fall into. Checked rather than assumed —
 // jobs/run.ts already carries a deferred import for exactly that hazard.
@@ -266,6 +267,13 @@ export function effectiveValues(): Record<string, string | number | boolean> {
         runtimeNote: process.env.RN_RUNTIME_NOTE ?? "",
         heapLimitMB: Math.round(h.heap_size_limit / 2 ** 20),
         heapUsedMB: Math.round(h.used_heap_size / 2 ** 20),
+        // What "unset" means for the heap limit on this process — see
+        // `defaultFrom` on the parameter. Old space, not the total heap: the
+        // control sets the former and heapLimitMB above is the latter, and the
+        // two differ by V8's allowance for the other spaces. Showing the total
+        // beside a control that does not set it would restate the confusion the
+        // parameter's own panel exists to undo.
+        oldSpaceMaxMB: oldSpaceMaxMB(h.heap_size_limit),
         threadpoolSize: Number(process.env.UV_THREADPOOL_SIZE ?? 4),
         availableParallelism: availableParallelism(),
         stackTraceLimit: Error.stackTraceLimit,

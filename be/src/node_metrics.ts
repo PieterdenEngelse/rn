@@ -344,8 +344,13 @@ function runqueueWait(elapsedMs: number): number {
  * above the old-space ceiling — 2240 against a default 2048, and 704 when the
  * flag is set to 512 — that margin being V8's allowance for the other spaces.
  * The derivation is approximate, and the panel beside it says so.
+ *
+ * Exported because Config → Runtime needs the same number: the heap-limit
+ * field is empty when the flag is unset, and an empty box that says only
+ * "unset" reports the setting while hiding the state. Two derivations would
+ * be two answers to one question.
  */
-function oldSpaceMaxMB(heapSizeLimit: number): number {
+export function oldSpaceMaxMB(heapSizeLimit: number): number {
     const flagged = /--max-old-space-size[= ](\d+)/.exec(
         `${process.env.NODE_OPTIONS ?? ""} ${process.execArgv.join(" ")}`,
     );

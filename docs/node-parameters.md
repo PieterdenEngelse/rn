@@ -76,7 +76,7 @@ Default: unset (system default) · Takes effect: on restart · Settings key: `no
 
 ### Heap memory limit — `--max-old-space-size`
 
-**What it does.** Caps V8's old-space heap. Unset, Node picks a limit from installed RAM — on this machine that came out at 2240 MB.
+**What it does.** Caps V8's old-space heap. Unset, V8 derives a limit from installed RAM rather than leaving the heap unbounded — the field's placeholder shows what that came out as here, and Monitor → Runtime reports it beside what is actually in use.
 
 **Why you would change it.** Raise it when a large job dies with 'JavaScript heap out of memory'. Lower it to stop rn competing for memory on a shared machine.
 
