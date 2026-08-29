@@ -118,12 +118,13 @@ fn EnvRow(entry: EnvEntry) -> Element {
                     div { class: "text-gray-400 text-[10px]", "not a setting rn knows" }
                 }
             }
-            // `break-all`, because these values wrap nowhere on their own.
-            // RN_CORS_ORIGIN is four origins joined by commas and contains no
-            // space, so CSS treats the whole thing as one word: it ran off the
-            // right edge of the board, ending mid-token, with the rest reachable
-            // only by scrolling the table sideways. Breaking mid-string is the
-            // right trade for a value that is a list rather than prose.
+            // `break-all` is the fallback, not the answer. These values wrap
+            // nowhere on their own — RN_CORS_ORIGIN is four origins joined by
+            // commas with no space in 175 characters, so CSS treats it as one
+            // word — and breaking mid-string merely turns running off the edge
+            // into `http://localhos` / `t:1791`. A comma-separated setting is a
+            // list, so `Value` prints it as one, and the class is left on for
+            // the single long token that is not.
             td { class: "pr-6 py-1 align-top break-all {value_class}",
                 match (entry.known, entry.in_file, entry.file_value.as_ref()) {
                     (_, false, _) => rsx! { span { class: "text-gray-400", "—" } },
@@ -131,7 +132,7 @@ fn EnvRow(entry: EnvEntry) -> Element {
                     (true, true, Some(v)) if v.is_empty() => {
                         rsx! { span { class: "text-gray-400", "set to nothing" } }
                     }
-                    (true, true, Some(v)) => rsx! { "{v}" },
+                    (true, true, Some(v)) => rsx! { Value { text: v.clone() } },
                     (true, true, None) => rsx! { span { class: "text-gray-400", "—" } },
                 }
             }
@@ -143,10 +144,34 @@ fn EnvRow(entry: EnvEntry) -> Element {
                     (true, Some(v)) if v.is_empty() => {
                         rsx! { span { class: "text-gray-400", "set to nothing" } }
                     }
-                    (true, Some(v)) => rsx! { "{v}" },
+                    (true, Some(v)) => rsx! { Value { text: v.clone() } },
                     (true, None) => rsx! { span { class: "text-gray-400", "not set" } },
                 }
             }
+        }
+    }
+}
+
+/// One environment value: a list one item per line, anything else as it is.
+///
+/// The split is on commas alone, which is what every list-valued setting rn
+/// reads uses — RN_CORS_ORIGIN and netAllowlist both. A value with no comma is
+/// printed unchanged rather than being processed into the same shape, so a
+/// plain `info` or `true` does not gain a line of its own for nothing.
+///
+/// The commas are kept at the ends of the lines. Dropping them would make the
+/// column a prettier list of a value that is not what the file says — and this
+/// panel exists to report the file exactly.
+#[component]
+fn Value(text: String) -> Element {
+    let parts: Vec<&str> = text.split(',').collect();
+    if parts.len() < 2 {
+        return rsx! { "{text}" };
+    }
+    let last = parts.len() - 1;
+    rsx! {
+        for (i, part) in parts.iter().enumerate() {
+            div { if i == last { "{part}" } else { "{part}," } }
         }
     }
 }

@@ -262,6 +262,8 @@ fn ParamBoards(
         // V8 keeps the width its board needs and Runtime takes the rest. The
         // three boards in Runtime already scroll rather than wrap on a narrow
         // screen, which is what they now do sooner.
+        // The environment file goes below this row rather than in it — see the
+        // EnvPanel line under the closing brace.
         div { class: "flex gap-4 items-stretch",
             Panel {
                 title: "Runtime".to_string(),
@@ -340,10 +342,6 @@ fn ParamBoards(
                         }
                     }
                     ProcessPanel { reload, draft, saved: resp.settings.clone(), seeded }
-                    // Below the settings it reconciles against: the boards
-                    // above say what was asked for, this says what the file and
-                    // the process each actually have.
-                    EnvPanel {}
                 }
 
                 if !runtime_rows_empty {
@@ -435,6 +433,15 @@ fn ParamBoards(
                 }
             }
         }
+
+        // Full width, under the row rather than a fourth card inside it. It is
+        // a three-column table of file-versus-process values — RN_CORS_ORIGIN
+        // alone is 175 characters — and it spent its life as the last card in
+        // a strip that scrolls sideways, off the right edge of a board sized
+        // for three narrow ones. It also answers a different question from
+        // them: they say what was asked for, this says what the file and the
+        // process each actually have.
+        EnvPanel {}
 
         if !runtime_tuning.is_empty() {
             Panel {
