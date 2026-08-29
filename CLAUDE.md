@@ -137,19 +137,22 @@ gives you http://localhost:8080 instead.
 never hand-edit `output.css`. Re-run `npm run css:build` after adding class
 names Tailwind hasn't seen yet, or keep `npm run css:watch` running.
 
-**A running `dx` does not re-bundle the stylesheet.** It hashes assets at build
-time and an incremental rebuild reuses the copy it already has, so a Rust change
-appears within seconds while a CSS change does not appear at all — the wasm
-carries the new class name and the served stylesheet has no rule for it. That
-looks exactly like a utility that does not work, and it cost an hour once. After
-`npm run css:build`, restart the dev server, then confirm by fetching the
-stylesheet the page actually links (its name is hashed) rather than reading the
-file on disk:
+**The stylesheet URL is content-hashed, so never fetch a remembered one.**
+`dx` does re-bundle a CSS change and serve it within about 20 seconds —
+measured, both for a CSS-only edit and for one made alongside a Rust change.
+What does not update is the *name*: the hash changes with the content, so an
+href copied from an earlier page, or grepped out of a stale wasm, keeps serving
+the stylesheet that hash was minted for. That reads as "the rebuild is not
+happening" and cost an hour once. Read the href from the live DOM every time:
 
     href=$(chromium --headless=new --no-sandbox --disable-gpu \
-      --virtual-time-budget=8000 --dump-dom http://localhost:PORT/config \
+      --virtual-time-budget=8000 --dump-dom http://localhost:PORT/ \
       | grep -o 'href="[^"]*\.css"' | head -1 | sed 's/href="//;s/"//')
     curl -s "http://127.0.0.1:PORT$href" | grep -c 'your-new-class'
+
+It is the same trap as reading `target/` for the wasm: the artifact on disk and
+the artifact being served are different questions, and only the second one is
+the page.
 
 **A `w-*` utility on a number input does nothing.** `index.css` caps every
 `input[type="number"].input-xs` at `max-width: 4rem !important`, which outranks

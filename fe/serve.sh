@@ -58,5 +58,26 @@ if [ -n "$holder" ]; then
     exit 1
 fi
 
-echo "serving $worktree on http://127.0.0.1:$port → API $RN_API_BASE"
-exec dx serve --platform web --port "$port" "$@"
+# Tailwind alongside dx, because dx does not run it. A new class name in a
+# component compiles fine and then does nothing, since the rule for it was
+# never generated — a style that silently has no effect rather than an error,
+# which is the hardest kind to attribute. dx re-bundles the stylesheet on its
+# own once the file changes, so watching it is the whole of what was missing
+# between "saved" and "on screen".
+#
+# The fifo is how it cleans itself up. Tailwind's --watch exits when its stdin
+# reaches EOF — the behaviour that made a first attempt here compile once and
+# stop, since a background server has no stdin. Turned around it is exactly the
+# guarantee wanted: this script holds the write end, so the watcher goes away
+# when the script does, including on a SIGKILL that never runs a trap. A plain
+# `cmd &` plus `trap kill` leaked one watcher per restart, orphaned to PID 1,
+# because the trap killed npm's shell and not the node process under it.
+fifo="$(mktemp -u)"
+mkfifo "$fifo"
+npm run css:watch < "$fifo" >/dev/null 2>&1 &
+css_watch=$!
+exec 3> "$fifo"
+rm -f "$fifo"
+
+echo "serving $worktree on http://127.0.0.1:$port → API $RN_API_BASE (css:watch $css_watch)"
+dx serve --platform web --port "$port" "$@"
