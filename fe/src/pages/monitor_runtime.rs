@@ -419,7 +419,6 @@ fn MonitorBoards(
                                         labels_shift: Some("-5mm".to_string()),
                                         side_labels: vec![
                                             SideLabel {
-                                                value: m.host.total_mem_mb - m.host.free_mem_mb,
                                                 // One series on this plot, so
                                                 // there is nothing a swatch
                                                 // would disambiguate.
@@ -545,7 +544,6 @@ fn MonitorBoards(
                                         // buttons in a column of their own.
                                         side_labels: vec![
                                             SideLabel {
-                                                value: m.memory.rss_mb,
                                                 color: Some("#60a5fa".to_string()),
                                                 content: rsx! {
                                                     // No nudge. This block used to
@@ -581,7 +579,6 @@ fn MonitorBoards(
                                                 },
                                             },
                                             SideLabel {
-                                                value: m.memory.heap_used_mb,
                                                 color: Some("#22c55e".to_string()),
                                                 content: rsx! {
                                                     div { class: "w-full",

@@ -36,13 +36,17 @@ pub fn Sparkline(
     /// over more pixels — the same data, read against a taller y axis.
     #[props(default = false)]
     fill_height: bool,
-    /// Readings to pin beside the plot, each at the height of its own value.
+    /// Readings to show beside the plot, in fixed slots spread evenly down it.
     ///
-    /// The alternative is a column of readings next to the plot, spaced evenly
-    /// — which only lines up with the curves by luck, because the column and
-    /// the plot are different heights and the values are not evenly spread.
-    /// Drawn inside the plot's own box, a label sits exactly where its line is,
-    /// and follows it when the value moves.
+    /// They used to be pinned at the height of their own value and pushed apart
+    /// where two of them collided, so that a reading sat on the line it named.
+    /// The cost was a column that never held still: a value crossing another
+    /// moved a block three lines tall, and the eye had to find each reading
+    /// again on every sample. A legend that moves is harder to read than one
+    /// that is merely near its line, so position is now a function of how many
+    /// labels there are and nothing else — the same reading is in the same
+    /// place on every render, whatever the data does. The swatch says which
+    /// curve each one names.
     #[props(default = vec![])]
     side_labels: Vec<SideLabel>,
     /// Whether to print the peak in the legend row. A plot whose readings are
@@ -56,27 +60,10 @@ pub fn Sparkline(
     /// appears when there is one to show.
     #[props(default = true)]
     show_legend: bool,
-    /// The least vertical distance allowed between two adjacent side labels,
-    /// as a CSS length.
-    ///
-    /// Labels are placed by value, so two series that happen to read close
-    /// together get two blocks competing for the same few pixels: at the
-    /// default three lines apiece they overprint, and each ends up sitting
-    /// beside the other's curve. The gap is a floor, applied only where it is
-    /// needed — a label whose neighbour is far enough away is untouched and
-    /// still sits exactly on its own line.
-    ///
-    /// In `rem` rather than `%` because what must not overlap is the text,
-    /// whose height is set by the font and not by how tall the plot happens to
-    /// be. CSS `max()` resolves the two against each other at layout time,
-    /// which is the only place both are known.
-    #[props(default = 3.75)]
-    label_min_gap_rem: f64,
     /// A CSS length to shift the label gutter by, negative to lift it. The
-    /// labels are placed against the plot's scale, which is the right anchor
-    /// for where they point — but the block around each reading is taller than
-    /// the line it names, so a board may want the column sitting a little
-    /// higher than dead centre.
+    /// slots divide the plot's height evenly, which is the right default — but
+    /// the block around each reading is taller than one line, so a board may
+    /// want the column sitting a little higher than dead centre.
     #[props(default = None)]
     labels_shift: Option<String>,
 ) -> Element {
@@ -106,58 +93,27 @@ pub fn Sparkline(
         };
     }
 
-    // Where each reading is pinned, resolved against its neighbours.
+    // Where each reading sits: slot i of n, evenly down the plot, and nothing
+    // else feeds into it.
     //
-    // A label's own place is the height of its value, exactly like the curve it
-    // names, and that is right until two values read close together. The blocks
-    // are three lines tall while the gap between two curves can be a few
-    // pixels, so both get drawn over the same space and each ends up beside the
-    // other's line — the readings then label each other, which is worse than
-    // either being slightly off. So the labels are walked top down and each is
-    // held at least `label_min_gap` below the one above it. Only a label that
-    // would have collided moves; the rest keep the position their value gives
-    // them.
+    // This is the whole of the fix. Placing a label at the height of its value
+    // put it on the line it named, which reads well in a screenshot and badly
+    // in a live plot: the readings sample every two seconds, so a block three
+    // lines tall slid down the gutter while you were reading it, and two series
+    // crossing swapped the order of the column outright. The collision pass
+    // that kept them from overprinting made it worse rather than better, since
+    // a label then moved for a reason that had nothing to do with its own
+    // value.
     //
-    // The floor is a CSS `max()` rather than a number worked out here, because
-    // only one of the two quantities is known at this point: the percentage is,
-    // the label's height in pixels is not — it depends on the font the browser
-    // actually resolves. `max()` is evaluated at layout time, where both are
-    // known, so the spacing stays correct when the plot is resized, the window
-    // is narrowed or the page is zoomed.
+    // Fixed slots give up the one thing value-placement bought — a reading is
+    // now merely beside its curve rather than on it — and the swatch already
+    // covers that, being the same square the legend row uses. What they buy is
+    // that the memory reading is in the same place every time you look at it.
     let label_tops: Vec<String> = {
-        let value_top = |l: &SideLabel| (1.0 - (l.value / scale)).clamp(0.0, 1.0) * 100.0;
-        let mut order: Vec<usize> = (0..side_labels.len()).collect();
-        order.sort_by(|a, b| {
-            value_top(&side_labels[*a])
-                .partial_cmp(&value_top(&side_labels[*b]))
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        let n = order.len();
-        let gap = label_min_gap_rem;
-        let mut tops = vec![String::new(); side_labels.len()];
-        let mut above: Option<String> = None;
-        for (rank, i) in order.into_iter().enumerate() {
-            let own = format!("{:.2}%", value_top(&side_labels[i]));
-            // Pushing down alone is not enough: two curves a few percent apart
-            // pushed the lower label clean out of the plot's box and onto
-            // whatever the board draws underneath — the reading then labelled a
-            // different section entirely, which is worse than the overprinting
-            // it was fixing. So each label is first held high enough to leave
-            // room for every label still below it, and only then pushed clear
-            // of the one above. The half is the block's own overhang: it is
-            // centred on its position, so its bottom edge sits half a gap
-            // lower.
-            let below = (n - 1 - rank) as f64;
-            let ceiling = format!("calc(100% - {:.2}rem)", (below + 0.5) * gap);
-            let own = format!("min({own}, {ceiling})");
-            let placed = match above {
-                None => own,
-                Some(prev) => format!("max({own}, calc({prev} + {gap}rem))"),
-            };
-            tops[i] = placed.clone();
-            above = Some(placed);
-        }
-        tops
+        let n = side_labels.len().max(1) as f64;
+        (0..side_labels.len())
+            .map(|i| format!("{:.2}%", ((i as f64 + 0.5) / n) * 100.0))
+            .collect()
     };
 
     /// The runs of consecutive readings in a series, as polyline paths.
@@ -310,23 +266,18 @@ pub fn Sparkline(
                         Some(shift) => format!("margin-top: {shift};"),
                         None => String::new(),
                     },
-                    // Placed against the same scale the polylines use, so a
-                    // label and the line it names cannot disagree. The
-                    // half-height shift centres the block on the line rather
+                    // Fixed slots down the gutter — see `label_tops`. The
+                    // half-height shift centres each block on its slot rather
                     // than hanging it below.
-                    //
-                    // `label_tops` has already spread any pair that would have
-                    // overprinted; where nothing was in the way the value's own
-                    // position is what comes back.
                     for (i, l) in side_labels.iter().enumerate() {
                         div {
                             class: "absolute left-0 right-0 -translate-y-1/2",
                             style: "top: {label_tops[i]};",
-                            // The swatch is what makes spreading safe. Once a
-                            // label can be nudged off its line, position alone
-                            // no longer says which curve it names, so the
-                            // colour does — the same square the legend row uses,
-                            // so the two agree on what a colour means.
+                            // The swatch is what makes a fixed slot safe.
+                            // Position no longer says which curve a reading
+                            // names, so the colour does — the same square the
+                            // legend row uses, so the two agree on what a
+                            // colour means.
                             if let Some(c) = l.color.as_ref() {
                                 div { class: "flex items-start gap-2",
                                     span {
@@ -386,9 +337,6 @@ pub fn Sparkline(
 /// A reading drawn beside the plot at the height of `value`.
 #[derive(Clone, PartialEq)]
 pub struct SideLabel {
-    /// The figure this label names, in the same units as the series — its
-    /// position is computed from it.
-    pub value: f64,
     /// The colour of the curve this reading belongs to, drawn as a swatch
     /// beside it. `None` where the plot has one series and there is nothing to
     /// tell apart.
