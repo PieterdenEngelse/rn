@@ -10,8 +10,8 @@ each one maps onto a gap already identified in `docs/jobs.md`. This document
 lists them in the order worth doing, with what each would actually take.
 
 Items 1 to 5 are done. 6 is done except for its first step, which is a decision
-rather than a piece of work — see the note there. 7 is planned and nothing of it
-is built. Where it says "currently", that is the state of the code as written.
+rather than a piece of work — see the note there. 7 is half built: its first
+three steps are in, the last three wait on a provider that needs them. Where it says "currently", that is the state of the code as written.
 
 ---
 
@@ -435,7 +435,7 @@ place.
 
 ---
 
-## 7. Webhook triggers — **planned**
+## 7. Webhook triggers — **steps 1 to 3 done**
 
 **What n8n does.** One Webhook node covers a lot of ground: it parses JSON,
 form-data or raw text by content type; it hands the workflow the body, the
@@ -460,7 +460,7 @@ has that rn genuinely lacks, and declines three.
 The order is smallest first, and each step says what goes wrong while it stays
 undone.
 
-**Step 1 — parse by content type rather than by hope.** Today a form-encoded
+**Step 1 — parse by content type rather than by hope — done.** Today a form-encoded
 body reaches `JSON.parse` and fails, *after* its signature verified: a 400 on a
 delivery that was authentic. Slack's slash commands send exactly that, so the
 first provider to try one reads the failure as a wrong secret and goes looking
@@ -471,7 +471,20 @@ flat object, `text/*` arrives as `{ text }`, anything else is 415 rather than
 malformed". The raw bytes stay the signature input untouched; that is the one
 line in `verify.ts` this step must not go near.
 
-**Step 2 — give a job what it declared, not what happened to arrive.** A job
+*What was built.* `be/src/hooks/body.ts`, pure and beside `verify.ts` for the
+same reason: it runs on input from a stranger and the rules are worth reading in
+one place. JSON — including `+json` vendor types and a `charset` parameter —
+form-encoded, and `text/*`, which arrives as `{ text }` so a job reads an object
+whatever was sent. A repeated form key is a list and a single one is a value,
+because both shapes are real in form encoding. No content-type header at all is
+still read as JSON, so a provider that omits one keeps working.
+
+The status codes ended up being the part worth arguing about. 415 for a kind the
+listener does not read, 400 for the right kind malformed: one is fixed by
+changing a header and the other by changing a payload, and a single code for
+both would have re-created the failure this step exists to remove, one layer up.
+
+**Step 2 — give a job what it declared, not what happened to arrive — done.** A job
 that needs the event name currently cannot have it, and a job that needs a query
 parameter cannot see the URL at all. The fix is not to widen the surface but to
 extend the declaration, the way `Job.credentials` and `ctx.secret` already work:
@@ -484,7 +497,20 @@ today; these reach the run record, so they go through `secrets.ts` redaction
 first, and `webhook-echo`'s rule — report the shape, not the contents — still
 governs what a job then writes down.
 
-**Step 3 — a verifier for timestamped schemes.** `verify.ts` already names this
+*What was built.* `Job.webhook.headers` and `.query` name what a job reads;
+the listener resolves them and hands over `ctx.delivery`, which is the same
+object that goes on the run record — one description of who sent this, so a job
+cannot read one thing while the history shows another. `Delivery` gained the two
+maps in `shared/src/jobs.rs`, and the record write now goes through
+`secrets.scrub` like `input` always has.
+
+The demo job declares `content-type` and a `source` query parameter, which is
+the only way the capability is visible without writing a job to see it — and its
+run record is also the demonstration of what declaring *excludes*: the signature
+header is on every genuine delivery and is not in that list, so it reaches
+neither the job nor the record.
+
+**Step 3 — a verifier for timestamped schemes — done.** `verify.ts` already names this
 gap: Stripe signs `timestamp.body`, Slack signs `v0:timestamp:body`, and rn's
 single construction rejects both. Make the scheme a named choice on the
 declaration — `hmac-body` staying the default so no existing job changes — and
@@ -494,6 +520,19 @@ replay *by time* rather than by the 1024 ids in memory that a restart empties.
 That in-memory set is the weakest claim the current listener makes, and this is
 the honest way to strengthen it rather than persisting a set on the write path
 of an unauthenticated request.
+
+*What was built.* `Job.webhook.scheme`, one of `hmac-body` (the default, so no
+existing job changed), `stripe` or `slack`, with `toleranceMs` defaulting to
+five minutes either side of now — a clock can be behind as easily as ahead.
+Stripe's several `v1=` signatures are all tried, because that is how a secret is
+rolled and requiring the first would break every rotation. Slack's version lives
+in the value, so `v1=` is refused rather than checked against the v0
+construction.
+
+The reason a scheme fails is logged and never answered with: "stale timestamp"
+and "wrong signature" told apart is an oracle for a caller and a diagnosis for
+an operator, and only one of them is entitled to it. A stale timestamp is nearly
+always a clock.
 
 **Step 4 — providers that cannot sign at all.** Some send a static token in a
 header and nothing else. Today they are unusable here, which is a real cost and
@@ -574,9 +613,15 @@ not name, which is the usual return on writing the plan down first. 4 closed the
 
 6 is done bar its store, which is a decision and not a piece of work.
 
-7 is the first item back in the other state. Its steps are ordered so that the
-cheapest one removes the failure most likely to be misread — a signed delivery
-refused as malformed because it was form-encoded — and so that the step which
-weakens the boundary (4) comes after the two that strengthen it (3) and prove it
-(5). Steps 1 to 3 are worth doing whether or not anyone asks; 4 waits for a
-provider that cannot sign, and 6 for a provider that needs an answer.
+7's first three steps are done, in the order the plan gave them. The ordering
+held up: step 1 removed the failure most likely to be misread — a signed
+delivery refused as malformed because it was form-encoded — and step 3's
+tolerance window turned out to be the honest answer to the replay limit that
+step 2's record made more visible. What the plan did not see is that the demo
+job had to change too: a declaration mechanism with nothing declaring anything
+is a feature nobody can look at.
+
+Steps 4 to 6 stay unbuilt on purpose. 4 waits for a provider that cannot sign,
+5 for someone to want the test button more than they want the provider's own
+redelivery, and 6 for a provider that needs an answer rather than an
+acknowledgement.

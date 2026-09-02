@@ -125,6 +125,23 @@ export interface JobContext {
      * without telling you.
      */
     payload?: JsonValue;
+
+    /**
+     * Who sent the delivery that started this run, and what they called it.
+     *
+     * Present on webhook runs only, like `payload`. Carries the provider's
+     * delivery id and event name — the two the listener has always read — plus
+     * whichever headers and query parameters this job declared in
+     * `Job.webhook`. Nothing undeclared is in here: see that declaration for
+     * why an unfiltered header map would be a way to write a stranger's
+     * `Authorization` value onto the run record.
+     *
+     * Every field is optional because every one of them is the sender's choice.
+     * A provider that identifies nothing leaves an empty object, which is
+     * itself worth reading: it is exactly the case where replay protection is
+     * absent too.
+     */
+    delivery?: Delivery;
 }
 
 /**
@@ -139,7 +156,8 @@ export interface JobContext {
  * callback, which are behaviour and cannot cross a process boundary at all.
  */
 export type { JobResult, JobInfo, JobInput, Schedule } from "../generated/wire.ts";
-import type { JobInfo, JobInput, JobRun, Schedule } from "../generated/wire.ts";
+import type { Delivery, JobInfo, JobInput, JobRun, Schedule } from "../generated/wire.ts";
+import type { Scheme } from "../hooks/verify.ts";
 import type { JsonValue } from "../generated/serde_json/JsonValue.ts";
 import type { JobState } from "./state.ts";
 import type { JobResult } from "../generated/wire.ts";
@@ -340,6 +358,53 @@ export interface Job {
          * rows. GitHub: `x-github-event`, which is the default.
          */
         eventHeader?: string;
+        /**
+         * Which signature construction the provider uses.
+         *
+         * `hmac-body` — the default, and what every job written before this
+         * existed gets — hashes the body alone, which is GitHub's scheme and
+         * most others'. `stripe` and `slack` hash a timestamp together with the
+         * body, so `header` and `prefix` do not describe them: the bytes being
+         * hashed are not the bytes that arrived, and their header names are
+         * part of the scheme rather than a choice.
+         *
+         * Prefer a timestamped one where the provider offers it. Replay
+         * protection otherwise rests entirely on `deliveryHeader` and the 1024
+         * ids the listener holds in memory, which a restart forgets; a
+         * timestamp bounds a replay by the clock instead.
+         */
+        scheme?: Scheme;
+        /**
+         * How far out of date a timestamped delivery may be, in milliseconds.
+         * Defaults to five minutes, which is what both providers document.
+         * Ignored by `hmac-body`, which carries no timestamp to check.
+         */
+        toleranceMs?: number;
+        /**
+         * Headers this job reads, by lowercase name, handed to it as
+         * `ctx.delivery.headers` and written to the run record.
+         *
+         * Declared rather than handed the lot, for the same reason
+         * `credentials` is declared: what a job names is what it gets, so the
+         * declaration cannot drift from the use. The security half matters more
+         * here — every genuine delivery carries its signature in a header, and
+         * a job handed all of them could write one into `job-runs.json` and
+         * onto a page. Name the two or three that carry meaning.
+         *
+         * `deliveryHeader` and `eventHeader` do not need naming here; they are
+         * already read and already on the record.
+         */
+        headers?: string[];
+        /**
+         * Query-string parameters this job reads, same rule, arriving as
+         * `ctx.delivery.query`.
+         *
+         * Most providers post to a fixed URL and send none. It is the
+         * hand-built caller — a cron on another machine, a script — that puts
+         * routing in the URL, and this is how a job reads it without the
+         * listener growing a second addressing scheme.
+         */
+        query?: string[];
     };
 
     /**

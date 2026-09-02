@@ -57,6 +57,17 @@ export const webhookEcho: Job = {
     webhook: {
         credential: "demoWebhook",
         deliveryHeader: "x-github-delivery",
+        // Declared so there is somewhere to *see* the declaration work.
+        // `Job.webhook.headers` and `.query` are otherwise a capability with no
+        // example: content-type because every delivery carries one and none of
+        // them is a secret, source because a hand-built caller — a cron on
+        // another machine — is the case a query parameter exists for.
+        //
+        // What is not declared is the point of declaring: the signature header
+        // is on every genuine delivery and is not in this list, so it cannot
+        // reach the run record by way of a job that meant well.
+        headers: ["content-type"],
+        query: ["source"],
     },
 
     info: {
@@ -68,7 +79,13 @@ export const webhookEcho: Job = {
             "which is a separate port from the API and the only part of rn a tunnel should " +
             "ever point at. A delivery must carry a valid HMAC-SHA256 signature over the " +
             "exact request body, made with the demoWebhook credential, or it is refused " +
-            "before this job is started.",
+            "before this job is started.\n\nIt also reports what the delivery said about " +
+            "itself: the provider's delivery id and event name, plus the two things this " +
+            "job declares it reads — the content-type header and a source query parameter. " +
+            "A job is handed only what it declares, which is why the signature header is " +
+            "not among them.\n\nThe body may be JSON, form-encoded or plain text. The " +
+            "signature is checked against the raw bytes either way, before anything is " +
+            "parsed.",
         why:
             "It is how you find out what a provider actually sends, which is reliably not " +
             "what their documentation says. Point a real webhook at it, press their \"send " +
@@ -106,6 +123,20 @@ export const webhookEcho: Job = {
                 changed: false,
                 summary: {},
             };
+        }
+
+        // What the delivery said about itself, as against what it carried. A
+        // separate step from the payload's shape because they answer different
+        // questions — "who sent this and how" versus "what was in it" — and a
+        // run whose payload is unreadable should still say the first.
+        const d = ctx.delivery;
+        if (d !== undefined) {
+            ctx.step("delivery", {
+                ...(d.id == null ? {} : { id: d.id }),
+                ...(d.event == null ? {} : { event: d.event }),
+                ...(d.headers ?? {}),
+                ...(d.query ?? {}),
+            });
         }
 
         const bytes = JSON.stringify(payload).length;

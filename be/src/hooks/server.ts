@@ -30,7 +30,9 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { step, debug, warn } from "../log.ts";
 import { jobById, runJob } from "../jobs/index.ts";
 import * as secrets from "../secrets.ts";
-import { readRaw, verify, makeDeliveryLog, type DeliveryLog } from "./verify.ts";
+import { readRaw, verifyScheme, makeDeliveryLog, type DeliveryLog } from "./verify.ts";
+import { parseBody } from "./body.ts";
+import type { Delivery } from "../generated/wire.ts";
 import type { JsonValue } from "../generated/serde_json/JsonValue.ts";
 
 /** GitHub's, because it is the most common sender. See `Job.webhook`. */
@@ -58,6 +60,28 @@ function headerValue(
     const raw = headers[name.toLowerCase()];
     const value = Array.isArray(raw) ? raw[0] : raw;
     return value === undefined || value === "" ? undefined : value.slice(0, MAX_HEADER_CHARS);
+}
+
+/**
+ * What a job declared it reads, and nothing else.
+ *
+ * The cap and the array rule are `headerValue`'s, applied to a list. Absent
+ * rather than empty when a job declared nothing or none of what it declared
+ * arrived: a record showing `headers: {}` on every GitHub delivery would be
+ * noise on a page, and the difference between "read nothing" and "asked for
+ * nothing" is not one anybody needs to make.
+ */
+function declared(
+    names: string[] | undefined,
+    lookup: (name: string) => string | undefined,
+): Record<string, string> | undefined {
+    if (names === undefined || names.length === 0) return undefined;
+    const out: Record<string, string> = {};
+    for (const name of names) {
+        const value = lookup(name);
+        if (value !== undefined) out[name] = value;
+    }
+    return Object.keys(out).length === 0 ? undefined : out;
 }
 
 /**
@@ -102,6 +126,14 @@ export function handle(deliveries: DeliveryLog) {
         const event = headerValue(req.headers, cfg.eventHeader ?? DEFAULT_EVENT_HEADER);
         const header = (cfg.header ?? DEFAULT_HEADER).toLowerCase();
         const prefix = cfg.prefix ?? DEFAULT_PREFIX;
+        const scheme = cfg.scheme ?? "hmac-body";
+        // Uncapped, unlike `headerValue`: a signature or a `Stripe-Signature`
+        // carrying several rotated keys is longer than a delivery id, and this
+        // value is compared and discarded rather than written anywhere.
+        const rawHeader = (name: string): string | undefined => {
+            const value = req.headers[name.toLowerCase()];
+            return Array.isArray(value) ? value[0] : value;
+        };
 
         // A hook whose credential is missing rejects every delivery. Logged as
         // its own reason because from the provider's side it is indistinguishable
@@ -123,31 +155,64 @@ export function handle(deliveries: DeliveryLog) {
             return refuse(res, 413);
         }
 
-        const offered = req.headers[header];
-        const signature = Array.isArray(offered) ? offered[0] : offered;
-        if (!verify(raw, signature, secret, prefix)) {
-            warn("hook-signature-rejected", { id, header, bytes: raw.length });
+        // The reason is logged and never answered with: a caller who could tell
+        // "stale timestamp" from "wrong signature" apart has an oracle, and the
+        // operator reading the log has a diagnosis — a stale timestamp is
+        // nearly always a clock, not an attack.
+        const signed = verifyScheme({ scheme, raw, get: rawHeader, secret, header, prefix });
+        if (!signed.ok) {
+            warn("hook-signature-rejected", {
+                id,
+                scheme,
+                reason: signed.reason,
+                bytes: raw.length,
+                ...(scheme === "hmac-body" ? { header } : {}),
+            });
             return refuse(res, 401);
         }
 
         // Replay check *after* the signature, so an unauthenticated caller
         // cannot fill the delivery log with ids of their choosing.
-        const delivery = headerValue(req.headers, cfg.deliveryHeader);
-        if (!deliveries.accept(delivery)) {
-            warn("hook-replayed", { id, delivery });
+        const deliveryId = headerValue(req.headers, cfg.deliveryHeader);
+        if (!deliveries.accept(deliveryId)) {
+            warn("hook-replayed", { id, delivery: deliveryId });
             return refuse(res, 409);
         }
 
         // Parsed only now — after the bytes were proven to come from the holder
         // of the secret. Parsing before verifying would mean running a parser
         // on input from anyone who found the URL.
-        let payload: unknown;
-        try {
-            payload = raw.length === 0 ? {} : JSON.parse(raw.toString("utf8"));
-        } catch {
-            warn("hook-payload-unparseable", { id, bytes: raw.length });
-            return refuse(res, 400);
+        //
+        // By content type rather than as JSON regardless: a form-encoded body
+        // used to verify and then be refused 400, which reads as a wrong secret
+        // and sends the reader to the one place the fault is not. See body.ts.
+        const parsed = parseBody(raw, rawHeader("content-type"));
+        if (!parsed.ok) {
+            warn("hook-payload-unparseable", {
+                id,
+                reason: parsed.reason,
+                bytes: raw.length,
+            });
+            return refuse(res, parsed.code);
         }
+        const payload = parsed.value;
+
+        // What goes on the run record and into `ctx.delivery`. Not the payload
+        // — see Delivery in shared/src/jobs.rs — but enough that forty
+        // deliveries do not read as forty identical rows, plus whatever headers
+        // and query parameters this job declared it reads.
+        const record: Delivery = {
+            ...(deliveryId === undefined ? {} : { id: deliveryId }),
+            ...(event === undefined ? {} : { event }),
+            ...((): Partial<Delivery> => {
+                const headers = declared(cfg.headers, rawHeader);
+                return headers === undefined ? {} : { headers };
+            })(),
+            ...((): Partial<Delivery> => {
+                const query = declared(cfg.query, (name) => url.searchParams.get(name) ?? undefined);
+                return query === undefined ? {} : { query };
+            })(),
+        };
 
         // **202 now, run after.** Providers time out in seconds and retry on
         // any non-2xx, so waiting for the job would turn a one-minute run into
@@ -159,7 +224,7 @@ export function handle(deliveries: DeliveryLog) {
         step("hook-accepted", {
             id: job.id,
             bytes: raw.length,
-            ...(delivery === undefined ? {} : { delivery }),
+            ...(deliveryId === undefined ? {} : { delivery: deliveryId }),
             ...(event === undefined ? {} : { event }),
             ms: Date.now() - started,
         });
@@ -169,14 +234,8 @@ export function handle(deliveries: DeliveryLog) {
         // recorded the failure by the time it throws; this keeps the process
         // from treating a failed automation as a fatal error.
         void runJob(job, "webhook", undefined, {}, {
-            payload: payload as JsonValue,
-            // What goes on the run record. Not the payload — see Delivery in
-            // shared/src/jobs.rs — but enough that forty deliveries do not read
-            // as forty identical rows.
-            delivery: {
-                ...(delivery === undefined ? {} : { id: delivery }),
-                ...(event === undefined ? {} : { event }),
-            },
+            payload,
+            delivery: record,
         }).catch(() => {});
     };
 }

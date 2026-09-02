@@ -40,8 +40,9 @@ import type { JsonValue } from "../generated/serde_json/JsonValue.ts";
 import type { Delivery } from "../generated/wire.ts";
 
 /**
- * What a webhook delivery hands the runner: the body for the job, and the two
- * headers that identify the delivery for the record.
+ * What a webhook delivery hands the runner: the body for the job, and who sent
+ * it — the delivery id and event, plus any header or query parameter the job
+ * declared it reads.
  *
  * One argument rather than two more positional ones — `runJob` already takes
  * four, and a fifth and sixth that are only ever set together would be four
@@ -406,7 +407,7 @@ export async function runJob(
             ...(cause === undefined ? {} : { causedBy: cause.jobId }),
             // Especially here. Nine refusals in a burst are only readable if
             // each one says which delivery it turned away.
-            ...(webhook === undefined ? {} : { delivery: webhook.delivery }),
+            ...(webhook === undefined ? {} : { delivery: secrets.scrub(webhook.delivery) }),
         });
         return { changed: false, skipped, summary: {} };
     }
@@ -497,7 +498,14 @@ export async function runJob(
                 // Same rule, for the webhook trigger. Set only when a delivery
                 // started this run, and already verified by the time it is
                 // here — the listener does not call runJob otherwise.
-                ...(webhook === undefined ? {} : { payload: webhook.payload }),
+                //
+                // The delivery goes to the job as well as to the record. It is
+                // the same object either way: one description of who sent this,
+                // so a job cannot read one thing and the history show another.
+                ...(webhook === undefined ? {} : {
+                    payload: webhook.payload,
+                    delivery: webhook.delivery,
+                }),
             };
 
             let timer: ReturnType<typeof setTimeout> | undefined;
@@ -680,7 +688,7 @@ export async function runJob(
                 // text field on the form, and the input is recorded verbatim.
                 input: secrets.scrub(input),
                 ...(cause === undefined ? {} : { causedBy: cause.jobId }),
-                ...(webhook === undefined ? {} : { delivery: webhook.delivery }),
+                ...(webhook === undefined ? {} : { delivery: secrets.scrub(webhook.delivery) }),
             };
             record(completed);
 
@@ -753,7 +761,7 @@ export async function runJob(
                 attempts,
                 input: secrets.scrub(input),
                 ...(cause === undefined ? {} : { causedBy: cause.jobId }),
-                ...(webhook === undefined ? {} : { delivery: webhook.delivery }),
+                ...(webhook === undefined ? {} : { delivery: secrets.scrub(webhook.delivery) }),
             };
             record(failure);
             await runFailureHandler(job, failure, cause !== undefined);

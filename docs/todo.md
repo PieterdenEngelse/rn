@@ -10,22 +10,12 @@ item.
 
 ---
 
-## 1. The hooks listener refuses deliveries it should accept
-
-A form-encoded body — Slack's slash commands, and several older providers —
-verifies its signature and is then refused 400 by `JSON.parse`. The delivery was
-authentic; the failure reads as a wrong secret, and the secret is where anyone
-will look first. Alongside it: a job cannot see the event name or any query
-parameter, and Stripe's and Slack's timestamped signature schemes are rejected
-outright, so those providers cannot be pointed at rn at all.
-
-The plan is `docs/n8n.md` §7, steps 1 to 3, in that order. Steps 4 to 6 there
-wait on a provider that needs them; these three do not.
-
-Until it is done, "webhooks are supported" means "GitHub-shaped webhooks are
-supported", and nothing on any page says so.
-
----
+**Nothing is open right now.** The item that stood here — the hooks listener
+refusing form-encoded deliveries it had just authenticated, and rejecting
+Stripe's and Slack's signature schemes outright — was closed by building
+`docs/n8n.md` §7 steps 1 to 3. Steps 4 to 6 there are not open work: each waits
+on a provider that needs it, and building one first is how a narrow feature
+becomes a default.
 
 The three items that were here before — the Deno refusal nobody had watched
 happen, the all-or-nothing job memory, and the retry policy that could not be

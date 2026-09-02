@@ -109,6 +109,192 @@ export function verify(
 }
 
 /**
+ * The schemes this listener knows how to check.
+ *
+ * `hmac-body` is the construction above and stays the default, so no job that
+ * exists changes behaviour by this being added. The other two sign a string
+ * built from a timestamp *and* the body, which is why they cannot be expressed
+ * as a header and prefix on the first one — the bytes being hashed are not the
+ * bytes that arrived.
+ *
+ * That timestamp is the real reason to want them. A signature is valid forever,
+ * so `makeDeliveryLog` below is all that stands between a captured request and
+ * a replay of it — and it holds 1024 ids in memory and forgets them on restart.
+ * A scheme carrying a timestamp can be bounded by *time* instead, which no
+ * amount of remembering can do.
+ */
+export type Scheme = "hmac-body" | "stripe" | "slack";
+
+/**
+ * How far out of date a timestamped delivery may be, five minutes either way.
+ *
+ * Both providers document five minutes and both retry inside it. Either way:
+ * a clock can be behind as easily as ahead, and a future timestamp is not more
+ * trustworthy than a past one.
+ */
+export const DEFAULT_TOLERANCE_MS = 5 * 60 * 1000;
+
+/** What a scheme was given, and by whom. `undefined` for a header not sent. */
+export type HeaderLookup = (name: string) => string | undefined;
+
+/**
+ * Refused, and why — for the log only.
+ *
+ * The response says 401 whatever the reason, exactly as before: "stale
+ * timestamp" and "bad signature" are two distinguishable answers, and handing
+ * both to an unauthenticated caller is the oracle `refuse` exists to avoid. The
+ * operator gets the difference in the log, where it is the whole diagnosis: a
+ * stale timestamp is usually a wrong clock, not an attack.
+ */
+export type VerifyOutcome = { ok: true } | { ok: false; reason: string };
+
+/** Constant-time compare of an offered hex digest against a computed one. */
+function hexEquals(offered: string, expected: Buffer): boolean {
+    if (!/^[0-9a-fA-F]+$/.test(offered)) return false;
+    const given = Buffer.from(offered, "hex");
+    if (given.length !== expected.length) return false;
+    return timingSafeEqual(given, expected);
+}
+
+function hmacHex(secret: string, data: string | Buffer): Buffer {
+    return createHmac("sha256", secret).update(data).digest();
+}
+
+/**
+ * Whole seconds since the epoch, as both providers send them.
+ *
+ * Rejected rather than coerced when it is not a number: a timestamp that
+ * parsed as NaN would compare false against every tolerance and refuse the
+ * delivery anyway, but for a reason the log would spell "stale" when the truth
+ * is "unreadable".
+ */
+function withinTolerance(
+    raw: string | undefined,
+    now: number,
+    toleranceMs: number,
+): VerifyOutcome {
+    if (raw === undefined || raw === "") return { ok: false, reason: "no timestamp sent" };
+    const seconds = Number(raw);
+    if (!Number.isFinite(seconds)) return { ok: false, reason: "timestamp is not a number" };
+    const skew = Math.abs(now - seconds * 1000);
+    if (skew > toleranceMs) {
+        return { ok: false, reason: `timestamp is ${Math.round(skew / 1000)}s out of date` };
+    }
+    return { ok: true };
+}
+
+/**
+ * Stripe: `Stripe-Signature: t=<unix>,v1=<hex>[,v1=<hex>...]`, signing
+ * `<t>.<body>`.
+ *
+ * More than one `v1` is normal and not an oddity to guard against — it is how
+ * Stripe rolls a secret, sending one signature per active key. Any of them
+ * matching is a match; requiring the first would break every rotation.
+ */
+function verifyStripe(
+    raw: Buffer,
+    header: string | undefined,
+    secret: string,
+    now: number,
+    toleranceMs: number,
+): VerifyOutcome {
+    if (header === undefined || header === "") return { ok: false, reason: "no signature sent" };
+
+    let timestamp: string | undefined;
+    const offered: string[] = [];
+    for (const part of header.split(",")) {
+        const eq = part.indexOf("=");
+        if (eq === -1) continue;
+        const key = part.slice(0, eq).trim();
+        const value = part.slice(eq + 1).trim();
+        if (key === "t") timestamp = value;
+        else if (key === "v1") offered.push(value);
+    }
+
+    const fresh = withinTolerance(timestamp, now, toleranceMs);
+    if (!fresh.ok) return fresh;
+    if (offered.length === 0) return { ok: false, reason: "no v1 signature in the header" };
+
+    const expected = hmacHex(secret, `${timestamp}.${raw.toString("utf8")}`);
+    // Short-circuiting on a match is fine: it is the failing comparisons that
+    // must not leak timing, and each one of those runs in full.
+    return offered.some((sig) => hexEquals(sig, expected))
+        ? { ok: true }
+        : { ok: false, reason: "no signature matched" };
+}
+
+/**
+ * Slack: `X-Slack-Signature: v0=<hex>` with `X-Slack-Request-Timestamp`,
+ * signing `v0:<timestamp>:<body>`.
+ *
+ * The version lives in the value rather than in the header name, so it is
+ * checked rather than stripped: a `v1=` Slack has not shipped yet must be
+ * refused here rather than verified against the v0 construction.
+ */
+function verifySlack(
+    raw: Buffer,
+    signature: string | undefined,
+    timestamp: string | undefined,
+    secret: string,
+    now: number,
+    toleranceMs: number,
+): VerifyOutcome {
+    if (signature === undefined || signature === "") {
+        return { ok: false, reason: "no signature sent" };
+    }
+    if (!signature.startsWith("v0=")) return { ok: false, reason: "signature is not v0" };
+
+    const fresh = withinTolerance(timestamp, now, toleranceMs);
+    if (!fresh.ok) return fresh;
+
+    const expected = hmacHex(secret, `v0:${timestamp}:${raw.toString("utf8")}`);
+    return hexEquals(signature.slice("v0=".length), expected)
+        ? { ok: true }
+        : { ok: false, reason: "signature did not match" };
+}
+
+/**
+ * One entry point for every scheme, so the listener holds no scheme logic.
+ *
+ * `header` and `prefix` apply to `hmac-body` only. The timestamped schemes read
+ * fixed header names because those names are part of the scheme rather than a
+ * provider's choice — making them configurable would invite pointing "stripe"
+ * at a header that does not carry `t=`, which fails as an unreadable timestamp
+ * a long way from the mistake.
+ */
+export function verifyScheme(opts: {
+    scheme: Scheme;
+    raw: Buffer;
+    get: HeaderLookup;
+    secret: string;
+    header?: string;
+    prefix?: string;
+    toleranceMs?: number;
+    now?: number;
+}): VerifyOutcome {
+    const now = opts.now ?? Date.now();
+    const toleranceMs = opts.toleranceMs ?? DEFAULT_TOLERANCE_MS;
+
+    switch (opts.scheme) {
+        case "stripe":
+            return verifyStripe(opts.raw, opts.get("stripe-signature"), opts.secret, now, toleranceMs);
+        case "slack":
+            return verifySlack(
+                opts.raw,
+                opts.get("x-slack-signature"),
+                opts.get("x-slack-request-timestamp"),
+                opts.secret,
+                now,
+                toleranceMs,
+            );
+        case "hmac-body":
+            return verify(opts.raw, opts.get(opts.header ?? ""), opts.secret, opts.prefix ?? "")
+                ? { ok: true }
+                : { ok: false, reason: "signature did not match" };
+    }
+}
+
+/**
  * Deliveries already seen, so a captured request cannot be replayed.
  *
  * A valid signature stays valid forever — that is what a signature is — so

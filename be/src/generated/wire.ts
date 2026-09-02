@@ -247,7 +247,27 @@ id?: string | null,
  * What happened, in the provider's vocabulary — "push",
  * "pull_request", "invoice.paid".
  */
-event?: string | null, };
+event?: string | null, 
+/**
+ * Headers the job declared it reads, by lowercase name, as they
+ * arrived.
+ *
+ * Declared rather than captured wholesale: a record of every header a
+ * stranger chose to send is an invitation to write an `Authorization`
+ * value into `job-runs.json`, and the signature header itself is on
+ * every genuine delivery. A job names the two or three it needs, and
+ * those are the ones kept — see `Job.webhook.headers` in
+ * `be/src/jobs/types.ts`.
+ */
+headers?: { [key in string]: string } | null, 
+/**
+ * Query-string parameters the job declared it reads, same rule.
+ *
+ * Absent on most deliveries: a provider posting to a fixed URL has no
+ * reason to add any. It is the hand-built caller — a cron on another
+ * machine, a script — that puts routing in the URL.
+ */
+query?: { [key in string]: string } | null, };
 
 /**
  * What Deno is permitted to do — the only runtime that can answer this.
