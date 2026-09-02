@@ -14,6 +14,7 @@
 //! anything heavy lands in the browser bundle.
 
 pub mod connection;
+pub mod credentials;
 pub mod env;
 pub mod jobs;
 pub mod monitor;
@@ -21,6 +22,7 @@ pub mod params;
 pub mod webhooks;
 
 pub use connection::*;
+pub use credentials::*;
 pub use env::*;
 pub use jobs::*;
 pub use monitor::*;
@@ -116,6 +118,10 @@ pub fn export_all(cfg: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     WebhookDefaults::export_all(cfg)?;
     WebhooksResponse::export_all(cfg)?;
     WebhookSaveResponse::export_all(cfg)?;
+
+    CredentialEntry::export_all(cfg)?;
+    CredentialsResponse::export_all(cfg)?;
+    CredentialSaveResponse::export_all(cfg)?;
     Ok(())
 }
 

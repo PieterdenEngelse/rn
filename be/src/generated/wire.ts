@@ -241,6 +241,46 @@ webhookTokenJobs: number,
 supervised: boolean, };
 
 /**
+ * One credential: its name, where its value goes, and whether it is there.
+ *
+ * Everything except `set` is public information — a name, a variable, and
+ * which parts of the install asked for it. `set` is the single bit of
+ * knowledge about the value, and it is the one that turns "this job will
+ * fail at 03:00" from invisible into a red row.
+ */
+export type CredentialEntry = { 
+/**
+ * As a job or webhook spells it — `githubToken`.
+ */
+name: string, 
+/**
+ * The variable that carries it — `RN_SECRET_GITHUB_TOKEN`. Derived in
+ * `be/src/secrets.ts` and nowhere else, and sent rather than
+ * recomputed here so the page cannot tell somebody to set a variable
+ * the backend does not read.
+ */
+envVar: string, 
+/**
+ * Whether the running process has a value. Never the value.
+ */
+set: boolean, 
+/**
+ * Whether the credentials file has a line for it.
+ *
+ * Not the same question as `set`, and the difference is the one worth
+ * showing: set-but-not-in-the-file is a value that will be gone after
+ * the next restart, and in-the-file-but-not-set is a file the launcher
+ * has not re-read yet.
+ */
+inFile: boolean, 
+/**
+ * What asked for it — job ids, and webhook ids. Empty means nothing
+ * currently declares it: a leftover, or a credential added ahead of
+ * the job that will want it.
+ */
+declaredBy: Array<string>, };
+
+/**
  * A credential a job needs, described without describing its value.
  *
  * Name, where to put it, and whether it is there. Never the value, and
@@ -256,6 +296,40 @@ export type CredentialRef = { name: string,
  * what to set rather than only that something is missing.
  */
 envVar: string, set: boolean, };
+
+/**
+ * `PUT /api/credentials/:name` and `DELETE /api/credentials/:name`.
+ *
+ * Carries no value in either direction — see the module doc. The entry
+ * comes back so the row can redraw from what the backend now has rather
+ * than from what the form thinks it sent.
+ */
+export type CredentialSaveResponse = { ok: boolean, errors?: Array<string>, entry?: CredentialEntry | null, };
+
+/**
+ * `GET /api/credentials`.
+ */
+export type CredentialsResponse = { 
+/**
+ * Every credential anything declares, plus every one the file names.
+ */
+entries: Array<CredentialEntry>, 
+/**
+ * Display path of the file — `~/.config/rn/credentials`. Display form
+ * only, and never accepted back: the backend resolves its own path.
+ */
+path: string, 
+/**
+ * Whether the file exists yet. A fresh install has none, which is not
+ * a fault and should not be rendered as one.
+ */
+exists: boolean, 
+/**
+ * Set when the file is readable by group or other, with the mode in
+ * it. The launcher warns about this on startup, where nobody reading
+ * a page will see it.
+ */
+permissionWarning?: string | null, };
 
 /**
  * Which webhook delivery started a run, described in two headers.

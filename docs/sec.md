@@ -42,6 +42,15 @@ RN_SECRET_SLACK_WEBHOOK=https://hooks.slack.com/...
 and reads it anyway — refusing to boot over a permission bit would leave you
 with no UI in which to fix anything.
 
+**The credentials board on Config → Jobs writes this file**, so it does not have
+to be edited by hand. It preserves comments, ordering and unrelated keys, sets
+mode 0600 on every write — the other half of the launcher's warning, which
+nobody sees on stderr at boot — and applies the value to the running backend
+before writing it, so a credential works without a restart. It is write-only:
+nothing on that page or behind that endpoint can read a value back. The reasoning,
+including why writing is a different question from reading on an API with no
+authentication, is in `docs/token-sec.md` under *The write direction*.
+
 **Not in the install tree, and that is the whole reason this file exists.**
 Credentials used to go in `be/.env`, which sits inside the app directory. That
 directory is replaced wholesale on upgrade, so every upgrade would have deleted

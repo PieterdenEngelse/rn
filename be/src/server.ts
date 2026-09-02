@@ -10,6 +10,9 @@
  * GET  /api/jobs/:id/errors   the job's recorded failures
  * GET  /api/connection  what is listening, who may talk to it, what it may reach
  * GET  /api/env       what be/.env says, against what this process has
+ * GET  /api/credentials    what this install needs, and whether it has it
+ * PUT  /api/credentials/:name    set one (write-only; never read back)
+ * DELETE /api/credentials/:name  remove one
  * GET  /api/webhooks  the webhooks made on the page, and what may be chosen for one
  * PUT  /api/webhooks/:id     make or replace one
  * DELETE /api/webhooks/:id   remove one
@@ -25,6 +28,8 @@ import { RUNTIME_PARAMS, WITHHELD } from "./runtime-params.ts";
 // below is what makes a field renamed there a build failure here rather than an
 // `undefined` in whichever panel reads it first.
 import type {
+    CredentialSaveResponse,
+    CredentialsResponse,
     WebhookDef,
     WebhookSaveResponse,
     WebhooksResponse,
@@ -51,6 +56,7 @@ import { createHookApp, hooksHealth, startHooks } from "./hooks/server.ts";
 import { sendTestDelivery } from "./hooks/test-delivery.ts";
 import { describeEnv } from "./env-file.ts";
 import * as webhooks from "./webhooks.ts";
+import * as credentialsFile from "./credentials-file.ts";
 import { dryRun } from "./dry-run.ts";
 import * as secrets from "./secrets.ts";
 import { display as displayPath } from "./paths.ts";
@@ -108,6 +114,68 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
     }
     if (chunks.length === 0) return {};
     return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+}
+
+/**
+ * Which parts of this install ask for a credential, by name.
+ *
+ * Assembled from all four places a credential can be declared — a job's own
+ * list, a job's webhook, a page-made webhook, and that webhook's lookup — so
+ * the board is a list of what this install actually needs rather than a list of
+ * what somebody happened to type once.
+ *
+ * A name nothing declares still appears, from the file, because a credential
+ * added ahead of the job that will want it is a reasonable thing to have done
+ * and a page that hid it would look like it had lost the value.
+ */
+function credentialDeclarations(): Map<string, string[]> {
+    const out = new Map<string, string[]>();
+    const add = (name: string | null | undefined, by: string): void => {
+        if (typeof name !== "string" || name === "") return;
+        const list = out.get(name) ?? [];
+        if (!list.includes(by)) list.push(by);
+        out.set(name, list);
+    };
+
+    for (const job of JOBS) {
+        for (const name of job.credentials ?? []) add(name, job.id);
+        add(job.webhook?.credential, job.id);
+        add(job.webhook?.auth?.kind === "token" ? job.webhook.credential : undefined, job.id);
+    }
+    for (const def of webhooks.list()) {
+        add(def.credential, def.id);
+        add(def.lookup?.credential, def.id);
+    }
+    return out;
+}
+
+/** What declares one credential. Empty when nothing currently does. */
+function declaredBy(name: string): string[] {
+    return credentialDeclarations().get(name) ?? [];
+}
+
+/**
+ * Every credential worth a row: everything declared, plus everything the file
+ * names, sorted so the board does not reshuffle between polls.
+ */
+function credentialEntries() {
+    const declarations = credentialDeclarations();
+    const names = new Set(declarations.keys());
+
+    const rows = [...names]
+        .sort((a, b) => a.localeCompare(b))
+        .map((name) => credentialsFile.describe(name, declarations.get(name) ?? []));
+
+    // Variables the file sets that nothing declares. Shown under the variable's
+    // own spelling: the name→variable mapping is one-way by design, so there is
+    // no name to recover, and a guessed one would not match what any job asks
+    // for. See describeVariable().
+    const covered = new Set(rows.map((r) => r.envVar));
+    for (const variable of credentialsFile.fileVars()) {
+        if (!covered.has(variable)) rows.push(credentialsFile.describeVariable(variable));
+    }
+
+    return rows;
 }
 
 /** Set once a restart is queued behind running work. */
@@ -696,6 +764,86 @@ export function createApp() {
                 });
                 return done(500);
             }
+        }
+
+        // What this install needs and whether it has it. Names, variables and
+        // two booleans — never a value, not even a prefix or a length of one.
+        // See docs/token-sec.md: a panel renders existence, and this endpoint
+        // has no shape that could carry content even if a page asked.
+        if (url.pathname === "/api/credentials" && req.method === "GET") {
+            const state = credentialsFile.fileState();
+            send(res, 200, {
+                entries: credentialEntries(),
+                // Display form. The absolute path stays here and is never
+                // accepted back — the backend resolves its own file.
+                path: displayPath(config.credentialsPath),
+                exists: state.exists,
+                ...(state.permissionWarning === undefined
+                    ? {}
+                    : { permissionWarning: state.permissionWarning }),
+            } satisfies CredentialsResponse);
+            return done(200);
+        }
+
+        // Set one. Write-only: the response says whether it took, and the
+        // reader is told nothing it did not already send.
+        //
+        // The value is applied to this process before it is written to the
+        // file, which is what arms redaction — see be/src/credentials-file.ts.
+        // So it works immediately and there is no restart to tell anyone about.
+        if (url.pathname.startsWith("/api/credentials/") && req.method === "PUT") {
+            const name = decodeURIComponent(url.pathname.slice("/api/credentials/".length));
+            let body: unknown;
+            try {
+                body = await readJson(req);
+            } catch {
+                // The parse error is not echoed: a malformed body containing a
+                // credential would put it in the response and the log.
+                send(res, 400, {
+                    ok: false,
+                    errors: ["the request body could not be read as JSON"],
+                } satisfies CredentialSaveResponse);
+                return done(400);
+            }
+            const value = (body as { value?: unknown })?.value;
+            if (typeof value !== "string") {
+                send(res, 400, {
+                    ok: false,
+                    errors: ["the body must be {\"value\": \"…\"}"],
+                } satisfies CredentialSaveResponse);
+                return done(400);
+            }
+            const result = credentialsFile.set(name, value);
+            if (result.errors.length > 0) {
+                send(res, 422, {
+                    ok: false,
+                    errors: result.errors,
+                } satisfies CredentialSaveResponse);
+                return done(422);
+            }
+            send(res, 200, {
+                ok: true,
+                entry: credentialsFile.describe(name, declaredBy(name)),
+            } satisfies CredentialSaveResponse);
+            return done(200);
+        }
+
+        // Remove one, from this process and from the file. Idempotent in the
+        // way DELETE promises: asking twice is a 404 and it is gone either way.
+        if (url.pathname.startsWith("/api/credentials/") && req.method === "DELETE") {
+            const name = decodeURIComponent(url.pathname.slice("/api/credentials/".length));
+            if (!credentialsFile.clear(name)) {
+                send(res, 404, {
+                    ok: false,
+                    errors: [`Nothing is set for "${name}".`],
+                } satisfies CredentialSaveResponse);
+                return done(404);
+            }
+            send(res, 200, {
+                ok: true,
+                entry: credentialsFile.describe(name, declaredBy(name)),
+            } satisfies CredentialSaveResponse);
+            return done(200);
         }
 
         // The webhooks made on the page, as opposed to the ones a job declares

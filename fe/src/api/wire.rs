@@ -28,6 +28,12 @@ pub use shared::monitor::*;
 // listener.
 pub use shared::webhooks::*;
 
+// The credentials board. Its own module in `shared/` rather than a corner of
+// the jobs surface, because what governs it is a different document —
+// `docs/token-sec.md` — and the rule it encodes is structural: there is no
+// shape in there that can carry a value, in either direction.
+pub use shared::credentials::*;
+
 // The runtime-parameter and config surface, the last shapes that were written
 // twice. `fe` described them as loose strings and `be` as literal unions, and
 // the two agreed only because someone was careful; `shared::params` is now the

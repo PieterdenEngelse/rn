@@ -7,7 +7,8 @@
 use super::wire::{
     ConnectionResponse, EnvResponse, HealthResponse, JobErrors, JobRunResult, JobSource, JobsResponse, NodeHistory, NodeMetrics,
     ParamsResponse, RestartOutcome, RunsResponse, SaveResponse, StateResetResponse, StatusResponse,
-    StopOutcome, TestDelivery, WebhookDef, WebhookSaveResponse, WebhooksResponse,
+    CredentialSaveResponse, CredentialsResponse, StopOutcome, TestDelivery, WebhookDef,
+    WebhookSaveResponse, WebhooksResponse,
 };
 
 /// Base URL of the backend API. In development the frontend is served by
@@ -475,4 +476,58 @@ pub async fn delete_webhook(id: &str) -> Result<WebhookSaveResponse, String> {
     resp.json::<WebhookSaveResponse>()
         .await
         .map_err(|_| format!("the delete failed ({})", resp.status()))
+}
+
+/// What this install needs by way of credentials, and whether it has it.
+///
+/// Names, variables and two booleans. There is no function in this module that
+/// reads a credential's value, and there is no shape in `shared/` that could
+/// carry one — see `docs/token-sec.md`, which is the reason rather than a
+/// footnote to it: rendering a secret hands it to every local process that can
+/// open the port, and to every screenshot of the page.
+pub async fn fetch_credentials() -> Result<CredentialsResponse, String> {
+    let resp = gloo_net::http::Request::get(&format!("{API_BASE}/api/credentials"))
+        .send()
+        .await
+        .map_err(|e| format!("{e}"))?;
+    resp.json::<CredentialsResponse>().await.map_err(|e| format!("{e}"))
+}
+
+/// Set one credential. Write-only: nothing comes back but whether it took.
+///
+/// It applies to the running backend immediately — the value goes into the
+/// process environment before it is written to the file, which is what arms
+/// redaction — so there is no restart to wait for and the page should not
+/// suggest one.
+///
+/// The value is not logged here and must not be put into any error text. An
+/// error is written to a console and rendered on a page, which are the two
+/// places the whole rule exists to keep a credential out of.
+pub async fn save_credential(name: &str, value: &str) -> Result<CredentialSaveResponse, String> {
+    let body = serde_json::json!({ "value": value }).to_string();
+    let resp = gloo_net::http::Request::put(&format!("{API_BASE}/api/credentials/{name}"))
+        .header("content-type", "application/json")
+        .body(body)
+        .map_err(|e| format!("{e}"))?
+        .send()
+        .await
+        .map_err(|e| format!("{e}"))?;
+    resp.json::<CredentialSaveResponse>()
+        .await
+        .map_err(|_| format!("the credential was not saved ({})", resp.status()))
+}
+
+/// Remove one, from the running backend and from the file.
+///
+/// Both halves: leaving the environment would report it as still set, which is
+/// true and useless, and leaving the file would bring it back on the next
+/// restart.
+pub async fn delete_credential(name: &str) -> Result<CredentialSaveResponse, String> {
+    let resp = gloo_net::http::Request::delete(&format!("{API_BASE}/api/credentials/{name}"))
+        .send()
+        .await
+        .map_err(|e| format!("{e}"))?;
+    resp.json::<CredentialSaveResponse>()
+        .await
+        .map_err(|_| format!("the credential was not removed ({})", resp.status()))
 }

@@ -20,8 +20,9 @@
 //! anyone holding that can reach the listener, so it is not a thing to render.
 
 use crate::api::{
-    delete_webhook, fetch_webhooks, save_webhook, CommandRoute, Lookup, Webhook, WebhookDef,
-    WebhookKind, WebhooksResponse,
+    delete_credential, delete_webhook, fetch_credentials, fetch_webhooks, save_credential,
+    save_webhook, CommandRoute, CredentialEntry, Lookup, Webhook, WebhookDef, WebhookKind,
+    WebhooksResponse,
 };
 use crate::components::param::PARAM_INPUT_ROW_CLASS;
 use crate::components::{GlossaryEntry, InfoButton, Panel};
@@ -286,6 +287,13 @@ pub fn WebhookTile() -> Element {
                         p { class: "max-w-3xl text-gray-300 leading-relaxed", "{TILE_BODY}" }
 
                         Listener { listening: r.listening, port: r.port }
+
+                        // Above the hooks rather than below them: the commonest
+                        // reason a hook on this page does nothing is a signing
+                        // secret that was never set, and a board you have to
+                        // scroll past three cards to find is one people ask
+                        // about instead of finding.
+                        CredentialsBoard {}
 
                         if r.webhooks.is_empty() {
                             p { class: "text-gray-400",
@@ -1448,3 +1456,383 @@ const STATS_IF_WRONG: &str =
      process: check the listener line at the top of this tile, then the tunnel, then that the id \
      in their URL matches the one here.\n\nThe counters reset on every restart, so zeroes shortly \
      after one mean nothing at all.";
+
+// --- the credentials board -------------------------------------------------
+
+/// Where the credentials the file holds are put in.
+///
+/// **Write-only, and the asymmetry is the design rather than a limitation of
+/// it.** A value goes one way: typed here, into the process, into the file.
+/// Nothing sends one back — not a masked form, not a prefix, not a length. The
+/// reason is `docs/token-sec.md`: rendering a secret is a broadcast, not a
+/// read. The API has no authentication, so a panel that drew a token would hand
+/// it to every postinstall script and editor extension that can open the port,
+/// and a screenshot of it defeats every secret scanner there is, because those
+/// read text and a PNG is not text.
+///
+/// Writing is a different question from reading and comes out differently. A
+/// local process gains nothing here: it runs as the user, so it can already
+/// write `~/.config/rn/credentials` itself, and it can already POST to
+/// `/api/jobs/:id` to run any automation holding any credential. That is stated
+/// on the panel too, because "the page writes my tokens" deserves an answer
+/// rather than silence.
+///
+/// It sits inside the Webhooks tile because that is where the missing
+/// credential is noticed — a hook whose secret is unset refuses every delivery
+/// — but it covers every credential this install declares, jobs included.
+#[component]
+fn CredentialsBoard() -> Element {
+    let mut reload = use_signal(|| 0u32);
+    let creds = use_resource(move || {
+        reload();
+        fetch_credentials()
+    });
+    // Which row is open for editing, and what has been typed into it. One at a
+    // time: a board of open password fields is a board that is one screenshot
+    // away from being several disclosures.
+    let mut editing = use_signal(|| Option::<String>::None);
+    let mut value = use_signal(String::new);
+    let mut adding = use_signal(|| false);
+    let mut new_name = use_signal(String::new);
+    let mut errors = use_signal(Vec::<String>::new);
+    let mut busy = use_signal(|| false);
+
+    // Shared by the row form and the add form, so "save" means one thing.
+    let mut save = move |name: String| {
+        let secret = value();
+        if secret.is_empty() {
+            errors.set(vec!["nothing was typed — a credential cannot be empty".to_string()]);
+            return;
+        }
+        busy.set(true);
+        spawn(async move {
+            match save_credential(&name, &secret).await {
+                Ok(resp) if resp.ok => {
+                    errors.write().clear();
+                    editing.set(None);
+                    adding.set(false);
+                    new_name.set(String::new());
+                }
+                Ok(resp) => errors.set(resp.errors),
+                Err(e) => errors.set(vec![e]),
+            }
+            // Cleared whatever happened, including on a failure: a value left
+            // in a signal is a value still in the page's memory, and the retry
+            // is one the person can type again.
+            value.set(String::new());
+            busy.set(false);
+            reload += 1;
+        });
+    };
+
+    rsx! {
+        div { class: "rounded border border-gray-600 bg-gray-800 p-4 space-y-3",
+            div { class: PARAM_INPUT_ROW_CLASS,
+                div { class: "flex items-baseline gap-3 flex-wrap",
+                    span { class: "text-gray-200 font-medium", "Credentials" }
+                    span { class: HINT, "typed in here, never shown back" }
+                }
+                InfoButton {
+                    title: "Credentials".to_string(),
+                    what: CREDS_WHAT.to_string(),
+                    why: CREDS_WHY.to_string(),
+                    if_wrong: CREDS_IF_WRONG.to_string(),
+                    glossary: glossary(),
+                }
+            }
+
+            match &*creds.read_unchecked() {
+                Some(Ok(c)) => {
+                    let c = c.clone();
+                    rsx! {
+                        div { class: "flex items-baseline gap-3 flex-wrap {HINT}",
+                            span { "file " }
+                            code { "{c.path}" }
+                            if c.exists {
+                                span { "— read by the launcher on every start" }
+                            } else {
+                                span { "— not created yet; saving one below creates it, mode 600" }
+                            }
+                        }
+                        if let Some(w) = c.permission_warning.clone() {
+                            p { class: "text-red-400",
+                                "The credentials file is {w}. The launcher warns about this at
+                                 startup, where nobody sees it. Saving any credential below
+                                 rewrites the file mode 600."
+                            }
+                        }
+
+                        if !errors().is_empty() {
+                            div { class: "rounded border border-red-500 bg-gray-900 p-3 space-y-1",
+                                for e in errors().iter() {
+                                    p { class: "text-gray-200", "• {e}" }
+                                }
+                            }
+                        }
+
+                        if c.entries.is_empty() {
+                            p { class: "text-gray-400",
+                                "Nothing declares a credential yet, and the file names none."
+                            }
+                        } else {
+                            div { class: "space-y-1",
+                                for entry in c.entries.iter() {
+                                    CredentialRow {
+                                        key: "{entry.name}",
+                                        entry: entry.clone(),
+                                        open: editing().as_deref() == Some(entry.name.as_str()),
+                                        busy: busy(),
+                                        on_open: {
+                                            let name = entry.name.clone();
+                                            move |_| {
+                                                errors.write().clear();
+                                                value.set(String::new());
+                                                adding.set(false);
+                                                editing.set(Some(name.clone()));
+                                            }
+                                        },
+                                        on_close: move |_| {
+                                            editing.set(None);
+                                            value.set(String::new());
+                                        },
+                                        on_type: move |v| value.set(v),
+                                        on_save: {
+                                            let name = entry.name.clone();
+                                            move |_| save(name.clone())
+                                        },
+                                        on_remove: {
+                                            let name = entry.name.clone();
+                                            move |_| {
+                                                let name = name.clone();
+                                                busy.set(true);
+                                                spawn(async move {
+                                                    match delete_credential(&name).await {
+                                                        Ok(resp) if resp.ok => { errors.write().clear(); }
+                                                        Ok(resp) => errors.set(resp.errors),
+                                                        Err(e) => errors.set(vec![e]),
+                                                    }
+                                                    busy.set(false);
+                                                    reload += 1;
+                                                });
+                                            }
+                                        },
+                                    }
+                                }
+                            }
+                        }
+
+                        if adding() {
+                            div { class: "rounded border border-gray-700 p-3 space-y-2",
+                                Field {
+                                    label: "credential name".to_string(),
+                                    hint: Some("as a job or a webhook spells it — githubToken, not RN_SECRET_GITHUB_TOKEN".to_string()),
+                                    info: None,
+                                    input {
+                                        r#type: "text",
+                                        class: TEXT_INPUT,
+                                        placeholder: "stripeWebhook",
+                                        value: "{new_name()}",
+                                        oninput: move |evt| new_name.set(evt.value()),
+                                    }
+                                }
+                                SecretField {
+                                    busy: busy(),
+                                    on_type: move |v| value.set(v),
+                                }
+                                div { class: "flex items-center gap-3",
+                                    button {
+                                        class: "px-3 py-1 rounded text-xs text-white cursor-pointer hover:opacity-80",
+                                        style: "background-color: #026B7C;",
+                                        disabled: busy(),
+                                        onclick: move |_| {
+                                            let name = new_name().trim().to_string();
+                                            if name.is_empty() {
+                                                errors.set(vec!["give the credential a name first".to_string()]);
+                                            } else {
+                                                save(name);
+                                            }
+                                        },
+                                        if busy() { "Saving…" } else { "Save" }
+                                    }
+                                    button {
+                                        class: "text-xs cursor-pointer hover:underline bg-transparent border-0 p-0",
+                                        style: "color: #22d3ee;",
+                                        onclick: move |_| {
+                                            adding.set(false);
+                                            value.set(String::new());
+                                            new_name.set(String::new());
+                                            errors.write().clear();
+                                        },
+                                        "Cancel"
+                                    }
+                                }
+                            }
+                        } else {
+                            button {
+                                class: "text-xs cursor-pointer hover:underline bg-transparent border-0 p-0",
+                                style: "color: #22d3ee;",
+                                onclick: move |_| {
+                                    errors.write().clear();
+                                    editing.set(None);
+                                    value.set(String::new());
+                                    adding.set(true);
+                                },
+                                "+ Add a credential nothing declares yet"
+                            }
+                        }
+                    }
+                }
+                Some(Err(e)) => rsx! {
+                    p { class: "text-red-400", "Could not read the credential list" }
+                    p { class: "text-gray-300 mt-1", "{e}" }
+                },
+                None => rsx! { p { class: "text-gray-400", "Loading…" } },
+            }
+        }
+    }
+}
+
+/// The one input on this page that takes a secret.
+///
+/// `type="password"` so a shoulder and a screen-share see dots, and
+/// `autocomplete="off"` so the browser's password manager does not offer to
+/// keep a copy of a machine credential in a second store nobody is managing.
+#[component]
+fn SecretField(busy: bool, on_type: EventHandler<String>) -> Element {
+    rsx! {
+        div { class: "flex flex-col gap-1",
+            label { class: FIELD_LABEL, "value" }
+            input {
+                r#type: "password",
+                class: TEXT_INPUT,
+                autocomplete: "off",
+                spellcheck: "false",
+                placeholder: "paste it from the provider",
+                // Deliberately not bound to a rendered value: the field is
+                // write-only, so there is nothing to put back into it, and a
+                // page that redrew what was typed would be one repaint away
+                // from being a page that displays a secret.
+                oninput: move |evt| on_type.call(evt.value()),
+                disabled: busy,
+            }
+            span { class: HINT,
+                "paste rather than retype — a trailing newline is the classic fault and it is invisible"
+            }
+        }
+    }
+}
+
+/// One credential's row: what it is, whether it is there, and a way to set it.
+#[component]
+fn CredentialRow(
+    entry: CredentialEntry,
+    open: bool,
+    busy: bool,
+    on_open: EventHandler<()>,
+    on_close: EventHandler<()>,
+    on_type: EventHandler<String>,
+    on_save: EventHandler<()>,
+    on_remove: EventHandler<()>,
+) -> Element {
+    rsx! {
+        div { class: "border-b border-gray-700 pb-2",
+            div { class: "flex items-baseline gap-3 flex-wrap",
+                span {
+                    class: if entry.set { "text-gray-200" } else { "text-red-400" },
+                    "{entry.name}"
+                }
+                span {
+                    class: if entry.set { "text-gray-300" } else { "text-red-400" },
+                    if entry.set { "set" } else { "not set" }
+                }
+                code { class: "text-gray-400 text-xs", "{entry.env_var}" }
+                if entry.declared_by.is_empty() {
+                    span { class: HINT, "— nothing declares this; it is here because the file names it" }
+                } else {
+                    span { class: HINT, "— wanted by {entry.declared_by.join(\", \")}" }
+                }
+                // The gap between the two booleans, said only when it is real.
+                // Both directions are a state somebody needs to act on, and
+                // neither is visible from "set" alone.
+                if entry.set && !entry.in_file {
+                    span { class: "text-amber-400 text-xs",
+                        "— in use now, not in the file: it is gone after the next restart"
+                    }
+                }
+                if !entry.set && entry.in_file {
+                    span { class: "text-amber-400 text-xs",
+                        "— in the file, not in this process: it arrives on the next restart"
+                    }
+                }
+                div { class: "flex items-center gap-2 ml-auto",
+                    button {
+                        class: "text-xs cursor-pointer hover:underline bg-transparent border-0 p-0",
+                        style: "color: #22d3ee;",
+                        onclick: move |_| if open { on_close.call(()) } else { on_open.call(()) },
+                        if open { "Cancel" } else if entry.set { "Replace" } else { "Set" }
+                    }
+                    if entry.set || entry.in_file {
+                        button {
+                            class: "text-xs cursor-pointer hover:underline bg-transparent border-0 p-0",
+                            style: "color: #22d3ee;",
+                            onclick: move |_| on_remove.call(()),
+                            "Remove"
+                        }
+                    }
+                }
+            }
+
+            if open {
+                div { class: "mt-2 flex items-end gap-3 flex-wrap",
+                    SecretField { busy, on_type: move |v| on_type.call(v) }
+                    button {
+                        class: "px-3 py-1 rounded text-xs text-white cursor-pointer hover:opacity-80",
+                        style: "background-color: #026B7C;",
+                        disabled: busy,
+                        onclick: move |_| on_save.call(()),
+                        if busy { "Saving…" } else { "Save" }
+                    }
+                }
+            }
+        }
+    }
+}
+
+const CREDS_WHAT: &str =
+    "Puts a [[credential]] into the running backend and into ~/.config/rn/credentials, which the \
+     launcher reads on every start. One row per credential anything here declares — a job's own \
+     list, a job's webhook, a webhook made on this page, and that webhook's lookup — plus \
+     anything the file names that nothing asks for.\n\nIt takes values and does not give them \
+     back. There is no masked form, no prefix, no length: \"starts with ghp_\" confirms a guess \
+     and a length narrows a search. What a row says is the name, the variable, and whether a \
+     value is there.\n\nA saved credential works immediately. It goes into this process before \
+     it is written to the file — which is also what starts it being scrubbed out of run records \
+     — so there is no restart to wait for.";
+
+const CREDS_WHY: &str =
+    "Because a missing credential is invisible until it matters. A job that will fail at 03:00 \
+     for want of a token looks exactly like one that will work, and a webhook whose signing \
+     secret is unset refuses every delivery while the provider's log is the only place that \
+     shows.\n\nOn \"is it safe for a page to write my tokens\" — a fair question, and the \
+     answer is what a local process gains from this, because the API has no authentication and \
+     on a developer machine \"local\" means every postinstall script, every editor extension and \
+     every build.rs. It gains nothing. That process runs as you: it can already open the \
+     credentials file with fs, and it can already POST /api/jobs/:id to run any automation \
+     holding any credential. A panel that *displayed* a secret would hand it something it did \
+     not have, which is why nothing here does.\n\nThe file is plaintext, and docs/sec.md says so \
+     rather than dressing it up — the same protection as an SSH key with no passphrase. What \
+     changes the calculus is the API on a routable address, which is what RN_ALLOW_REMOTE and \
+     the bind refusal exist to make a deliberate act.";
+
+const CREDS_IF_WRONG: &str =
+    "A row that says \"in use now, not in the file\" is a value this process has and the file \
+     does not — it disappears at the next restart. That happens when the file could not be \
+     written; the backend logs credentials-file-not-written with the reason.\n\nA row that says \
+     \"in the file, not in this process\" is the opposite: the file has it and the launcher has \
+     not re-read the file since. Restart from the banner on Config → Runtime.\n\nIf a credential \
+     is set and the provider still rejects everything, it is nearly always the value rather than \
+     the wiring. Paste it again from the provider rather than retyping it — a trailing newline \
+     is invisible and survives a copy. This page cannot help you check, by design: it does not \
+     know what the value is any more than you can see it here.\n\nA credential that has ever \
+     been displayed anywhere — a screenshot, a log, a chat — should be treated as disclosed and \
+     rotated. Redaction applies to what gets written next, not to what was written before.";

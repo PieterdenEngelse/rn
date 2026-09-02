@@ -32,6 +32,9 @@ if [ "$worktree" != "rn" ]; then
     # made while testing in a worktree would otherwise be a live endpoint on the
     # install the person actually uses.
     export RN_WEBHOOKS_PATH="$state/webhooks.json"
+    # And the credentials file, now that a page can write it. Without this a
+    # worktree saving a test credential would rewrite the real one.
+    export RN_CREDENTIALS_PATH="$state/credentials"
 fi
 
 echo "backend for $worktree on http://127.0.0.1:$BACKEND_PORT (hooks :$BACKEND_HOOKS_PORT)"

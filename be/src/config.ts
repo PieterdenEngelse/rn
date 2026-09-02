@@ -113,6 +113,20 @@ export const config = {
         `${process.env.HOME ?? "."}/.config/rn/webhooks.json`,
 
     /**
+     * The credentials file — the one the launcher reads and hands to this
+     * process as `RN_SECRET_*` variables.
+     *
+     * Named here because Config → Jobs can now write it. The backend does not
+     * read values out of it at startup: it gets those from its environment, as
+     * it always has. What it needs the path for is the other direction, and the
+     * one warning nobody sees — the launcher's "readable by others" line goes
+     * to stderr at boot, which is not where anyone is looking.
+     */
+    credentialsPath:
+        process.env.RN_CREDENTIALS_PATH ??
+        `${process.env.HOME ?? "."}/.config/rn/credentials`,
+
+    /**
      * Where V8 drops its profiling artifacts, and how long they are kept.
      *
      * `--cpu-prof`, `--heap-prof` and `--prof` write into the *current working

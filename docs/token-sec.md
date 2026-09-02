@@ -137,6 +137,45 @@ delivery*, covers the signature scheme itself.
 
 ---
 
+## The write direction
+
+Config → Jobs has a credentials board. It is the one place in rn where a secret
+is typed into a browser, so it belongs in this document rather than in a commit
+message.
+
+**It takes values and never gives one back.** No masked form, no prefix, no
+length — the same rule as everything above, and enforced the blunt way in
+`be/test/credentials-file.test.ts`: a distinctive value is saved, then every
+shape the API can hand a page is serialised and asserted not to contain it, or
+its first eight characters. The `<input>` is `type="password"` with no `value`
+binding at all, so there is nothing for a repaint to put back.
+
+**Why writing is not the same question as reading.** The API has no
+authentication, so the test for any new endpoint is what a local process gains
+— and "local" here is the list above: postinstall scripts, editor extensions,
+`build.rs`. It gains nothing. That process runs as the user, so it can already
+open `~/.config/rn/credentials` with `fs` and write it, and it can already
+`POST /api/jobs/:id` to run any automation holding any credential without ever
+learning one. A *read* endpoint would hand it something it did not have. This
+one does not. What would change the calculus is the API on a routable address,
+which `remoteBindRefusal` and `RN_ALLOW_REMOTE` already make deliberate.
+
+**A save applies to the process before it touches the disk**, and the order is
+the interesting part. `secrets.redact()` finds values by scanning `RN_SECRET_*`
+at call time, so a credential in the file but not yet in the environment is one
+rn does not know to scrub. Writing the environment first closes the window in
+which a run finishing a millisecond later could put the new value into a record.
+It also means a saved credential works immediately, with no restart to tell
+anyone about.
+
+**Errors never quote the value.** An error message is written to a log and
+rendered on a page, which are the two places this document exists to keep a
+credential out of, so "expected X, got Y" is the tempting mistake and there is a
+test against it. The only fact about a value that may be stated is its length,
+and only when it is already over a published cap.
+
+---
+
 ## What this does not protect against
 
 Stated plainly, on the same principle as the equivalent section in `docs/sec.md`.
