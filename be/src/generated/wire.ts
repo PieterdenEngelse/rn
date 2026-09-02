@@ -1494,6 +1494,16 @@ header: string,
  */
 credential: string, 
 /**
+ * The variable that credential is read from, computed by the backend
+ * rather than by the page.
+ *
+ * `demoWebhook` becomes `RN_SECRET_DEMO_WEBHOOK`, and the camel-case
+ * split that does it lives in `be/src/secrets.ts`. A page deriving the
+ * name itself would be a second implementation of that rule, wrong
+ * first on exactly the names that are hardest to guess.
+ */
+envVar: string, 
+/**
  * Whether that credential is configured. Never its value, never a
  * prefix or a length of one.
  */

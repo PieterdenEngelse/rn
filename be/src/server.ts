@@ -432,6 +432,12 @@ export function createApp() {
                                       "x-hub-signature-256"
                                   ).toLowerCase(),
                                   credential: j.webhook.credential,
+                                  // The variable to set, named here rather than
+                                  // spelled out by the page: the camel-case
+                                  // split lives in secrets.ts and a second copy
+                                  // of it would be wrong first on the names
+                                  // nobody can guess.
+                                  envVar: secrets.envVarFor(j.webhook.credential),
                                   secretSet: secrets.isSet(j.webhook.credential),
                                   // Which of the two kinds of proof, and — for
                                   // a signature — which construction. Sent

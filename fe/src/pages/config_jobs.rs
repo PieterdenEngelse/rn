@@ -1,4 +1,7 @@
-use crate::api::{fetch_jobs, CatalogueJob, JobsConfig, JobsResponse, RetryPolicy, ScheduledJob};
+use crate::api::{
+    fetch_jobs, CatalogueJob, JobsConfig, JobsResponse, RetryPolicy, ScheduledJob, WebhookAuth,
+    WebhookInfo, WebhookScheme,
+};
 use crate::components::param::PARAM_INPUT_ROW_CLASS;
 use crate::components::{InfoButton, Panel, WebhookTile};
 use crate::pages::monitor_jobs::duration;
@@ -400,6 +403,31 @@ fn JobConfigRow(
                     }
                 }
 
+                // Only where there is one, like the memory control on Monitor
+                // → Jobs: a row reading "no webhook" on eight jobs teaches that
+                // a webhook is a thing every job might have and mostly has not.
+                if let Some(w) = job.webhook.clone() {
+                    dt { class: "text-gray-400", "Webhook" }
+                    dd { class: "text-gray-300 flex items-center gap-2 flex-wrap",
+                        span { "POST /api/hooks/" code { "{job.id}" } }
+                        span { class: "text-gray-400", "— {webhook_proof(&w)}" }
+                        span {
+                            class: if w.secret_set { "text-gray-300" } else { "text-red-400" },
+                            if w.secret_set {
+                                "{w.credential} is set"
+                            } else {
+                                "{w.credential} is not set — put it in {w.env_var}"
+                            }
+                        }
+                        InfoButton {
+                            title: "Where a webhook secret comes from".to_string(),
+                            what: WEBHOOK_SECRET_WHAT.to_string(),
+                            why: WEBHOOK_SECRET_WHY.to_string(),
+                            if_wrong: WEBHOOK_SECRET_IF_WRONG.to_string(),
+                        }
+                    }
+                }
+
                 dt { class: "text-gray-400", "Credentials" }
                 dd { class: "text-gray-300 flex items-center gap-2 flex-wrap",
                     if job.credentials.is_empty() {
@@ -510,6 +538,55 @@ const EFFECT_FREE_IF_WRONG: &str =
     "The declaration is reviewed, not enforced. Nothing in the runner can check that a job      which claims to change nothing actually changes nothing, so a job that declares      effectFree and then writes a file would keep its cursor while you believed the install      was disarmed. It belongs on a job whose every request is a GET, and adding it to a job      that acts is a bug that will not announce itself.
 
 Read the other way: a watcher      without it looks broken. It reports the same items every run, and the honest reading —      that it is disarmed and forgetting on purpose — is not visible on the report itself,      only in the run's step trace on Monitor → Jobs.";
+
+/// How a webhook's proof is described in one phrase.
+///
+/// A free function because `WebhookInfo` comes from `shared` and `fe` cannot
+/// `impl` on it — the orphan rule, same as `sent_as` in `pages/monitor_jobs.rs`.
+fn webhook_proof(w: &WebhookInfo) -> String {
+    match w.auth {
+        WebhookAuth::Token => format!("a static token in {}", w.header),
+        WebhookAuth::Signature => match w.scheme {
+            Some(WebhookScheme::Stripe) => "a Stripe signature, over timestamp and body".to_string(),
+            Some(WebhookScheme::Slack) => "a Slack v0 signature, over timestamp and body".to_string(),
+            _ => format!("an HMAC-SHA256 signature over the body, in {}", w.header),
+        },
+    }
+}
+
+const WEBHOOK_SECRET_WHAT: &str =
+    "A value you choose, not one rn issues and not one the provider gives you. It is a shared \
+     secret: the same string goes in two places — this machine, and the provider's webhook \
+     settings — and each delivery is signed with it so the listener can tell a real delivery \
+     from anyone else who found the URL.\n\nThat is the opposite direction from a credential \
+     like githubToken, which GitHub issues and you paste in. Here you invent it. Any long random \
+     string does; `openssl rand -hex 32` is the usual way, and length is the only property that \
+     matters.\n\nWhere it goes: ~/.config/rn/credentials, as one line reading \
+     RN_SECRET_<NAME>=value, with the exact variable named on this row. The launcher reads that \
+     file at startup, so a new value needs a restart before the listener checks against it.";
+
+const WEBHOOK_SECRET_WHY: &str =
+    "Because the hooks listener is the one part of rn a stranger can reach, and its URL is a \
+     bearer capability — anyone who learns it can post to it. The signature is what stands \
+     between that and a stranger starting your automations, so a hook whose secret is missing \
+     refuses every delivery rather than trusting the URL alone.\n\nA missing secret is also \
+     the failure that hides best: the provider's own retry log is otherwise the only place it \
+     shows, and by then the deliveries you cared about are gone. This row is where it is visible \
+     before that.";
+
+const WEBHOOK_SECRET_IF_WRONG: &str =
+    "This page will not tell you the value, and neither will any other — not a prefix, not a \
+     length. Displaying a secret is a broadcast rather than a read: it lands in a screenshot, a \
+     scrollback, a screen share. See docs/token-sec.md.\n\nSo if you have forgotten it, there \
+     are two honest answers. Read it out of ~/.config/rn/credentials yourself, which is a \
+     plaintext file this account owns — the same access that would let you change it. Or replace \
+     it: generate a new value, write it to the file, restart, and paste the same string into the \
+     provider. Rotating is usually quicker than remembering, and it is the only answer that also \
+     covers a secret you are unsure about.\n\nA mismatch between the two copies reads as a \
+     wrong signature: every delivery is refused 401 and the backend log says \
+     hook-signature-rejected. Set here but not at the provider looks identical to the reverse, \
+     which is why the fix is to write both ends from one freshly generated value rather than to \
+     work out which side is stale.";
 
 const CREDENTIALS_WHAT: &str =
     "The credentials this job needs, by name, and whether each one is configured on this \

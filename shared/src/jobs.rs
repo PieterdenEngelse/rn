@@ -221,6 +221,14 @@ wire! {
         pub header: String,
         /// The credential name the delivery is checked against.
         pub credential: String,
+        /// The variable that credential is read from, computed by the backend
+        /// rather than by the page.
+        ///
+        /// `demoWebhook` becomes `RN_SECRET_DEMO_WEBHOOK`, and the camel-case
+        /// split that does it lives in `be/src/secrets.ts`. A page deriving the
+        /// name itself would be a second implementation of that rule, wrong
+        /// first on exactly the names that are hardest to guess.
+        pub env_var: String,
         /// Whether that credential is configured. Never its value, never a
         /// prefix or a length of one.
         pub secret_set: bool,
