@@ -345,6 +345,64 @@ fn ConnectionBoards(c: ConnectionResponse, m: Option<NodeMetrics>, h: Option<Hea
                     info: Some(rsx! {
                         InfoButton {
                             title: "Webhooks — the door that faces outward".to_string(),
+                            // The mechanism, not the label: a reader who wants
+                            // to know whether to trust this port needs the
+                            // order the checks happen in, and prose makes an
+                            // ordered thing hard to check off.
+                            extra: Some(rsx! {
+                                div { class: "space-y-4 max-w-3xl",
+                                    div {
+                                        h4 { class: "text-sm font-semibold text-gray-300", "How it is built" }
+                                        p { class: "mt-1 text-gray-200 leading-relaxed",
+                                            "A second HTTP server, in its own module — "
+                                            span { class: "font-mono text-gray-300", "be/src/hooks/server.ts" }
+                                            ", on its own port, bound to loopback like the API. It has exactly one route, "
+                                            span { class: "font-mono text-gray-300", "POST /api/hooks/<job id>" }
+                                            ", and no others: no GET, no CORS headers, nothing a browser is meant to reach."
+                                        }
+                                        p { class: "mt-2 text-gray-200 leading-relaxed",
+                                            "It is a separate listener rather than a route on the API because this is the port a tunnel points at. The API has no authentication — it exposes settings writes, a stop endpoint, and job runs — so tunnelling it would make the tunnel's own routing config the only thing standing between a stranger and all of that. Here there is no path from this port to those endpoints, because this server does not have one."
+                                        }
+                                    }
+                                    div {
+                                        h4 { class: "text-sm font-semibold text-gray-300", "What happens to a delivery, in order" }
+                                        ol { class: "mt-1 space-y-1 text-gray-200 leading-relaxed list-decimal ml-5",
+                                            li { "Wrong method or path → 404. So is a job that does not exist, "
+                                                em { "and " }
+                                                "a job that exists without a webhook — the same 404, so the endpoint cannot be used to enumerate what this install runs." }
+                                            li { "The job's signing credential is looked up. Missing → 401, logged as its own reason, because from the sender's side that is indistinguishable from a wrong secret." }
+                                            li { "The body is read raw, refused mid-stream past 1 MB → 413. Raw, because a signature covers the exact bytes sent; parsing and re-serialising changes them and every signature would fail." }
+                                            li { "HMAC-SHA256 over those bytes, hex, compared in constant time after a length check → 401 on mismatch. The header and prefix are configurable, defaulting to GitHub's "
+                                                span { class: "font-mono text-gray-300", "x-hub-signature-256: sha256=" }
+                                                "." }
+                                            li { "The delivery id is checked against the ones already seen → 409. After the signature, so nobody unauthenticated can fill that log with ids of their choosing." }
+                                            li { "Only now is the JSON parsed → 400 if it will not parse. A parser is not run on bytes from anyone who found the URL." }
+                                            li { "202 is returned immediately, then the job is started. Providers time out in seconds and retry on any non-2xx, so waiting for a one-minute run would turn one delivery into a retry storm." }
+                                        }
+                                        p { class: "mt-2 text-gray-200 leading-relaxed",
+                                            "Every rejection is the same one-line body with no reason in it. Three distinguishable answers would let a caller map the catalogue and probe the secret; the log records which it was, because the operator needs to know and the sender does not."
+                                        }
+                                    }
+                                    div {
+                                        h4 { class: "text-sm font-semibold text-gray-300", "What it cannot do" }
+                                        ul { class: "mt-1 space-y-1 text-gray-200 leading-relaxed list-disc ml-5",
+                                            li { "Nothing arrives from the internet on its own. The socket is loopback; reaching it from outside means a tunnel connecting outward from this machine — see docs/tunnel.md, which covers exposing this listener and only this listener." }
+                                            li { "One signature scheme. HMAC-SHA256 over the body, with the header and prefix swappable, covers GitHub, Slack and most others. A timestamped scheme like Stripe's needs its own verifier written; this one will simply reject it." }
+                                            li { "Replay protection is process-local and bounded: the last 1024 delivery ids, in memory, forgotten on restart. A replay across a restart will be accepted, and a provider that sends no delivery id gets no deduplication at all." }
+                                            li { "202 means accepted, not succeeded. The provider sees green whether the job then worked or failed; the run record is the only place the second answer lives." }
+                                            li { "There is no queue. A delivery that arrives while the backend is down is not stored anywhere — the provider's own retry is the whole of the recovery." }
+                                            li { "No rate limiting and no address filtering. The URL plus the secret is the entire control, and the 1 MB ceiling is the only bound on what someone who learns the URL can make this process buffer." }
+                                            li { "The payload is handed to the job but kept off the run record, which stores the delivery id and event name only. Forty deliveries stay forty distinguishable rows without the page becoming a place secrets are displayed." }
+                                        }
+                                    }
+                                    div {
+                                        h4 { class: "text-sm font-semibold text-gray-300", "When the port is taken" }
+                                        p { class: "mt-1 text-gray-200 leading-relaxed",
+                                            "A failed bind does not stop the backend. It logs a warning naming the consequence, marks itself not listening with the reason, and everything else keeps running — an occupied API port is fatal, an occupied hooks port is not. That asymmetry is deliberate: webhooks are one trigger among several, and the API is how anyone finds out something is wrong."
+                                        }
+                                    }
+                                }
+                            }),
                             what: concat!(
                                 "rn's second listening port, kept apart from the API so the ",
                                 "surface a provider can reach is not the surface the frontend ",
