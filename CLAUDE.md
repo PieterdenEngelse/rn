@@ -333,8 +333,15 @@ worktree may serve itself — see The dev servers are the user's below.
 The frontend dev server on **:1790** belongs to the user, who runs it in their
 own terminal with `fe/s` from `~/rn`. Do not start *that* one, and do not
 restart it after killing something — `dx serve` binds the port exclusively, so
-a session that starts one makes `./s` fail with `Address already in use` and
-the user cannot tell whose process took it.
+a second one on the same port cannot serve anyway.
+
+`./s` checks the port before it starts anything, and names what holds it — the
+process, its pid, its tty and when it started — rather than letting `dx` fail
+with a bare `Address already in use`, which says nothing about whose process
+took it. So one port is one server structurally, and a pane showing two status
+boxes is one server that has rebuilt twice: `dx` re-emits its panel after every
+build, and `Full rebuild: triggered manually` in the log above them means
+somebody pressed `r`, once per line.
 
 **A worktree serves itself.** `dx` watches the directory it was started in and
 nothing else, so a session editing `~/cb` gets no hot reload from the server

@@ -23,5 +23,34 @@ if [ "$worktree" != "rn" ]; then
     export CARGO_TARGET_DIR="$HOME/.cache/rn-target-$worktree"
 fi
 
-echo "serving $worktree on http://127.0.0.1:${PORT:-1790}"
-exec dx serve --platform web --port "${PORT:-1790}" "$@"
+port="${PORT:-1790}"
+
+# One server per port, decided here rather than by whoever reads the pane. dx
+# binds the port exclusively, so a second one on the same port dies with
+# "Address already in use" — an error that names neither the holder nor the
+# fact that the holder is doing its job. Worse, dx re-emits its status panel
+# after every build, so a pane that has rebuilt twice already shows two boxes;
+# add a failed second server's output and the pane reads like two servers when
+# it has never been anything but one. Naming the holder makes that one line.
+holder=$(ss -lptnH "sport = :$port" 2>/dev/null |
+    grep -o 'pid=[0-9]*' | head -1 | cut -d= -f2)
+if [ -n "$holder" ]; then
+    what=$(ps -o comm= -p "$holder" 2>/dev/null)
+    where=$(ps -o tty= -p "$holder" 2>/dev/null | tr -d ' ')
+    since=$(ps -o lstart= -p "$holder" 2>/dev/null)
+    [ "$where" = "?" ] && where="no tty"
+    echo "serve.sh: :$port is already served by ${what:-an exited process} (pid $holder) on ${where:-no tty}, since $since"
+    # Which advice is right depends on what holds it, and the wrong half of it
+    # is worse than none: telling someone to press r at a python server sends
+    # them looking for a dx that is not there.
+    if [ "$what" = "dx" ]; then
+        echo "serve.sh: that is a dev server already. Rebuild with r in its pane, stop it there with ctrl+c."
+    else
+        echo "serve.sh: that is not a dev server. Free the port, or serve this worktree elsewhere with PORT=."
+    fi
+    echo "serve.sh: nothing was started."
+    exit 1
+fi
+
+echo "serving $worktree on http://127.0.0.1:$port"
+exec dx serve --platform web --port "$port" "$@"
