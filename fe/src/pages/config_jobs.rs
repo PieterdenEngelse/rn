@@ -21,9 +21,29 @@ use dioxus::prelude::*;
 /// other end is not ours: a provider asks for a URL while you are looking at
 /// their settings screen, and "write a job file and restart the backend" is not
 /// something that happens in that minute. So an endpoint can be made here, and
-/// goes live as soon as it is saved. The jobs above may still declare webhooks
-/// of their own in code, and those are deliberately not editable from here —
-/// the tile lists only what it can actually change.
+/// goes live as soon as it is saved. The jobs listed further down may still
+/// declare webhooks of their own in code, and those are deliberately not
+/// editable from here — the tile lists only what it can actually change.
+///
+/// ## Why it is first, and why the page is in columns
+///
+/// **The one thing you act on goes at the top.** Everything else here is a
+/// reading, and a reading can be scrolled to; a control that is three screens
+/// down is one people ask about instead of finding. That was the actual
+/// outcome — the credentials board went in below three job cards and needed
+/// pointing at.
+///
+/// **The columns are the page-width rule in `CLAUDE.md` applied rather than
+/// quoted.** This page is `w-full` with no `max-w-*`, and it was still a single
+/// stacked column: on a wide display the right half was empty while "Per job"
+/// scrolled for two screens. The pairing is by shape, not by topic — a board of
+/// short labelled rows next to a block of prose, and job cards two abreast —
+/// because that is what decides whether two things sit level or leave a ragged
+/// gap between them.
+///
+/// Every split is `xl:` and above, so a narrow window gets the single column it
+/// had. The prose keeps its own `max-w-3xl` inside its column: a line longer
+/// than about 90 characters is hard to read whatever the window is doing.
 #[component]
 pub fn ConfigJobs() -> Element {
     let jobs = use_resource(fetch_jobs);
@@ -34,24 +54,48 @@ pub fn ConfigJobs() -> Element {
                 Some(Ok(j)) => {
                     let j: JobsResponse = j.clone();
                     rsx! {
-                        Panel {
-                            title: "Where this is configured".to_string(),
-                            subtitle: Some("code, not this page".to_string()),
-                            info: Some(rsx! {
-                                InfoButton {
-                                    title: "Where job configuration lives".to_string(),
-                                    what: WHERE_WHAT.to_string(),
-                                    why: WHERE_WHY.to_string(),
-                                    if_wrong: WHERE_IF_WRONG.to_string(),
-                                }
-                            }),
-                            p { class: "max-w-3xl text-gray-300 leading-relaxed", "{WHERE_BODY}" }
-                        }
+                        // First: the one tile on this page that writes. It
+                        // reads its own endpoint rather than this page's
+                        // payload, because a webhook made here is live
+                        // immediately and the job catalogue beside it is not —
+                        // refetching everything on every save would reload a
+                        // board that cannot have changed.
+                        WebhookTile {}
 
-                        Panel {
-                            title: "Every run".to_string(),
-                            subtitle: Some("applies whichever job it is".to_string()),
-                            GlobalRows { dry_run: j.dry_run, config: j.config.clone() }
+                        // The two readings that fit side by side. "Every run"
+                        // is a short column of labelled values and the panel
+                        // beside it is a paragraph, so neither fills a wide
+                        // window alone and both do together.
+                        //
+                        // `items-start` so the shorter of the two keeps its own
+                        // height instead of stretching to match its neighbour,
+                        // which would leave a tall empty box under whichever
+                        // one had less to say.
+                        div { class: "grid grid-cols-1 xl:grid-cols-2 gap-4 items-start",
+                            Panel {
+                                title: "Every run".to_string(),
+                                subtitle: Some("applies whichever job it is".to_string()),
+                                GlobalRows { dry_run: j.dry_run, config: j.config.clone() }
+                            }
+
+                            Panel {
+                                title: "Where this is configured".to_string(),
+                                subtitle: Some("code, not this page".to_string()),
+                                info: Some(rsx! {
+                                    InfoButton {
+                                        title: "Where job configuration lives".to_string(),
+                                        what: WHERE_WHAT.to_string(),
+                                        why: WHERE_WHY.to_string(),
+                                        if_wrong: WHERE_IF_WRONG.to_string(),
+                                    }
+                                }),
+                                // Keeps its own measure inside the column. The
+                                // column is already narrower than the window,
+                                // but on a very wide display half of it is
+                                // still past the point where prose stops being
+                                // readable.
+                                p { class: "max-w-3xl text-gray-300 leading-relaxed", "{WHERE_BODY}" }
+                            }
                         }
 
                         Panel {
@@ -59,14 +103,6 @@ pub fn ConfigJobs() -> Element {
                             subtitle: Some("what each one declares for itself".to_string()),
                             PerJob { jobs: j.clone() }
                         }
-
-                        // The one tile on this page that writes. It reads its
-                        // own endpoint rather than this page's payload, because
-                        // a webhook made here is live immediately and the job
-                        // catalogue beside it is not: refetching everything on
-                        // every save would reload a board that cannot have
-                        // changed.
-                        WebhookTile {}
                     }
                 }
                 Some(Err(e)) => rsx! {
@@ -218,7 +254,11 @@ fn PerJob(jobs: JobsResponse) -> Element {
     }
 
     rsx! {
-        div { class: "space-y-3",
+        // Two abreast on a wide display. A job card is a label and a `dl` of
+        // eight short rows — it has never needed a full window, and stacking
+        // them one to a row made a five-job catalogue two screens of scrolling
+        // with the right half of every one of them empty.
+        div { class: "grid grid-cols-1 xl:grid-cols-2 gap-3 items-start",
             for job in jobs.catalogue.iter() {
                 JobConfigRow {
                     key: "{job.id}",
@@ -509,7 +549,7 @@ const WHERE_BODY: &str =
      number here changes with it.\n\nTwo rows are not like that, and say so on the row. Dry \
      run is a runtime setting, changed on Config → Runtime and applied without a restart. What \
      jobs remember is a live count rather than a setting at all — the caps beside it are the \
-     code constants.\n\nThe Webhooks tile at the bottom is the one place on this page where \
+     code constants.\n\nThe Webhooks tile at the top is the one place on this page where \
      something is typed rather than read. It is there because the other end of a webhook is \
      somebody else's system, asking for a URL now.";
 

@@ -288,125 +288,138 @@ pub fn WebhookTile() -> Element {
 
                         Listener { listening: r.listening, port: r.port }
 
-                        // Above the hooks rather than below them: the commonest
-                        // reason a hook on this page does nothing is a signing
-                        // secret that was never set, and a board you have to
-                        // scroll past three cards to find is one people ask
-                        // about instead of finding.
-                        CredentialsBoard {}
+                        // Beside the hooks rather than under them. The
+                        // commonest reason a hook here does nothing is a
+                        // signing secret that was never set, and the two
+                        // questions — "is this hook wired up" and "does its
+                        // secret exist" — are read together or not at all. A
+                        // board below three cards is one people ask about
+                        // instead of finding, which is what happened.
+                        //
+                        // The credentials column is fixed at 24rem and the
+                        // hooks take the rest: a hook card carries a URL, a
+                        // routing table and three counters, and a credential
+                        // row carries a name and a word. Splitting the width
+                        // evenly would wrap the first to give the second room
+                        // it has no use for.
+                        div { class: "grid grid-cols-1 xl:grid-cols-[24rem_minmax(0,1fr)] gap-4 items-start",
+                            CredentialsBoard {}
 
-                        if r.webhooks.is_empty() {
-                            p { class: "text-gray-400",
-                                "No webhooks yet. The jobs above may still declare their own — those are in code, and are not listed here."
-                            }
-                        } else {
                             div { class: "space-y-3",
-                                for w in r.webhooks.iter() {
-                                    WebhookCard {
-                                        key: "{w.def.id}",
-                                        webhook: w.clone(),
-                                        on_edit: {
-                                            let jobs = jobs.clone();
-                                            let w = w.clone();
-                                            move |_| {
-                                                errors.write().clear();
-                                                draft.set(Some(from_webhook(&w, &jobs)));
-                                            }
-                                        },
-                                        on_remove: {
-                                            let id = w.def.id.clone();
-                                            move |_| {
-                                                let id = id.clone();
-                                                busy.set(true);
-                                                spawn(async move {
-                                                    match delete_webhook(&id).await {
-                                                        Ok(resp) if resp.ok => errors.write().clear(),
-                                                        Ok(resp) => errors.set(resp.errors),
-                                                        Err(e) => errors.set(vec![e]),
-                                                    }
-                                                    busy.set(false);
-                                                    reload += 1;
-                                                });
-                                            }
-                                        },
+                                if r.webhooks.is_empty() {
+                                p { class: "text-gray-400",
+                                    "No webhooks yet. The jobs listed below may declare their own — those are in code, and are not listed here."
+                                }
+                            } else {
+                                div { class: "space-y-3",
+                                    for w in r.webhooks.iter() {
+                                        WebhookCard {
+                                            key: "{w.def.id}",
+                                            webhook: w.clone(),
+                                            on_edit: {
+                                                let jobs = jobs.clone();
+                                                let w = w.clone();
+                                                move |_| {
+                                                    errors.write().clear();
+                                                    draft.set(Some(from_webhook(&w, &jobs)));
+                                                }
+                                            },
+                                            on_remove: {
+                                                let id = w.def.id.clone();
+                                                move |_| {
+                                                    let id = id.clone();
+                                                    busy.set(true);
+                                                    spawn(async move {
+                                                        match delete_webhook(&id).await {
+                                                            Ok(resp) if resp.ok => errors.write().clear(),
+                                                            Ok(resp) => errors.set(resp.errors),
+                                                            Err(e) => errors.set(vec![e]),
+                                                        }
+                                                        busy.set(false);
+                                                        reload += 1;
+                                                    });
+                                                }
+                                            },
+                                        }
                                     }
                                 }
                             }
-                        }
 
-                        if !errors().is_empty() {
-                            div { class: "rounded border border-red-500 bg-gray-900 p-3 space-y-1",
-                                p { class: "text-red-400 font-medium", "This webhook was not saved:" }
-                                for e in errors().iter() {
-                                    p { class: "text-gray-200", "• {e}" }
+                            if !errors().is_empty() {
+                                div { class: "rounded border border-red-500 bg-gray-900 p-3 space-y-1",
+                                    p { class: "text-red-400 font-medium", "This webhook was not saved:" }
+                                    for e in errors().iter() {
+                                        p { class: "text-gray-200", "• {e}" }
+                                    }
                                 }
                             }
-                        }
 
-                        if draft().is_some() {
-                            Form {
-                                // The signal, not a snapshot of it. Every field
-                                // in the form writes back through it, and a
-                                // `Signal` is `Copy` — which is what lets the
-                                // form's several dozen event handlers each hold
-                                // one without the draft being cloned into each.
-                                state: draft,
-                                jobs: jobs.clone(),
-                                busy: busy(),
-                                defaults_header: r.defaults.header.clone(),
-                                defaults_prefix: r.defaults.prefix.clone(),
-                                defaults_event: r.defaults.event_header.clone(),
-                                defaults_action: r.defaults.action_field.clone(),
-                                on_cancel: move |_| {
-                                    draft.set(None);
-                                    errors.write().clear();
-                                },
-                                on_save: move |d: Draft| {
-                                    busy.set(true);
-                                    spawn(async move {
-                                        let replacing = d.replacing.clone();
-                                        let result = save_webhook(replacing.as_deref(), &d.to_def()).await;
-                                        match result {
-                                            Ok(resp) if resp.ok => {
-                                                errors.write().clear();
-                                                draft.set(None);
-                                            }
-                                            Ok(resp) => errors.set(resp.errors),
-                                            Err(e) => errors.set(vec![e]),
-                                        }
-                                        busy.set(false);
-                                        // Re-read rather than patch the list in
-                                        // place: the backend normalises what it
-                                        // stored, and a page showing what was
-                                        // typed instead of what was kept is the
-                                        // kind of drift nobody checks for.
-                                        reload += 1;
-                                    });
-                                },
-                            }
-                        } else {
-                            div { class: "flex items-center gap-3 flex-wrap",
-                                button {
-                                    class: "px-3 py-1 rounded text-xs text-white cursor-pointer hover:opacity-80",
-                                    style: "background-color: #026B7C;",
-                                    disabled: (r.webhooks.len() as f64) >= r.max,
-                                    onclick: {
-                                        let jobs = jobs.clone();
-                                        move |_| {
-                                            errors.write().clear();
-                                            // Data payload first: it is the kind
-                                            // with the fewest moving parts, so an
-                                            // unfamiliar reader meets the short
-                                            // form before the one with a lookup
-                                            // in it.
-                                            draft.set(Some(blank(WebhookKind::DataPayload, &jobs)));
-                                        }
+                            if draft().is_some() {
+                                Form {
+                                    // The signal, not a snapshot of it. Every field
+                                    // in the form writes back through it, and a
+                                    // `Signal` is `Copy` — which is what lets the
+                                    // form's several dozen event handlers each hold
+                                    // one without the draft being cloned into each.
+                                    state: draft,
+                                    jobs: jobs.clone(),
+                                    busy: busy(),
+                                    defaults_header: r.defaults.header.clone(),
+                                    defaults_prefix: r.defaults.prefix.clone(),
+                                    defaults_event: r.defaults.event_header.clone(),
+                                    defaults_action: r.defaults.action_field.clone(),
+                                    on_cancel: move |_| {
+                                        draft.set(None);
+                                        errors.write().clear();
                                     },
-                                    "+ New webhook"
+                                    on_save: move |d: Draft| {
+                                        busy.set(true);
+                                        spawn(async move {
+                                            let replacing = d.replacing.clone();
+                                            let result = save_webhook(replacing.as_deref(), &d.to_def()).await;
+                                            match result {
+                                                Ok(resp) if resp.ok => {
+                                                    errors.write().clear();
+                                                    draft.set(None);
+                                                }
+                                                Ok(resp) => errors.set(resp.errors),
+                                                Err(e) => errors.set(vec![e]),
+                                            }
+                                            busy.set(false);
+                                            // Re-read rather than patch the list in
+                                            // place: the backend normalises what it
+                                            // stored, and a page showing what was
+                                            // typed instead of what was kept is the
+                                            // kind of drift nobody checks for.
+                                            reload += 1;
+                                        });
+                                    },
                                 }
-                                span { class: HINT,
-                                    "{r.webhooks.len()} of {r.max as u32} — past this, an endpoint belongs in a job file where its behaviour is readable"
+                            } else {
+                                div { class: "flex items-center gap-3 flex-wrap",
+                                    button {
+                                        class: "px-3 py-1 rounded text-xs text-white cursor-pointer hover:opacity-80",
+                                        style: "background-color: #026B7C;",
+                                        disabled: (r.webhooks.len() as f64) >= r.max,
+                                        onclick: {
+                                            let jobs = jobs.clone();
+                                            move |_| {
+                                                errors.write().clear();
+                                                // Data payload first: it is the kind
+                                                // with the fewest moving parts, so an
+                                                // unfamiliar reader meets the short
+                                                // form before the one with a lookup
+                                                // in it.
+                                                draft.set(Some(blank(WebhookKind::DataPayload, &jobs)));
+                                            }
+                                        },
+                                        "+ New webhook"
+                                    }
+                                    span { class: HINT,
+                                        "{r.webhooks.len()} of {r.max as u32} — past this, an endpoint belongs in a job file where its behaviour is readable"
+                                    }
                                 }
+                            }
                             }
                         }
                     }
@@ -790,7 +803,7 @@ fn Form(
             if draft.kind != WebhookKind::Command {
                 Field {
                     label: "runs this job".to_string(),
-                    hint: Some("from the catalogue above — the delivery reaches it as ctx.payload".to_string()),
+                    hint: Some("from the catalogue further down this page — the delivery reaches it as ctx.payload".to_string()),
                     info: Some(rsx! {
                         InfoButton {
                             title: "The job a delivery runs".to_string(),
@@ -1149,7 +1162,7 @@ const TILE_WHY: &str =
      these is the limit for exactly that reason.";
 
 const TILE_IF_WRONG: &str =
-    "If deliveries never arrive, check the listener line above first: a webhook saved against a \
+    "If deliveries never arrive, check the listener line at the top of this tile first: a webhook saved against a \
      listener that failed to bind is configuration with nothing behind it, and the provider's own \
      retry log is the only other place that shows.\n\nIf they arrive and are refused, the \
      signature is almost always it. It is computed over the exact bytes sent, so a proxy that \
@@ -1295,7 +1308,7 @@ const CREDENTIAL_WHY: &str =
      read by one.";
 
 const CREDENTIAL_IF_WRONG: &str =
-    "If the credential is not set, every delivery is refused with a 401 and the card above says \
+    "If the credential is not set, every delivery is refused with a 401 and the hook's card says \
      so in red. From the provider's side that is indistinguishable from a wrong secret, so their \
      log will not tell you which — the backend log will: hook-secret-missing rather than \
      hook-signature-rejected.\n\nIf it is set but wrong, every delivery is refused the same way. \
@@ -1545,13 +1558,16 @@ fn CredentialsBoard() -> Element {
                 Some(Ok(c)) => {
                     let c = c.clone();
                     rsx! {
-                        div { class: "flex items-baseline gap-3 flex-wrap {HINT}",
-                            span { "file " }
-                            code { "{c.path}" }
+                        // Two lines, not one wrapped one: in a 24rem column the
+                        // trailing clause wraps whatever you do, and a wrapped
+                        // "— read by the launcher" begins a line with a dash
+                        // attached to nothing.
+                        div { class: HINT,
+                            div { code { "{c.path}" } }
                             if c.exists {
-                                span { "— read by the launcher on every start" }
+                                div { "read by the launcher on every start" }
                             } else {
-                                span { "— not created yet; saving one below creates it, mode 600" }
+                                div { "not created yet — saving one here creates it, mode 600" }
                             }
                         }
                         if let Some(w) = c.permission_warning.clone() {
@@ -1736,7 +1752,15 @@ fn CredentialRow(
 ) -> Element {
     rsx! {
         div { class: "border-b border-gray-700 pb-2",
-            div { class: "flex items-baseline gap-3 flex-wrap",
+            // Two lines rather than one, because this board sits in a 24rem
+            // column. Everything a row wants to say does not fit across that,
+            // and letting it wrap put the Set link on a line of its own with
+            // nothing beside it — a control that has visually left its row.
+            //
+            // So the first line is the part you scan for and the control that
+            // acts on it, and the second is the detail you read once you have
+            // stopped on the row.
+            div { class: "flex items-baseline gap-3",
                 span {
                     class: if entry.set { "text-gray-200" } else { "text-red-400" },
                     "{entry.name}"
@@ -1745,26 +1769,7 @@ fn CredentialRow(
                     class: if entry.set { "text-gray-300" } else { "text-red-400" },
                     if entry.set { "set" } else { "not set" }
                 }
-                code { class: "text-gray-400 text-xs", "{entry.env_var}" }
-                if entry.declared_by.is_empty() {
-                    span { class: HINT, "— nothing declares this; it is here because the file names it" }
-                } else {
-                    span { class: HINT, "— wanted by {entry.declared_by.join(\", \")}" }
-                }
-                // The gap between the two booleans, said only when it is real.
-                // Both directions are a state somebody needs to act on, and
-                // neither is visible from "set" alone.
-                if entry.set && !entry.in_file {
-                    span { class: "text-amber-400 text-xs",
-                        "— in use now, not in the file: it is gone after the next restart"
-                    }
-                }
-                if !entry.set && entry.in_file {
-                    span { class: "text-amber-400 text-xs",
-                        "— in the file, not in this process: it arrives on the next restart"
-                    }
-                }
-                div { class: "flex items-center gap-2 ml-auto",
+                div { class: "flex items-center gap-2 ml-auto shrink-0",
                     button {
                         class: "text-xs cursor-pointer hover:underline bg-transparent border-0 p-0",
                         style: "color: #22d3ee;",
@@ -1779,6 +1784,28 @@ fn CredentialRow(
                             "Remove"
                         }
                     }
+                }
+            }
+            div { class: "flex items-baseline gap-2 flex-wrap mt-0.5",
+                code { class: "text-gray-400 text-xs", "{entry.env_var}" }
+                if entry.declared_by.is_empty() {
+                    span { class: HINT, "— nothing declares this; the file names it" }
+                } else {
+                    span { class: HINT, "— wanted by {entry.declared_by.join(\", \")}" }
+                }
+            }
+            // The gap between the two booleans, said only when it is real. Both
+            // directions are a state somebody needs to act on, and neither is
+            // visible from "set" alone — so each gets its own line rather than
+            // being appended to a row that is already full.
+            if entry.set && !entry.in_file {
+                div { class: "text-amber-400 text-xs mt-0.5",
+                    "in use now, not in the file — gone after the next restart"
+                }
+            }
+            if !entry.set && entry.in_file {
+                div { class: "text-amber-400 text-xs mt-0.5",
+                    "in the file, not in this process — it arrives on the next restart"
                 }
             }
 
