@@ -89,6 +89,13 @@ fi
 # when the script does, including on a SIGKILL that never runs a trap. A plain
 # `cmd &` plus `trap kill` leaked one watcher per restart, orphaned to PID 1,
 # because the trap killed npm's shell and not the node process under it.
+# `css:watch` minifies, like `css:build`. Not for the bytes — nobody serves a
+# dev build to anyone — but because the file is committed, and a watcher that
+# wrote it any other way left the tree permanently dirty for as long as a dev
+# server ran. That is not cosmetic: rn-sync refuses to fast-forward a dirty
+# tree, correctly, so a pane running ./s quietly stopped every landing from
+# reaching the checkout it was serving. Observed on ~/rn, two commits behind
+# main with one generated file as the only thing in its way.
 fifo="$(mktemp -u)"
 mkfifo "$fifo"
 npm run css:watch < "$fifo" >/dev/null 2>&1 &
