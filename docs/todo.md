@@ -22,28 +22,20 @@ list and are still waiting.
 
 # Decisions waiting on the user
 
-## Twenty junk run records in the real history
+## Eleven stale pins, as of 2026-09-01
 
-`~/.config/rn/job-runs.json` holds twenty records with `jobId: "j"` and
-`startedAt` values of 20–39, written by `be/test/settings.test.ts` before it
-redirected `config.jobRunsPath`. They render on Monitor → Jobs as twenty rows
-reading *"20691d ago · j · unchanged"*.
+The standing output of `watch-upstreams`. Deliberately not maintained as a list
+here — the list is what the job is for, and a copy in a document is a copy that
+goes stale. Run the job for the current answer.
 
-The leak is fixed and verified by checksumming the real file across a full
-`npm test` run. The records themselves are still there. They contain nothing
-genuine, but they are the user's data and deleting them is the user's call.
-
-## Nine stale pins, as of 2026-08-26
-
-The first thing `watch-upstreams` produced. Deliberately not maintained as a
-list here — the list is what the job is for, and a copy in a document is a copy
-that goes stale. Run the job for the current answer.
-
-The snapshot it reported on the day it was written: `typescript ^5.8 → 7.0.2`,
-`@types/node ^24 → 26.3.0`, `tailwindcss` and `@tailwindcss/cli
-^4.1.14 → 4.3.3`, `daisyui ^5.0 → 5.7.22`, `dioxus` and `dioxus-router
-=0.7.9 → 0.7.10`, `gloo-net 0.6 → 0.7`, `gloo-timers 0.3 → 0.4`. Node
-`v24.19.0` is current on its line and is the current LTS.
+What it reported on the day this line was written: `typescript ^5.8 → 7.0.2`,
+`@types/node ^24 → 26.4.0`, `tailwindcss` and `@tailwindcss/cli
+^4.1.14 → 4.3.3`, `daisyui ^5.0 → 5.7.24`, `dioxus` and `dioxus-router
+=0.7.9 → 0.7.10`, `gloo-net 0.6 → 0.7`, `gloo-timers 0.3 → 0.4`, and — new
+since the 2026-08-26 snapshot this replaces — Node `v24.19.0 → v24.20.0` in
+`be/.nvmrc`, which the job counts twice because `.nvmrc` answers both the
+`node:24` and the `node:lts` question.
 
 `dioxus` and `gloo-net` are the two with real change behind them. `typescript`
-is a major and wants reading about before it is taken.
+is a major and wants reading about before it is taken. Node is a patch on the
+line already pinned, which is the cheap one.
