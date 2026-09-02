@@ -207,6 +207,40 @@ fn ConnectionBoards(c: ConnectionResponse, m: Option<NodeMetrics>, h: Option<Hea
             div { class: "flex flex-wrap gap-4 items-stretch",
 
                 Board { title: "Bound".to_string(),
+                    info: Some(rsx! {
+                        InfoButton {
+                            title: "Bound — the addresses this process holds".to_string(),
+                            what: concat!(
+                                "A socket is bound once the kernel has attached it to an address ",
+                                "and a port and the process is accepting connections there. Every ",
+                                "row below the first is one such socket, read out of the running ",
+                                "process — libuv's list of open handles — with the operating ",
+                                "system's own descriptor number beside it, the same one `ss -lptn` ",
+                                "and `lsof` print.\n\n",
+
+                                "The first row is the odd one out: \"configured\" is what the ",
+                                "backend was told to open, from BACKEND_HOST and BACKEND_PORT. ",
+                                "Everything under it is what it did open. The board is that ",
+                                "comparison, which is why the two sit together rather than on ",
+                                "separate pages.\n\n",
+
+                                "There are normally two sockets — the API this page talks to, and ",
+                                "the webhook door — and each row is labelled with which door it ",
+                                "is, worked out from the port.",
+                            ).to_string(),
+                            why: "A bind address is the whole of this install's security position, because the API has no authentication: whoever can reach the socket can drive it. Reading it from the process rather than the settings is the point — a setting says what someone intended, and only the socket says what is true.".to_string(),
+                            if_wrong: concat!(
+                                "No socket rows at all means the handle list could not be read, ",
+                                "not that nothing is open — Bun and Deno do not implement the API ",
+                                "it comes from. Under Node, an empty list while this page is ",
+                                "plainly being served means you are reading a different process ",
+                                "from the one answering you.\n\n",
+
+                                "Where this board and Config → Connection disagree, this one is ",
+                                "right and the gap is the bug.",
+                            ).to_string(),
+                        }
+                    }),
                     Metric {
                         label: "configured",
                         value: c.url.clone(),
@@ -257,6 +291,22 @@ fn ConnectionBoards(c: ConnectionResponse, m: Option<NodeMetrics>, h: Option<Hea
                 // them. A mismatch here is the "backend unreachable" that
                 // happens while the backend is plainly running.
                 Board { title: "This page".to_string(),
+                    info: Some(rsx! {
+                        InfoButton {
+                            title: "This page — the browser's half of the connection".to_string(),
+                            what: concat!(
+                                "The only board here about the reader rather than the process. ",
+                                "\"origin\" is where your browser says this document came from, ",
+                                "read from the live location; \"calling\" is the backend address ",
+                                "compiled into this frontend bundle; \"origins allowed\" is the ",
+                                "API's CORS allowlist; and \"api answers it\" is those first and ",
+                                "third rows compared, done in the page because the backend cannot ",
+                                "know what you typed.",
+                            ).to_string(),
+                            why: "http://localhost:1790 and http://127.0.0.1:1790 are one server and two origins as far as a browser is concerned. Get it wrong and the browser discards every answer the API gives, so the app reports the backend as unreachable while the backend is running and replying normally. That failure has no other symptom, and nothing in the network tab says \"spelling\".".to_string(),
+                            if_wrong: "A \"no\" here is fixed by reaching the page at one of the listed origins, or by setting RN_CORS_ORIGIN to include yours — it replaces the list rather than extending it. In a packaged install the board is a formality: the launcher serves both halves from one origin, so there is no cross-origin request to allow.".to_string(),
+                        }
+                    }),
                     Metric {
                         label: "origin",
                         value: origin.clone().unwrap_or_else(|| "not reported".to_string()),
@@ -292,6 +342,21 @@ fn ConnectionBoards(c: ConnectionResponse, m: Option<NodeMetrics>, h: Option<Hea
                 }
 
                 Board { title: "Webhooks".to_string(),
+                    info: Some(rsx! {
+                        InfoButton {
+                            title: "Webhooks — the door that faces outward".to_string(),
+                            what: concat!(
+                                "rn's second listening port, kept apart from the API so the ",
+                                "surface a provider can reach is not the surface the frontend ",
+                                "talks to. The four rows are one chain, read top down: a socket ",
+                                "is open on the hooks port, that port is configured, some jobs ",
+                                "declare a webhook trigger, and some of those have the signing ",
+                                "secret they need to accept a delivery.",
+                            ).to_string(),
+                            why: "Every link fails silently and each one fails somewhere else. A port nothing is bound to refuses deliveries at the socket, before any part of rn could log them. A job that declares a trigger but has no secret rejects them after arrival. Neither shows up in the job list, and the provider's own retry log is otherwise the first place either becomes visible.".to_string(),
+                            if_wrong: "Read the rows in order and stop at the first that fails — nothing below a broken link means anything. \"jobs declaring\" above \"ready\" is the count of webhook jobs that will never fire, and Config → Jobs is where the missing secrets are.".to_string(),
+                        }
+                    }),
                     Metric {
                         label: "listening",
                         value: {
@@ -340,6 +405,20 @@ fn ConnectionBoards(c: ConnectionResponse, m: Option<NodeMetrics>, h: Option<Hea
                 }
 
                 Board { title: "Outbound".to_string(),
+                    info: Some(rsx! {
+                        InfoButton {
+                            title: "Outbound — what this process may reach".to_string(),
+                            what: concat!(
+                                "The other direction from the rest of this panel: not who may ",
+                                "connect to rn, but which hosts rn's own jobs may connect out to. ",
+                                "The launcher passes that grant to the runtime at startup — the ",
+                                "bind address always, so the process can reach itself, plus ",
+                                "whatever the Extra network hosts setting adds.",
+                            ).to_string(),
+                            why: "Whether the grant is a control or a note depends entirely on the runtime, which is why the runtime is named on the board. Deno refuses a host that is not on the list and says which one it wanted; Node and Bun record the list and check nothing, so a job reaches whatever the machine can reach.".to_string(),
+                            if_wrong: "\"supervised: no\" makes the whole board a description of intent — started by hand, the process got the shell's environment and none of the grant was applied. A host you added that is missing from \"granted\" is saved but not yet applied, which a restart fixes.".to_string(),
+                        }
+                    }),
                     Metric {
                         label: "runtime",
                         value: c.runtime.clone(),
