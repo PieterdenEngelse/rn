@@ -10,6 +10,9 @@
  * GET  /api/jobs/:id/errors   the job's recorded failures
  * GET  /api/connection  what is listening, who may talk to it, what it may reach
  * GET  /api/env       what be/.env says, against what this process has
+ * GET  /api/webhooks  the webhooks made on the page, and what may be chosen for one
+ * PUT  /api/webhooks/:id     make or replace one
+ * DELETE /api/webhooks/:id   remove one
  *
  * The hooks listener is deliberately not here. It is a separate server on its
  * own port with one route — see be/src/hooks/server.ts.
@@ -22,6 +25,9 @@ import { RUNTIME_PARAMS, WITHHELD } from "./runtime-params.ts";
 // below is what makes a field renamed there a build failure here rather than an
 // `undefined` in whichever panel reads it first.
 import type {
+    WebhookDef,
+    WebhookSaveResponse,
+    WebhooksResponse,
     ParamsResponse,
     RestartOutcome,
     SaveResponse,
@@ -44,6 +50,7 @@ import { config, remoteBindRefusal } from "./config.ts";
 import { createHookApp, hooksHealth, startHooks } from "./hooks/server.ts";
 import { sendTestDelivery } from "./hooks/test-delivery.ts";
 import { describeEnv } from "./env-file.ts";
+import * as webhooks from "./webhooks.ts";
 import { dryRun } from "./dry-run.ts";
 import * as secrets from "./secrets.ts";
 import { display as displayPath } from "./paths.ts";
@@ -137,7 +144,11 @@ export function createApp() {
             origin && config.corsOrigins.includes(origin) ? origin : config.corsOrigins[0]!,
         );
         res.setHeader("vary", "origin");
-        res.setHeader("access-control-allow-methods", "GET, POST, PUT, OPTIONS");
+        // DELETE is on the list because two routes use it — a job's memory and
+        // a webhook. It was missing while only the first existed, which a
+        // same-origin packaged install never notices and the dev frontend hits
+        // as a failed preflight with nothing in the response to say why.
+        res.setHeader("access-control-allow-methods", "GET, POST, PUT, DELETE, OPTIONS");
         res.setHeader("access-control-allow-headers", "content-type");
 
         const done = (code: number): void => {
@@ -685,6 +696,87 @@ export function createApp() {
                 });
                 return done(500);
             }
+        }
+
+        // The webhooks made on the page, as opposed to the ones a job declares
+        // for itself. Both kinds answer on the hooks listener; only these can be
+        // changed from here, which is why only these are on this route.
+        //
+        // Deliberately carries no URL. The route (`POST /api/hooks/demo`) is
+        // sent; the host it hangs off is a tunnel address, which is a bearer
+        // capability — see shared/src/webhooks.rs. The page shows the port and
+        // the path and leaves the person who knows their own tunnel to put the
+        // two together.
+        if (url.pathname === "/api/webhooks" && req.method === "GET") {
+            const hooks = hooksHealth();
+            send(res, 200, {
+                webhooks: webhooks.describeAll(),
+                // From the catalogue this process actually has, so a routing
+                // control cannot offer a job that was renamed out from under it.
+                jobs: JOBS.map((j) => j.id),
+                defaults: webhooks.DEFAULTS,
+                max: webhooks.MAX_WEBHOOKS,
+                // A webhook saved against a listener that failed to bind is
+                // configuration with nothing behind it, and the provider's own
+                // retry log is otherwise the only place that shows.
+                listening: hooks.listening,
+                port: hooks.port,
+            } satisfies WebhooksResponse);
+            return done(200);
+        }
+
+        // Make or replace one. PUT rather than POST because the id is in the
+        // path and the body is the whole definition: sending it twice leaves
+        // the same webhook, which is what the method promises.
+        //
+        // Whole, not patched — a merge would let a field the form did not send
+        // survive invisibly, and for `lookup` or `routes` that means an endpoint
+        // doing something that is no longer written down anywhere.
+        if (url.pathname.startsWith("/api/webhooks/") && req.method === "PUT") {
+            const id = decodeURIComponent(url.pathname.slice("/api/webhooks/".length));
+            let body: unknown;
+            try {
+                body = await readJson(req);
+            } catch (err) {
+                send(res, 400, {
+                    ok: false,
+                    errors: [err instanceof Error ? err.message : String(err)],
+                } satisfies WebhookSaveResponse);
+                return done(400);
+            }
+            // `replacing` is the id in the path and the body's `id` is what it
+            // becomes, so renaming is an ordinary save rather than a delete and
+            // a create — which would drop the webhook for as long as the two
+            // requests took, on a URL a provider may be calling.
+            const exists = webhooks.byId(id) !== undefined;
+            const result = webhooks.put(body as WebhookDef, exists ? id : undefined);
+            if (result.errors.length > 0) {
+                // 422, not 400: the request was understood and the definition
+                // was refused, and the page has a list of sentences to put under
+                // the fields rather than one message to put at the top.
+                send(res, 422, { ok: false, errors: result.errors } satisfies WebhookSaveResponse);
+                return done(422);
+            }
+            send(res, exists ? 200 : 201, {
+                ok: true,
+                webhook: webhooks.describe(result.def!),
+            } satisfies WebhookSaveResponse);
+            return done(exists ? 200 : 201);
+        }
+
+        // Remove one. Idempotent in the way DELETE promises — asking twice is a
+        // 404 rather than an error, and the endpoint is gone either way.
+        if (url.pathname.startsWith("/api/webhooks/") && req.method === "DELETE") {
+            const id = decodeURIComponent(url.pathname.slice("/api/webhooks/".length));
+            if (!webhooks.remove(id)) {
+                send(res, 404, {
+                    ok: false,
+                    errors: [`No webhook with id "${id}".`],
+                } satisfies WebhookSaveResponse);
+                return done(404);
+            }
+            send(res, 200, { ok: true } satisfies WebhookSaveResponse);
+            return done(200);
         }
 
         if (url.pathname === "/api/restart" && req.method === "POST") {

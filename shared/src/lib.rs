@@ -18,12 +18,14 @@ pub mod env;
 pub mod jobs;
 pub mod monitor;
 pub mod params;
+pub mod webhooks;
 
 pub use connection::*;
 pub use env::*;
 pub use jobs::*;
 pub use monitor::*;
 pub use params::*;
+pub use webhooks::*;
 
 /// Write every wire type to the TypeScript module, in one call.
 ///
@@ -104,6 +106,16 @@ pub fn export_all(cfg: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     RestartOutcome::export_all(cfg)?;
     StopOutcome::export_all(cfg)?;
     StatusResponse::export_all(cfg)?;
+
+    WebhookKind::export_all(cfg)?;
+    Lookup::export_all(cfg)?;
+    CommandRoute::export_all(cfg)?;
+    WebhookDef::export_all(cfg)?;
+    WebhookStats::export_all(cfg)?;
+    Webhook::export_all(cfg)?;
+    WebhookDefaults::export_all(cfg)?;
+    WebhooksResponse::export_all(cfg)?;
+    WebhookSaveResponse::export_all(cfg)?;
     Ok(())
 }
 

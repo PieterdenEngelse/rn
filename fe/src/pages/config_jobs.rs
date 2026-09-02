@@ -1,6 +1,6 @@
 use crate::api::{fetch_jobs, CatalogueJob, JobsConfig, JobsResponse, RetryPolicy, ScheduledJob};
 use crate::components::param::PARAM_INPUT_ROW_CLASS;
-use crate::components::{InfoButton, Panel};
+use crate::components::{InfoButton, Panel, WebhookTile};
 use crate::pages::monitor_jobs::duration;
 use dioxus::prelude::*;
 
@@ -13,9 +13,17 @@ use dioxus::prelude::*;
 /// job carries — with the file that declares them named on the row, because
 /// that file is where they are changed.
 ///
-/// Nothing here is an input. Job configuration is code, not settings.json, and
-/// a page of controls that quietly did nothing would be worse than a page that
-/// says so — see the panel at the top.
+/// Almost nothing here is an input. Job configuration is code, not
+/// settings.json, and a page of controls that quietly did nothing would be
+/// worse than a page that says so — see the panel at the top.
+///
+/// The Webhooks tile is the exception, and it is a deliberate one. A webhook's
+/// other end is not ours: a provider asks for a URL while you are looking at
+/// their settings screen, and "write a job file and restart the backend" is not
+/// something that happens in that minute. So an endpoint can be made here, and
+/// goes live as soon as it is saved. The jobs above may still declare webhooks
+/// of their own in code, and those are deliberately not editable from here —
+/// the tile lists only what it can actually change.
 #[component]
 pub fn ConfigJobs() -> Element {
     let jobs = use_resource(fetch_jobs);
@@ -51,6 +59,14 @@ pub fn ConfigJobs() -> Element {
                             subtitle: Some("what each one declares for itself".to_string()),
                             PerJob { jobs: j.clone() }
                         }
+
+                        // The one tile on this page that writes. It reads its
+                        // own endpoint rather than this page's payload, because
+                        // a webhook made here is live immediately and the job
+                        // catalogue beside it is not: refetching everything on
+                        // every save would reload a board that cannot have
+                        // changed.
+                        WebhookTile {}
                     }
                 }
                 Some(Err(e)) => rsx! {
@@ -493,7 +509,9 @@ const WHERE_BODY: &str =
      number here changes with it.\n\nTwo rows are not like that, and say so on the row. Dry \
      run is a runtime setting, changed on Config → Runtime and applied without a restart. What \
      jobs remember is a live count rather than a setting at all — the caps beside it are the \
-     code constants.";
+     code constants.\n\nThe Webhooks tile at the bottom is the one place on this page where \
+     something is typed rather than read. It is there because the other end of a webhook is \
+     somebody else's system, asking for a URL now.";
 
 const WHERE_WHAT: &str =
     "The two halves of job configuration, and the file each lives in.\n\nThe \"Every run\" \
@@ -525,7 +543,12 @@ const WHERE_IF_WRONG: &str =
      these are read at startup, not per run. Restart from the banner on Config → Runtime.\n\n\
      If a job you wrote is missing entirely, it is not in the JOBS array in \
      be/src/jobs/index.ts. That is the only list; a file defining a job that nothing imports \
-     is a file that never runs, and it fails quietly because there is nothing to fail.";
+     is a file that never runs, and it fails quietly because there is nothing to fail.\n\nA \
+     webhook you made on this page and cannot find is a different story: those are kept in \
+     ~/.config/rn/webhooks.json rather than in code, and survive a restart on their own. If one \
+     has vanished, that file could not be read — the backend logs webhooks-not-loaded and keeps \
+     running, because a webhook store that will not parse is not a reason to take the app \
+     down.";
 
 const DRY_RUN_WHAT: &str =
     "A global safety switch, handed to every job as ctx.dryRun. A job honours it by doing all \

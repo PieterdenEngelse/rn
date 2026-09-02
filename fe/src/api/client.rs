@@ -7,7 +7,7 @@
 use super::wire::{
     ConnectionResponse, EnvResponse, HealthResponse, JobErrors, JobRunResult, JobSource, JobsResponse, NodeHistory, NodeMetrics,
     ParamsResponse, RestartOutcome, RunsResponse, SaveResponse, StateResetResponse, StatusResponse,
-    StopOutcome, TestDelivery,
+    StopOutcome, TestDelivery, WebhookDef, WebhookSaveResponse, WebhooksResponse,
 };
 
 /// Base URL of the backend API. In development the frontend is served by
@@ -417,4 +417,62 @@ pub async fn fetch_job_errors(id: &str) -> Result<JobErrors, String> {
         return resp.json::<JobErrors>().await.map_err(|e| format!("{e}"));
     }
     Err(format!("could not read the error log ({})", resp.status()))
+}
+
+/// The webhooks made on Config → Jobs, and what a new one may be made of.
+///
+/// One request rather than three: the job ids a routing control may offer, the
+/// defaults an unfilled field inherits, and whether the listener is actually up
+/// are all things the form needs before it can be filled in correctly, and
+/// fetching them separately is how a page ends up rendering a dropdown of jobs
+/// that no longer exist.
+pub async fn fetch_webhooks() -> Result<WebhooksResponse, String> {
+    let resp = gloo_net::http::Request::get(&format!("{API_BASE}/api/webhooks"))
+        .send()
+        .await
+        .map_err(|e| format!("{e}"))?;
+    resp.json::<WebhooksResponse>().await.map_err(|e| format!("{e}"))
+}
+
+/// Make or replace one webhook.
+///
+/// `replacing` is the id it currently has, when this is an edit — the path
+/// carries it and the body carries what it becomes, so a rename is one request
+/// rather than a delete and a create. That matters more here than it looks: the
+/// two-request version leaves the URL answering 404 in between, on an endpoint
+/// somebody else's system may be calling.
+///
+/// A refusal comes back as a list of sentences rather than one message. A form
+/// gets several things wrong at once, and fixing them one round-trip at a time
+/// is how a person gives up on a page.
+pub async fn save_webhook(
+    replacing: Option<&str>,
+    def: &WebhookDef,
+) -> Result<WebhookSaveResponse, String> {
+    let id = replacing.unwrap_or(&def.id);
+    let body = serde_json::to_string(def).map_err(|e| format!("{e}"))?;
+    let resp = gloo_net::http::Request::put(&format!("{API_BASE}/api/webhooks/{id}"))
+        .header("content-type", "application/json")
+        .body(body)
+        .map_err(|e| format!("{e}"))?
+        .send()
+        .await
+        .map_err(|e| format!("{e}"))?;
+
+    // A 422 is a refused definition, and its body is the useful part — so it is
+    // parsed rather than turned into a status code the form cannot act on.
+    resp.json::<WebhookSaveResponse>()
+        .await
+        .map_err(|_| format!("the save failed ({})", resp.status()))
+}
+
+/// Remove one webhook. The URL stops answering as soon as this returns.
+pub async fn delete_webhook(id: &str) -> Result<WebhookSaveResponse, String> {
+    let resp = gloo_net::http::Request::delete(&format!("{API_BASE}/api/webhooks/{id}"))
+        .send()
+        .await
+        .map_err(|e| format!("{e}"))?;
+    resp.json::<WebhookSaveResponse>()
+        .await
+        .map_err(|_| format!("the delete failed ({})", resp.status()))
 }

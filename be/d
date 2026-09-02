@@ -28,6 +28,10 @@ if [ "$worktree" != "rn" ]; then
     export RN_HISTORY_PATH="$state/history.json"
     export RN_JOB_STATE_PATH="$state/job-state.json"
     export RN_JOB_RUNS_PATH="$state/job-runs.json"
+    # Webhooks too, and this one bites hardest if it is forgotten: a webhook
+    # made while testing in a worktree would otherwise be a live endpoint on the
+    # install the person actually uses.
+    export RN_WEBHOOKS_PATH="$state/webhooks.json"
 fi
 
 echo "backend for $worktree on http://127.0.0.1:$BACKEND_PORT (hooks :$BACKEND_HOOKS_PORT)"

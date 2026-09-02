@@ -99,6 +99,20 @@ export const config = {
         `${process.env.HOME ?? "."}/.config/rn/job-state.json`,
 
     /**
+     * Where webhooks made on Config → Jobs are kept — see be/src/webhooks.ts.
+     *
+     * Its own file, beside the others and for the same reason: the install tree
+     * is replaced wholesale on upgrade, and an endpoint a provider is already
+     * calling must not disappear because rn was updated. Separate from
+     * settings.json because these are not settings — nothing here has a default
+     * that would be correct if the file went missing, and a lost definition is a
+     * URL somebody else's system still POSTs to and now gets a 404 from.
+     */
+    webhooksPath:
+        process.env.RN_WEBHOOKS_PATH ??
+        `${process.env.HOME ?? "."}/.config/rn/webhooks.json`,
+
+    /**
      * Where V8 drops its profiling artifacts, and how long they are kept.
      *
      * `--cpu-prof`, `--heap-prof` and `--prof` write into the *current working

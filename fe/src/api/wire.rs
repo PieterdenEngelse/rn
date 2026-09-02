@@ -21,6 +21,13 @@ pub use shared::{
 
 pub use shared::monitor::*;
 
+// The webhooks made on Config → Jobs. Deliberately the same crate as the job
+// surface above, because they are the same feature seen from two sides: a
+// `WebhookInfo` on a `CatalogueJob` is a hook a job declares in code, and a
+// `Webhook` here is one somebody made on the page. Both answer on the same
+// listener.
+pub use shared::webhooks::*;
+
 // The runtime-parameter and config surface, the last shapes that were written
 // twice. `fe` described them as loose strings and `be` as literal unions, and
 // the two agreed only because someone was careful; `shared::params` is now the

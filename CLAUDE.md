@@ -456,8 +456,8 @@ yours.
 - `docs/setup-js.md` — the Node driver in `be/`, and the reasoning behind each
   setting. Start here.
 - `docs/jobs.md` — read before adding an automation: the categories of work, how
-  a job gets triggered, why there is one runner with several front doors, and
-  what a job may remember between runs.
+  a job gets triggered, why there is one runner with several front doors, what a
+  job may remember between runs, and the two places a webhook can be declared.
 - `docs/sec.md` — credentials: where they live, what redaction covers, and what
   none of it protects against.
 - `docs/token-sec.md` — read before putting a value on a page. Displaying a

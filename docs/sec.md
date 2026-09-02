@@ -252,6 +252,30 @@ open. This one is structural.
 `be/test/hooks.test.ts` and the boundary check in `docs/plan1.md` both exist to
 keep it that way.
 
+### Two places a webhook can be declared, one set of checks
+
+A webhook is either a `webhook:` block on a job in `be/src/jobs/` or a
+definition made on Config → Jobs and kept in `~/.config/rn/webhooks.json`. The
+second is a convenience — a provider asks for a URL now, and writing a job file
+is not a thing that happens in that minute — and it is **not a weaker path**.
+`resolve()` in `be/src/hooks/server.ts` picks one or the other and everything
+below it is a single code path: the same signature check, the same replay
+check, the same 404 for an unknown id. A rule applied in two places is one that
+will eventually be applied in one.
+
+Two things follow that are worth stating rather than inferring:
+
+- **A stored definition cannot take an id a job already uses.** The catalogue
+  is asked first, so it would never fire; refused at save time instead.
+- **A page-made webhook can make an outbound request of its own.** A
+  notification hook fetches a configured URL with the id from the payload
+  substituted into it. Only `{id}` is substituted, and it is URL-encoded — so a
+  value from a stranger's payload becomes one path segment and cannot change
+  the host, add a query parameter or escape upwards. `https` is required for
+  anything that is not loopback, because the id and the bearer token both
+  travel on that connection. There is no template language here, and that is
+  the property rather than a missing feature.
+
 ### What protects a delivery
 
 | Concern | Mechanism |

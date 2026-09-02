@@ -147,6 +147,24 @@ remembered: Remembered, };
 export type Category = "memory" | "concurrency" | "time" | "network" | "diagnostics" | "output" | "runtime" | "security";
 
 /**
+ * One entry in a command webhook's routing table: this action runs this
+ * job.
+ */
+export type CommandRoute = { 
+/**
+ * The value to match, compared exactly. `turn_on_lights`, not a
+ * pattern — a glob here would let a sender reach a job by guessing at
+ * the shape of the table rather than by naming an entry in it.
+ */
+action: string, 
+/**
+ * The job it runs. Must be in the catalogue; a route naming a job that
+ * does not exist is refused when the webhook is saved, not when the
+ * delivery arrives at 03:00.
+ */
+job: string, };
+
+/**
  * GET /api/connection.
  */
 export type ConnectionResponse = { 
@@ -741,6 +759,36 @@ export type JsRuntime = "node" | "bun" | "deno";
 
 export type LargestSpace = { name: string, usedMB: number, };
 
+/**
+ * The secondary call a notification webhook makes, because the delivery
+ * did not carry the facts.
+ *
+ * This is the "HTTP Request node" step, done by the listener instead of by
+ * the job. Put in the configuration rather than in code because it is the
+ * part that differs per provider and not per automation: the same job can
+ * sit behind a Zendesk hook and a Stripe one, and only the two `Lookup`s
+ * know that one needs `/tickets/{id}` and the other `/events/{id}`.
+ */
+export type Lookup = { 
+/**
+ * Where in the payload the id is. A dotted path — `ticket_id`, or
+ * `data.object.id` for a Stripe event — because providers nest, and a
+ * top-level-only reader would send half of them back to the job file.
+ */
+idField: string, 
+/**
+ * The URL to fetch, with `{id}` where the value goes. Everything else
+ * is literal, and only `{id}` is substituted: a template language here
+ * would be a way to build a request out of a stranger's payload.
+ */
+url: string, 
+/**
+ * Credential for the `Authorization: Bearer` header, if the API needs
+ * one. A name, exactly like every other credential — the value lives
+ * in `RN_SECRET_<NAME>` and never on this wire.
+ */
+credential?: string | null, };
+
 export type LoopPercentile = { label: string, ms: number, };
 
 export type NodeConcurrency = { threadpoolSize: number, activeResources: { [key in string]: number }, 
@@ -1235,9 +1283,118 @@ export type Trigger = "manual" | "schedule" | "failure" | "webhook" | "change";
 export type Unavailable = { id: string, kind: string, reason: string, };
 
 /**
+ * One webhook as the page sees it: its definition, plus what only the
+ * backend can answer about it.
+ */
+export type Webhook = { def: WebhookDef, 
+/**
+ * `POST /api/hooks/<id>` — the path, never the host. See the module
+ * doc: the full URL is a capability, so it is assembled by the person
+ * who knows their own tunnel address and not by this API.
+ */
+route: string, 
+/**
+ * Whether the signing credential is configured. Never its value,
+ * never a prefix or a length of one.
+ */
+secretSet: boolean, 
+/**
+ * The same question for the lookup's token, when there is one.
+ */
+lookupSecretSet?: boolean | null, 
+/**
+ * Jobs this webhook can start that are not in the catalogue. Empty is
+ * the ordinary case; non-empty means a job file was deleted or renamed
+ * under a webhook that still names it, which is a hook that will accept
+ * a delivery and then fail to do anything with it.
+ */
+missingJobs: Array<string>, 
+/**
+ * Epoch ms when this webhook was first saved.
+ */
+createdAt: number, stats: WebhookStats, };
+
+/**
  * What a delivery has to present.
  */
 export type WebhookAuth = "signature" | "token";
+
+/**
+ * A webhook as it is stored and as `PUT /api/webhooks/:id` accepts it.
+ *
+ * Deliberately one struct with per-kind fields rather than three, because
+ * the store is one JSON file a person may open, and a tagged union reads
+ * worse there than a `kind` beside the fields it explains. The backend
+ * validates per kind — a notification without a `lookup` is refused, a
+ * command with an empty table is refused — so an unused field is a field
+ * that was ignored rather than one that quietly did something.
+ */
+export type WebhookDef = { 
+/**
+ * The last path segment: this webhook is `POST /api/hooks/<id>`.
+ * Lowercase letters, digits and dashes, because it goes in a URL that
+ * somebody types into a provider's form.
+ */
+id: string, 
+/**
+ * What it is for, in a person's words. Shown on the page and on the
+ * run record; never part of the URL.
+ */
+label: string, kind: WebhookKind, 
+/**
+ * Credential the HMAC signature is verified against. **Required, for
+ * every kind.** There is no unsigned mode: the listener is the one
+ * part of rn a stranger can reach, and its URL is a bearer capability.
+ */
+credential: string, 
+/**
+ * Header carrying the signature. Empty means GitHub's
+ * `x-hub-signature-256`, which is also Slack's and most others' scheme
+ * under a different name.
+ */
+header?: string | null, 
+/**
+ * Prefix on that header's value. `Some("")` is a bare hex digest, and
+ * is not the same as `None` — which takes GitHub's `sha256=`.
+ */
+prefix?: string | null, 
+/**
+ * Header carrying a unique delivery id. Without one, a captured
+ * request can be replayed forever: a signature does not expire, which
+ * is what a signature is.
+ */
+deliveryHeader?: string | null, 
+/**
+ * Header naming what happened in the provider's vocabulary — "push",
+ * "invoice.paid". Recorded on the run so forty deliveries are not
+ * forty identical rows.
+ */
+eventHeader?: string | null, 
+/**
+ * The job a delivery runs. Required for `Notification` and
+ * `DataPayload`; unused for `Command`, which names one per route.
+ */
+job?: string | null, 
+/**
+ * `Notification` only: the call that turns an id into the facts.
+ */
+lookup?: Lookup | null, 
+/**
+ * `Command` only: where in the payload the action name is, as a dotted
+ * path. Defaults to `action` when empty.
+ */
+actionField?: string | null, 
+/**
+ * `Command` only: which action runs which job. An empty table would be
+ * an endpoint that accepts signed requests and does nothing, so it is
+ * refused.
+ */
+routes: Array<CommandRoute>, };
+
+/**
+ * The defaults a webhook inherits, resolved by the backend.
+ */
+export type WebhookDefaults = { header: string, prefix: string, eventHeader: string, actionField: string, };
 
 /**
  * A job's webhook, described without describing how to call it.
@@ -1289,6 +1446,47 @@ scheme?: WebhookScheme | null,
 respondDeadlineMs?: number | null, };
 
 /**
+ * What a delivery *is*, which is what decides what rn does with it.
+ *
+ * Three shapes, and the difference is how much of the story the body
+ * carries:
+ *
+ * - **Notification** — "something happened, here is its id". Zendesk sends
+ *   `{"ticket_id": 999}` and nothing else, so the delivery is a doorbell:
+ *   the facts are still on the sender's server and someone has to go and
+ *   fetch them. rn does that fetch itself — see [`Lookup`] — so the job
+ *   behind the hook is handed the ticket rather than its number.
+ * - **DataPayload** — "something happened, here is all of it". Typeform
+ *   sends the name, the email and every answer, so there is nothing to go
+ *   back for and a secondary call would be a second point of failure for
+ *   data you already hold.
+ * - **Command** — "do this". A smart-home hub sends `{"action":
+ *   "turn_on_lights"}`, which is not a report of anything; it is a remote
+ *   control, and the payload names the button. The routing table decides
+ *   which job each button presses.
+ *
+ * The distinction is not cosmetic. It is the difference between a hook
+ * that needs an API token of its own (notification), one that needs none
+ * (data payload), and one whose blast radius is every job it can reach
+ * (command).
+ */
+export type WebhookKind = "notification" | "dataPayload" | "command";
+
+/**
+ * `PUT /api/webhooks/:id` and `DELETE /api/webhooks/:id`.
+ *
+ * Errors are a list of sentences rather than a single message, because a
+ * form gets several things wrong at once and fixing them one round-trip at
+ * a time is how a person gives up on a page.
+ */
+export type WebhookSaveResponse = { ok: boolean, errors?: Array<string>, 
+/**
+ * The stored webhook, as it now is. Absent when the save was refused,
+ * so the page cannot render a definition that was not kept.
+ */
+webhook?: Webhook | null, };
+
+/**
  * The signature constructions the listener knows.
  *
  * A closed set rather than a string, so a scheme the verifier does not
@@ -1296,6 +1494,83 @@ respondDeadlineMs?: number | null, };
  * the morning. The spellings match `Scheme` in `be/src/hooks/verify.ts`.
  */
 export type WebhookScheme = "hmac-body" | "stripe" | "slack";
+
+/**
+ * What one delivery did, kept in memory and shown on the tile.
+ *
+ * **Since this backend started**, not since the webhook was made. The
+ * durable record of a delivery is the run it started, in the run history,
+ * where it is already visible with its steps and its outcome; duplicating
+ * that here would mean writing the definitions file on every delivery, and
+ * a definition somebody typed is not worth risking to a counter.
+ *
+ * What it is for is the gap the run history cannot cover: a delivery that
+ * started no run at all. A refused signature, an action with no route, a
+ * lookup that 404'd — none of those reach a job, so without this the page
+ * would show an endpoint that has never been touched and one that is being
+ * hit and rejected forty times an hour as the same thing.
+ */
+export type WebhookStats = { 
+/**
+ * Deliveries that passed the signature check.
+ */
+accepted: number, 
+/**
+ * Deliveries refused before any work: bad signature, missing secret,
+ * replayed id, unparseable body.
+ */
+refused: number, 
+/**
+ * Accepted deliveries that started no run — an unrouted action, or a
+ * lookup that failed. The number worth noticing, because from the
+ * provider's side these all look like success.
+ */
+dropped: number, 
+/**
+ * Epoch ms of the last delivery of any kind.
+ */
+lastAt?: number | null, 
+/**
+ * What happened to it, in one word — "ran", "unrouted",
+ * "lookup-failed", "refused".
+ */
+lastOutcome?: string | null, 
+/**
+ * The provider's event name on that delivery, if it sends one.
+ */
+lastEvent?: string | null, };
+
+/**
+ * `GET /api/webhooks`.
+ */
+export type WebhooksResponse = { webhooks: Array<Webhook>, 
+/**
+ * Job ids the routing controls may choose from, so the page offers
+ * what this process actually has rather than a list that drifts.
+ */
+jobs: Array<string>, 
+/**
+ * The header and prefix a webhook takes when it names none, sent so
+ * the form can show them as placeholders instead of the frontend
+ * keeping a second copy of GitHub's scheme.
+ */
+defaults: WebhookDefaults, 
+/**
+ * How many webhooks may exist. On the wire because a form that refuses
+ * a save at the limit should have said so before it was filled in.
+ */
+max: number, 
+/**
+ * Whether the listener these hang off is actually up. A webhook saved
+ * against a listener that failed to bind is configuration with nothing
+ * behind it, and the provider's retries are the only other place that
+ * shows.
+ */
+listening: boolean, 
+/**
+ * The port it is on, for the person assembling the tunnel URL.
+ */
+port: number, };
 
 /**
  * A flag the registry deliberately does not offer, and why.

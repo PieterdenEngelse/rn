@@ -24,6 +24,21 @@
  * Bound to loopback like the main server, and refused on a routable address by
  * the same guard. The tunnel connects *outbound* from this machine; nothing
  * here ever listens publicly.
+ *
+ * **Two doors, one set of rules.** An id resolves either to a job's own
+ * `webhook:` declaration or to a definition made on Config → Jobs and kept in
+ * `be/src/webhooks.ts`. They differ only in where the declaration lives: both
+ * go through `resolve` and then through the same checks in the same order, and
+ * both are answered before the work. A security rule applied in two places is
+ * one that will eventually be applied in one.
+ *
+ * What a page-made webhook has that a job's does not is a *kind* — see
+ * `dispatch`, and `shared/src/webhooks.rs`. It decides whether the listener
+ * fetches the facts the delivery only referred to, routes on an action name, or
+ * hands the body straight over. What it does not have is the job-side
+ * declarations: a static token, a non-default scheme, declared headers and
+ * query, and answering the caller are all things a job says about itself in
+ * code, and a form on a page is the wrong place to gain any of them.
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -33,6 +48,8 @@ import type { Job } from "../jobs/types.ts";
 import * as secrets from "../secrets.ts";
 import { readRaw, verifyScheme, tokenMatches, makeDeliveryLog, type DeliveryLog } from "./verify.ts";
 import { parseBody } from "./body.ts";
+import { netPermissionHint } from "../jobs/net-permission.ts";
+import * as webhooks from "../webhooks.ts";
 import type { Delivery } from "../generated/wire.ts";
 import type { JsonValue } from "../generated/serde_json/JsonValue.ts";
 
@@ -110,6 +127,190 @@ function refuse(res: ServerResponse, code: number): void {
  */
 export type JobLookup = (id: string) => Job | undefined;
 
+/**
+ * One webhook, whichever door it was declared at.
+ *
+ * `cfg` is deliberately the *job's* shape in both cases. Everything below the
+ * resolution step — the credential, the scheme, the replay header, the 202 —
+ * then reads one thing and cannot acquire a second code path for the second
+ * door, which is the whole point of flattening them here.
+ *
+ * A page-made webhook simply leaves the job-side fields unset: `auth`, `scheme`,
+ * `headers`, `query` and `respond` are declarations a job makes about itself in
+ * code, and none of them is something a form should be able to hand out.
+ */
+interface Hook {
+    /** The route id. Equal to `job.id` when a job declared it. */
+    id: string;
+    cfg: NonNullable<Job["webhook"]>;
+    /** Set when the declaration is a job's own. */
+    job?: Job;
+    /** Set when it is a definition made on the page. */
+    def?: webhooks.WebhookDef;
+}
+
+/**
+ * Which declaration answers for this id, or `undefined` for both "no such
+ * webhook" and "no such id at all".
+ *
+ * **The catalogue is asked first**, and a stored definition can never take an
+ * id a job already uses — `webhooks.validate` refuses that on save. Both halves
+ * of that rule matter: this order means code wins, and the save-time refusal
+ * means nobody discovers the rule by watching their webhook not fire.
+ */
+function resolve(id: string, lookup: JobLookup): Hook | undefined {
+    const job = lookup(id);
+    if (job?.webhook !== undefined) return { id, cfg: job.webhook, job };
+
+    const def = webhooks.byId(id);
+    if (def === undefined) return undefined;
+    return {
+        id,
+        cfg: {
+            credential: def.credential,
+            ...(def.header === null || def.header === undefined ? {} : { header: def.header }),
+            ...(def.prefix === null || def.prefix === undefined ? {} : { prefix: def.prefix }),
+            ...(def.deliveryHeader === null || def.deliveryHeader === undefined
+                ? {}
+                : { deliveryHeader: def.deliveryHeader }),
+            ...(def.eventHeader === null || def.eventHeader === undefined
+                ? {}
+                : { eventHeader: def.eventHeader }),
+        },
+        def,
+    };
+}
+
+/**
+ * What a verified delivery to a page-made webhook actually does.
+ *
+ * The three arms are the three kinds in `shared/src/webhooks.rs`, and the work
+ * is done *here* rather than in the job for one reason: the kind is
+ * configuration, so the difference between "the body is the facts" and "the
+ * body is a doorbell" should be visible on the page that made the hook, not
+ * buried in a job that has to sniff which one it was handed.
+ *
+ * Nothing here is on the provider's clock — the 202 went out before this was
+ * called — so the lookup may take its ten seconds without turning a delivery
+ * into a retry.
+ *
+ * **A delivery can legitimately end here without starting a run**: an action
+ * with no route, or a lookup that failed. Those are `dropped` on the tile,
+ * because from the provider's side they are indistinguishable from success, and
+ * an endpoint that has been quietly discarding deliveries for a week is exactly
+ * what nobody finds out about otherwise.
+ */
+async function dispatch(
+    def: webhooks.WebhookDef,
+    payload: JsonValue,
+    delivery: Delivery,
+): Promise<void> {
+    // Normalised once: `Delivery.event` is an `Option<String>` on the wire, so
+    // "the provider sends no event header" arrives as a null here and as an
+    // absent argument everywhere below.
+    const event = delivery.event ?? undefined;
+
+    if (def.kind === "command") {
+        const field = def.actionField ?? webhooks.DEFAULTS.actionField;
+        const action = webhooks.readPath(payload, field);
+        const route =
+            typeof action === "string" ? def.routes.find((r) => r.action === action) : undefined;
+        if (route === undefined) {
+            // The action is named in the log because it is the whole fault, and
+            // it came out of a signed payload rather than a stranger's: whoever
+            // sent it holds the credential.
+            warn("hook-unrouted", {
+                id: def.id,
+                field,
+                action: typeof action === "string" ? action.slice(0, 120) : null,
+                known: def.routes.map((r) => r.action),
+                effect: "the delivery was accepted and no job ran",
+            });
+            webhooks.record(def.id, "unrouted", event);
+            return;
+        }
+        const job = jobById(route.job);
+        if (job === undefined) {
+            // Refused on save, so this is a job file removed under a live
+            // webhook. Surfaced on the tile as missingJobs too, since a log line
+            // at 03:00 is not where anyone will see it.
+            warn("hook-job-missing", { id: def.id, job: route.job, action: route.action });
+            webhooks.record(def.id, "unrouted", event);
+            return;
+        }
+        webhooks.record(def.id, "ran", event);
+        step("hook-routed", { id: def.id, action: route.action, job: job.id });
+        await runJob(job, "webhook", undefined, {}, { payload, delivery });
+        return;
+    }
+
+    const job =
+        def.job === undefined || def.job === null ? undefined : jobById(def.job);
+    if (job === undefined) {
+        warn("hook-job-missing", { id: def.id, job: def.job ?? null });
+        webhooks.record(def.id, "unrouted", event);
+        return;
+    }
+
+    if (def.kind === "dataPayload") {
+        // Nothing to go and get: the body is the whole story, and a secondary
+        // call would be a second thing to fail for data already in hand.
+        webhooks.record(def.id, "ran", event);
+        await runJob(job, "webhook", undefined, {}, { payload, delivery });
+        return;
+    }
+
+    // Notification: the body is a doorbell. The facts are still on the sender's
+    // server, so rn fetches them and hands the job both — `notification` is what
+    // arrived, `detail` is what the id resolved to. Both, rather than only the
+    // detail, because the delivery often carries context the lookup does not:
+    // which event it was, when, and under whose account.
+    const config = def.lookup!;
+    const id = webhooks.readId(payload, config.idField);
+    if (id === undefined) {
+        warn("hook-lookup-no-id", {
+            id: def.id,
+            field: config.idField,
+            effect: "nothing was fetched and no job ran — the payload has no usable value at that path",
+        });
+        webhooks.record(def.id, "lookup-failed", event);
+        return;
+    }
+
+    let detail: unknown;
+    try {
+        detail = await webhooks.fetchDetail(config, id);
+    } catch (err) {
+        // The URL is not logged: it is configured locally, but it now carries an
+        // id out of a payload, and this line goes to a file and a page.
+        const hint = netPermissionHint(err, [safeHost(config.url)]);
+        warn("hook-lookup-failed", {
+            id: def.id,
+            reason: err instanceof Error ? err.message : String(err),
+            ...(hint === undefined ? {} : { hint }),
+            effect: "the delivery was accepted and no job ran",
+        });
+        webhooks.record(def.id, "lookup-failed", event);
+        return;
+    }
+
+    webhooks.record(def.id, "ran", event);
+    step("hook-fetched", { id: def.id, job: job.id });
+    await runJob(job, "webhook", undefined, {}, {
+        payload: { id, notification: payload, detail } as JsonValue,
+        delivery,
+    });
+}
+
+/** The host of a configured URL, for the permission hint. Never the path. */
+function safeHost(url: string): string {
+    try {
+        return new URL(url).host;
+    } catch {
+        return "";
+    }
+}
+
 export function handle(deliveries: DeliveryLog, lookup: JobLookup = jobById) {
     return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
         const url = new URL(req.url ?? "/", "http://localhost");
@@ -123,18 +324,28 @@ export function handle(deliveries: DeliveryLog, lookup: JobLookup = jobById) {
         }
 
         const id = decodeURIComponent(url.pathname.slice("/api/hooks/".length));
-        const job = lookup(id);
+        const hook = resolve(id, lookup);
 
         // 404, not 403, and the same 404 as a path that does not exist. A job
         // that exists but has no webhook must be indistinguishable from one
         // that does not exist at all, or this endpoint becomes a way to
         // enumerate the catalogue by timing the difference between answers.
-        if (job?.webhook === undefined) {
+        if (hook === undefined) {
             debug("hook-not-found", { id });
             return refuse(res, 404);
         }
 
-        const cfg = job.webhook;
+        const cfg = hook.cfg;
+
+        // Every rejection below is counted for a page-made webhook, and none of
+        // them for a code-declared one. The asymmetry is deliberate: a job's
+        // hook has a source file to read, while a definition typed into a form
+        // has nothing else to say why a provider reports every delivery
+        // failing. The counters are three numbers in memory, so a caller who
+        // cannot produce a signature can move them and gain nothing.
+        const refused = (): void => {
+            if (hook.def !== undefined) webhooks.record(hook.def.id, "refused");
+        };
         const event = headerValue(req.headers, cfg.eventHeader ?? DEFAULT_EVENT_HEADER);
         const header = (cfg.header ?? DEFAULT_HEADER).toLowerCase();
         const prefix = cfg.prefix ?? DEFAULT_PREFIX;
@@ -153,6 +364,7 @@ export function handle(deliveries: DeliveryLog, lookup: JobLookup = jobById) {
         const secret = secrets.read(cfg.credential);
         if (secret === undefined) {
             warn("hook-secret-missing", { id, credential: cfg.credential });
+            refused();
             return refuse(res, 401);
         }
 
@@ -164,6 +376,7 @@ export function handle(deliveries: DeliveryLog, lookup: JobLookup = jobById) {
                 id,
                 reason: err instanceof Error ? err.message : String(err),
             });
+            refused();
             return refuse(res, 413);
         }
 
@@ -192,6 +405,7 @@ export function handle(deliveries: DeliveryLog, lookup: JobLookup = jobById) {
                 ...(cfg.auth === undefined && scheme === "hmac-body" ? { header } : {}),
                 ...(cfg.auth === undefined ? {} : { header: cfg.auth.header }),
             });
+            refused();
             return refuse(res, 401);
         }
 
@@ -200,6 +414,7 @@ export function handle(deliveries: DeliveryLog, lookup: JobLookup = jobById) {
         const deliveryId = headerValue(req.headers, cfg.deliveryHeader);
         if (!deliveries.accept(deliveryId)) {
             warn("hook-replayed", { id, delivery: deliveryId });
+            refused();
             return refuse(res, 409);
         }
 
@@ -217,6 +432,7 @@ export function handle(deliveries: DeliveryLog, lookup: JobLookup = jobById) {
                 reason: parsed.reason,
                 bytes: raw.length,
             });
+            refused();
             return refuse(res, parsed.code);
         }
         const payload = parsed.value;
@@ -255,7 +471,7 @@ export function handle(deliveries: DeliveryLog, lookup: JobLookup = jobById) {
             res.writeHead(code, { "content-type": "application/json" });
             res.end(JSON.stringify(body));
             step("hook-accepted", {
-                id: job.id,
+                id,
                 status: code,
                 bytes: raw.length,
                 ...(deliveryId === undefined ? {} : { delivery: deliveryId }),
@@ -268,6 +484,20 @@ export function handle(deliveries: DeliveryLog, lookup: JobLookup = jobById) {
         // respond mode the *deadline* is awaited and the run is what might
         // reach it first; a run that overruns is not cancelled, it just stops
         // being able to say anything to the caller.
+        // A page-made webhook: answered, then handed to the kind's own
+        // behaviour. It never takes the respond path below — answering the
+        // caller is a declaration a job makes about itself, and a job that has
+        // not made it cannot be given it by a form.
+        if (hook.def !== undefined) {
+            answer(202, { ok: true, id });
+            // Deliberately not awaited, and deliberately not allowed to reject
+            // unhandled: the same rule as `run` below, for the same reason.
+            void dispatch(hook.def, payload, record).catch(() => {});
+            return;
+        }
+
+        const job = hook.job!;
+
         const run = (respond?: (value: JsonValue) => void): void => {
             // Nothing above awaits this, and it must not reject unhandled:
             // runJob has already recorded the failure by the time it throws,

@@ -195,6 +195,62 @@ breaks a build rather than leaving the page quietly claiming the old value.
 That is also why the constants are exported: a page that repeated them would go
 on being wrong for as long as nobody checked.
 
+## 5a. Webhooks, and the two places one can be declared
+
+A webhook reaches the runner through the hooks listener — a second HTTP server
+on its own port, serving exactly one route, `POST /api/hooks/:id`. It is the
+only part of rn that should ever be exposed through a tunnel; the reasoning is
+in the module doc of `be/src/hooks/server.ts` and in `docs/tunnel.md`.
+
+**There are two doors onto it, and they differ only in where the declaration
+lives.**
+
+- **A job's own `webhook:` block**, in `be/src/jobs/`. Code, in git, reviewed,
+  readable next to what it does. This is the better home for anything
+  permanent. `webhook-echo.ts` is the reference.
+- **A definition made on Config → Jobs**, kept in `~/.config/rn/webhooks.json`
+  and managed over `GET/PUT/DELETE /api/webhooks`. Live as soon as it is saved.
+
+The second exists because the other end of a webhook is not ours. A provider
+asks for a URL while somebody is looking at their settings screen, and "write a
+job file and restart the backend" is not a thing that happens in that minute.
+It is a deliberate exception to §5's rule, and the only one on that page.
+
+**Both go through identical checks.** `resolve()` in the listener asks the job
+catalogue first and the store second; everything after that — the HMAC
+signature, the replay check, the 202-before-the-run — is one code path, because
+a security rule applied in two places is one that will eventually be applied in
+one. A stored definition may not take an id a job already uses, refused at save
+time rather than discovered as a hook that never fires.
+
+### The kind is what a page-made webhook has that a job's does not
+
+A webhook is not one thing, and `shared/src/webhooks.rs` sets out the three
+shapes. The listener does the work each implies, so the job behind the hook
+does not have to guess which it was handed:
+
+- **Notification** — the body says only that something happened, usually with
+  an id. Zendesk sends `{"ticket_id": 999}`. rn reads the id at a configured
+  dotted path, fetches a configured URL with `{id}` substituted (URL-encoded,
+  and nothing else is templated), and runs the job with
+  `{ id, notification, detail }`.
+- **Data payload** — the body is the whole story. Typeform sends every answer.
+  The job gets it as `ctx.payload`, unchanged, and nothing is fetched.
+- **Command** — the body names an action rather than reporting an event. A
+  smart-home hub sends `{"action": "turn_on_lights"}`. The action is matched
+  exactly against a routing table of action → job.
+
+**An accepted delivery can legitimately start nothing**: an action with no
+route, or a lookup that failed. Those are answered 202 — the sender did nothing
+wrong, and a non-2xx would put them into a retry loop over a routing table only
+this machine can see — and counted as "accepted but started nothing" on the
+tile. That counter is the only place they show; from the provider's side they
+are indistinguishable from success.
+
+Counters are in memory and reset on restart. The durable record of a delivery
+is the run it started, in the run history, which is where a delivery that
+*did* start something belongs.
+
 ## 6. What a job remembers between runs
 
 A job that polls — an API, a feed, a mailbox, a list of releases — has to answer

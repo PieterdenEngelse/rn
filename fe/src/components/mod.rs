@@ -25,3 +25,5 @@ pub use runtime_board::{runtime_name, RuntimeBoard};
 pub use panel::Panel;
 pub use info::{GlossaryEntry, InfoButton};
 pub use header::Header;
+pub mod webhooks;
+pub use webhooks::WebhookTile;
