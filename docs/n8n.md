@@ -10,8 +10,8 @@ each one maps onto a gap already identified in `docs/jobs.md`. This document
 lists them in the order worth doing, with what each would actually take.
 
 Items 1 to 5 are done. 6 is done except for its first step, which is a decision
-rather than a piece of work — see the note there. Where it says "currently",
-that is the state of the code as written.
+rather than a piece of work — see the note there. 7 is planned and nothing of it
+is built. Where it says "currently", that is the state of the code as written.
 
 ---
 
@@ -435,6 +435,116 @@ place.
 
 ---
 
+## 7. Webhook triggers — **planned**
+
+**What n8n does.** One Webhook node covers a lot of ground: it parses JSON,
+form-data or raw text by content type; it hands the workflow the body, the
+headers, the query string and any path parameters; it answers immediately by
+default but can be switched to reply with a result the workflow computed; and
+its authentication is a dropdown — none, header, query, basic, or JWT.
+
+**What rn does today.** `POST /api/hooks/<job id>`, one route, and every one of
+those knobs is either absent or fixed. The body is `JSON.parse`d whatever the
+content type says. The job receives the parsed body as `ctx.payload` and nothing
+else — headers and query string are dropped, and the delivery id and event name
+go to the run record rather than to the job. The reply is always 202 before the
+run. Authentication is HMAC-SHA256 over the raw body and there is no way to turn
+it off.
+
+Most of that is right and should stay right. rn's listener is the one part of
+the app a stranger can reach, and n8n's flexibility is bought with exactly the
+options — a "None" dropdown entry, a guessable URL as the only secret — that
+`be/src/hooks/server.ts` exists to refuse. So this item takes four things n8n
+has that rn genuinely lacks, and declines three.
+
+The order is smallest first, and each step says what goes wrong while it stays
+undone.
+
+**Step 1 — parse by content type rather than by hope.** Today a form-encoded
+body reaches `JSON.parse` and fails, *after* its signature verified: a 400 on a
+delivery that was authentic. Slack's slash commands send exactly that, so the
+first provider to try one reads the failure as a wrong secret and goes looking
+in the wrong place. Dispatch on `content-type`: `application/json` parses as
+now, `application/x-www-form-urlencoded` goes through `URLSearchParams` into a
+flat object, `text/*` arrives as `{ text }`, anything else is 415 rather than
+400 — a different answer for "I cannot read this kind" than for "this is
+malformed". The raw bytes stay the signature input untouched; that is the one
+line in `verify.ts` this step must not go near.
+
+**Step 2 — give a job what it declared, not what happened to arrive.** A job
+that needs the event name currently cannot have it, and a job that needs a query
+parameter cannot see the URL at all. The fix is not to widen the surface but to
+extend the declaration, the way `Job.credentials` and `ctx.secret` already work:
+`webhook.headers` and `webhook.query` name what this job reads, and the runner
+resolves them into `ctx.delivery = { id, event, headers, query }`. Declared,
+because an undeclared name throwing is what stops the declaration drifting from
+the use — and because it means the signature header can never land in a job's
+reach by accident. Cap each value the way `MAX_HEADER_CHARS` caps the two read
+today; these reach the run record, so they go through `secrets.ts` redaction
+first, and `webhook-echo`'s rule — report the shape, not the contents — still
+governs what a job then writes down.
+
+**Step 3 — a verifier for timestamped schemes.** `verify.ts` already names this
+gap: Stripe signs `timestamp.body`, Slack signs `v0:timestamp:body`, and rn's
+single construction rejects both. Make the scheme a named choice on the
+declaration — `hmac-body` staying the default so no existing job changes — and
+add the two. The compatibility is the smaller half of the gain. Both schemes
+carry a timestamp, so a tolerance window (five minutes is the usual) bounds
+replay *by time* rather than by the 1024 ids in memory that a restart empties.
+That in-memory set is the weakest claim the current listener makes, and this is
+the honest way to strengthen it rather than persisting a set on the write path
+of an unauthenticated request.
+
+**Step 4 — providers that cannot sign at all.** Some send a static token in a
+header and nothing else. Today they are unusable here, which is a real cost and
+not a security position. `webhook.auth = { kind: "token", header, credential }`
+covers them: still a secret, still constant-time compared, still no unsigned
+mode anywhere. It is the first step on this list that weakens the boundary, so
+it must be visible where the boundary is described: the Webhooks board on
+Monitor → Connection names the scheme per job, and "signed" and "token" must not
+render as the same word. A static token is replayable for as long as it is
+valid, so a job using one without a delivery header has no replay protection at
+all — the panel says so, in those words.
+
+**Step 5 — send a test delivery from the app.** n8n's "Listen for test event" is
+how most people meet the feature. rn's version is cheaper and proves more: a
+button on the job that signs a payload with that job's configured credential and
+posts it to the loopback hooks port. That exercises the whole path — secret
+present, socket bound, signature accepted, run recorded — without asking a
+provider for a redelivery, and it is the best educational item on the list,
+because the panel can show the exact bytes, the header, and the run that
+resulted. It must go over the socket rather than calling `handle()` directly; a
+test that skips the listener proves less than it looks like it proves, and the
+bind failure it would miss is the most common real fault.
+
+**Step 6 — answer the caller, and only where a provider demands it.** n8n's
+Respond node, which rn should not adopt generally: 202-before-the-run is right,
+and the reason is already written into the listener — providers time out in
+seconds and retry on any non-2xx, so a synchronous one-minute job becomes a
+retry storm and a hook their side marks as failing. The exception is a provider
+that treats the response body as the reply, Slack's three-second slash-command
+budget being the standard case. If one arrives: `webhook.respond = { deadlineMs
+}`, the job may resolve a value inside a hard deadline, and anything slower
+falls back to the 202 the listener sends today. Not before a job actually needs
+it — building it first is how the general case quietly becomes the default.
+
+**What not to take.**
+
+*Dynamic path routes.* n8n's `/my-api/:action` exists to build APIs inside the
+tool. rn's path segment is a job id, and that is the whole routing story it
+wants; a second addressing scheme onto one runner is the "several front doors"
+argument from `docs/jobs.md` §3 turned into a URL parser.
+
+*A "None" authentication mode.* Not as a default, not behind a flag, not for
+testing — step 5 removes the last reason anyone would want one. A verifier with
+an off switch is a verifier that ships off.
+
+*A durable delivery queue.* A delivery arriving while the backend is down cannot
+be caught by the backend; nothing in-process fixes that, and the provider's own
+retry already covers it. Worth saying in the panel rather than building.
+
+---
+
 ## What not to take
 
 **The visual canvas.** rn is code-first and its educational premise is that you
@@ -454,7 +564,7 @@ argues that the second front door onto one runner beats a second runner.
 
 ## Order
 
-1 to 6 are done, bar the store decision under 6. 1 was the smallest, it used machinery that already existed,
+1 to 6 are done, bar the store decision under 6. 7 is written and unbuilt. 1 was the smallest, it used machinery that already existed,
 and it makes every other item easier to debug — its steps are what a failure
 handler receives and where a retry's earlier errors survive. 2 converted a
 missing feature into a job you write. 3 turned out to have a hazard the plan did
@@ -462,5 +572,11 @@ not name, which is the usual return on writing the plan down first. 4 closed the
 "jobs take no parameters" gap, and its own hazard — "scheduled" quietly meaning
 "undefined everywhere" — the plan did see, which is the other kind of return.
 
-6 is done bar its store, which is a decision and not a piece of work. Nothing on
-this list is now waiting on code that has not been written.
+6 is done bar its store, which is a decision and not a piece of work.
+
+7 is the first item back in the other state. Its steps are ordered so that the
+cheapest one removes the failure most likely to be misread — a signed delivery
+refused as malformed because it was form-encoded — and so that the step which
+weakens the boundary (4) comes after the two that strengthen it (3) and prove it
+(5). Steps 1 to 3 are worth doing whether or not anyone asks; 4 waits for a
+provider that cannot sign, and 6 for a provider that needs an answer.

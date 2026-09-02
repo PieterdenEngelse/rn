@@ -10,13 +10,28 @@ item.
 
 ---
 
-**Nothing is open right now.** That is a real state rather than a lost file:
-the three items that were here — the Deno refusal nobody had watched happen,
-the all-or-nothing job memory, and the retry policy that could not be told an
-error was permanent — were each closed by doing the thing they asked for. New
-items go here, numbered from 1, and they arrive the way every one of those did:
-by building something and running into it. The decisions below are a different
-list and are still waiting.
+## 1. The hooks listener refuses deliveries it should accept
+
+A form-encoded body — Slack's slash commands, and several older providers —
+verifies its signature and is then refused 400 by `JSON.parse`. The delivery was
+authentic; the failure reads as a wrong secret, and the secret is where anyone
+will look first. Alongside it: a job cannot see the event name or any query
+parameter, and Stripe's and Slack's timestamped signature schemes are rejected
+outright, so those providers cannot be pointed at rn at all.
+
+The plan is `docs/n8n.md` §7, steps 1 to 3, in that order. Steps 4 to 6 there
+wait on a provider that needs them; these three do not.
+
+Until it is done, "webhooks are supported" means "GitHub-shaped webhooks are
+supported", and nothing on any page says so.
+
+---
+
+The three items that were here before — the Deno refusal nobody had watched
+happen, the all-or-nothing job memory, and the retry policy that could not be
+told an error was permanent — were each closed by doing the thing they asked
+for. New items arrive the way those did: by building something and running into
+it. The decisions below are a different list and are still waiting.
 
 ---
 
