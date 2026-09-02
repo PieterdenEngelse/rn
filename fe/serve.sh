@@ -42,15 +42,32 @@ holder=$(ss -lptnH "sport = :$port" 2>/dev/null |
     grep -o 'pid=[0-9]*' | head -1 | cut -d= -f2)
 if [ -n "$holder" ]; then
     what=$(ps -o comm= -p "$holder" 2>/dev/null)
-    where=$(ps -o tty= -p "$holder" 2>/dev/null | tr -d ' ')
+    tty=$(ps -o tty= -p "$holder" 2>/dev/null | tr -d ' ')
     since=$(ps -o lstart= -p "$holder" 2>/dev/null)
+    where=$tty
     [ "$where" = "?" ] && where="no tty"
     echo "serve.sh: :$port is already served by ${what:-an exited process} (pid $holder) on ${where:-no tty}, since $since"
     # Which advice is right depends on what holds it, and the wrong half of it
     # is worse than none: telling someone to press r at a python server sends
     # them looking for a dx that is not there.
-    if [ "$what" = "dx" ]; then
+    #
+    # A dx with no tty is the third case, and it was being given the second's
+    # advice. "Stop it there with ctrl+c" names a pane, and a server started in
+    # the background by an agent session does not have one — the line above has
+    # already said "no tty" and then the next line sent the reader looking for
+    # the terminal it just told them does not exist. Observed exactly that way.
+    #
+    # What is useful about a holder you cannot see is which tree it is serving
+    # and who started it, so those are what this arm reports instead.
+    if [ "$what" = "dx" ] && [ "$tty" != "?" ]; then
         echo "serve.sh: that is a dev server already. Rebuild with r in its pane, stop it there with ctrl+c."
+    elif [ "$what" = "dx" ]; then
+        serving=$(readlink /proc/"$holder"/cwd 2>/dev/null)
+        parent=$(ps -o ppid= -p "$holder" 2>/dev/null | tr -d ' ')
+        echo "serve.sh: that is a dev server with no terminal — started in the background, so there"
+        echo "serve.sh: is no pane to press r or ctrl+c in. Whoever started it has to stop it."
+        [ -n "$serving" ] && echo "serve.sh: it is serving ${serving/#$HOME/\~}"
+        [ -n "$parent" ] && echo "serve.sh: its parent is pid $parent$( [ "$parent" = 1 ] && printf ' — orphaned, so nothing is watching it' )"
     else
         echo "serve.sh: that is not a dev server. Free the port, or serve this worktree elsewhere with PORT=."
     fi
