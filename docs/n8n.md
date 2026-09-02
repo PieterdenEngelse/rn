@@ -10,8 +10,8 @@ each one maps onto a gap already identified in `docs/jobs.md`. This document
 lists them in the order worth doing, with what each would actually take.
 
 Items 1 to 5 are done. 6 is done except for its first step, which is a decision
-rather than a piece of work — see the note there. 7 is half built: its first
-three steps are in, the last three wait on a provider that needs them. Where it says "currently", that is the state of the code as written.
+rather than a piece of work — see the note there. 7 is done in full, including
+the three steps it planned to defer. Where it says "currently", that is the state of the code as written.
 
 ---
 
@@ -435,7 +435,7 @@ place.
 
 ---
 
-## 7. Webhook triggers — **steps 1 to 3 done**
+## 7. Webhook triggers — **done**
 
 **What n8n does.** One Webhook node covers a lot of ground: it parses JSON,
 form-data or raw text by content type; it hands the workflow the body, the
@@ -534,7 +534,7 @@ and "wrong signature" told apart is an oracle for a caller and a diagnosis for
 an operator, and only one of them is entitled to it. A stale timestamp is nearly
 always a clock.
 
-**Step 4 — providers that cannot sign at all.** Some send a static token in a
+**Step 4 — providers that cannot sign at all — done.** Some send a static token in a
 header and nothing else. Today they are unusable here, which is a real cost and
 not a security position. `webhook.auth = { kind: "token", header, credential }`
 covers them: still a secret, still constant-time compared, still no unsigned
@@ -545,7 +545,22 @@ render as the same word. A static token is replayable for as long as it is
 valid, so a job using one without a delivery header has no replay protection at
 all — the panel says so, in those words.
 
-**Step 5 — send a test delivery from the app.** n8n's "Listen for test event" is
+*What was built.* `Job.webhook.auth = { kind: "token", header }`, compared
+against the same credential a signature would have used. Both sides are digested
+before the comparison rather than compared directly: `timingSafeEqual` throws on
+a length mismatch and the offered length is the caller's to choose, so hashing
+first makes every comparison 32 bytes against 32 and the only observable is the
+refusal.
+
+The visibility the plan asked for is where it said: `WebhookInfo` carries
+`auth`, so Monitor → Jobs names the scheme per job, and Monitor → Connection
+counts token-authenticated hooks separately from the total — "4 webhooks"
+described two very different installs identically before that. `WebhookAuth` and
+`WebhookScheme` are enums in `shared/`, not strings, so a scheme the verifier
+does not implement is a build failure rather than a delivery refused at three in
+the morning.
+
+**Step 5 — send a test delivery from the app — done.** n8n's "Listen for test event" is
 how most people meet the feature. rn's version is cheaper and proves more: a
 button on the job that signs a payload with that job's configured credential and
 posts it to the loopback hooks port. That exercises the whole path — secret
@@ -556,7 +571,25 @@ resulted. It must go over the socket rather than calling `handle()` directly; a
 test that skips the listener proves less than it looks like it proves, and the
 bind failure it would miss is the most common real fault.
 
-**Step 6 — answer the caller, and only where a provider demands it.** n8n's
+*What was built.* `POST /api/jobs/:id/test-delivery`, a button on every webhook
+job on Monitor → Jobs, and `be/src/hooks/test-delivery.ts` behind it. It signs a
+small payload with that job's own credential and posts it to the loopback hooks
+port over the socket — through the real listener, as the plan insisted, because
+the fault it most needs to catch is nothing being bound to that port at all.
+
+Two details the plan did not have. The signing is written out again rather than
+sharing a helper with `verify.ts`: a test that signs with the verifier's own
+code agrees with it by construction and would keep agreeing if both were wrong.
+And a missing credential is answered before the request is made, because an
+unsigned request would come back 401 and read as a broken signature when the
+truth is there was nothing to sign with.
+
+The endpoint never fails as a request. Every way this can go wrong is a fact
+about the install that the caller asked to be told, so it answers 200 with the
+refusal described — the listener's deliberate silence is for strangers, and this
+caller is on the authenticated side of the app.
+
+**Step 6 — answer the caller, and only where a provider demands it — done.** n8n's
 Respond node, which rn should not adopt generally: 202-before-the-run is right,
 and the reason is already written into the listener — providers time out in
 seconds and retry on any non-2xx, so a synchronous one-minute job becomes a
@@ -566,6 +599,23 @@ budget being the standard case. If one arrives: `webhook.respond = { deadlineMs
 }`, the job may resolve a value inside a hard deadline, and anything slower
 falls back to the 202 the listener sends today. Not before a job actually needs
 it — building it first is how the general case quietly becomes the default.
+
+*What was built.* `Job.webhook.respond = { deadlineMs }` and `ctx.respond(value)`.
+A callback rather than a field on the result, because the answer is due while
+the run is still going: a result arrives when the job is finished, and a
+provider holding a socket open for three seconds cannot wait for that.
+
+The listener owns the socket and writes exactly one answer to it. Respond inside
+the deadline and the caller gets 200 with the value; miss it and the ordinary
+202 goes out, a later `ctx.respond` is a quiet no-op, and the run carries on —
+responding is not returning. A job that calls `ctx.respond` without declaring
+`webhook.respond` finds it `undefined`, which throws, rather than silently doing
+nothing that looks like it worked.
+
+Testing this needed one seam: `createHookApp` and `handle` now take the job
+lookup as a parameter, defaulting to the real registry. A static token and a job
+that answers are both capabilities with no shipped example, and adding jobs to
+the catalogue for the test suite's benefit is worse than a two-line parameter.
 
 **What not to take.**
 
@@ -613,15 +663,15 @@ not name, which is the usual return on writing the plan down first. 4 closed the
 
 6 is done bar its store, which is a decision and not a piece of work.
 
-7's first three steps are done, in the order the plan gave them. The ordering
-held up: step 1 removed the failure most likely to be misread — a signed
-delivery refused as malformed because it was form-encoded — and step 3's
-tolerance window turned out to be the honest answer to the replay limit that
-step 2's record made more visible. What the plan did not see is that the demo
-job had to change too: a declaration mechanism with nothing declaring anything
-is a feature nobody can look at.
+7 is done, all six steps. The ordering held up: step 1 removed the failure most
+likely to be misread — a signed delivery refused as malformed because it was
+form-encoded — and step 3's tolerance window turned out to be the honest answer
+to the replay limit that step 2's record made more visible. What the plan did
+not see is that the demo job had to change too: a declaration mechanism with
+nothing declaring anything is a feature nobody can look at.
 
-Steps 4 to 6 stay unbuilt on purpose. 4 waits for a provider that cannot sign,
-5 for someone to want the test button more than they want the provider's own
-redelivery, and 6 for a provider that needs an answer rather than an
-acknowledgement.
+Steps 4 to 6 were written as waiting on a provider that needed them, and were
+built anyway, on request. The order still mattered: 4 weakens the boundary and
+went in after 3 strengthened it and 5 made it checkable, so the weaker mode
+arrived into an install where anyone can see which jobs use it. Nothing on this
+list is now waiting on code that has not been written.

@@ -142,6 +142,21 @@ export interface JobContext {
      * absent too.
      */
     delivery?: Delivery;
+
+    /**
+     * Answer the delivery that started this run, once.
+     *
+     * Present only when the job declared `webhook.respond` and only on a
+     * webhook run. Calling it hands the value to the waiting caller as the
+     * response body; calling it after the deadline, or twice, does nothing at
+     * all — the socket has one answer in it and the second caller cannot be
+     * told, so the quiet no-op is the honest shape.
+     *
+     * Responding is not returning: the run carries on afterwards, and the run
+     * record is still where "did the job succeed" is answered. The provider
+     * only ever learns what was in the body.
+     */
+    respond?(value: JsonValue): void;
 }
 
 /**
@@ -405,6 +420,47 @@ export interface Job {
          * listener growing a second addressing scheme.
          */
         query?: string[];
+        /**
+         * How a delivery proves it came from the provider, when a signature is
+         * not on offer.
+         *
+         * Absent — the default and the right answer — means one of the
+         * signature schemes above. `{ kind: "token", header }` means the
+         * provider sends a fixed string in that header and signs nothing, and
+         * the credential is compared against it.
+         *
+         * **This is weaker and is not dressed up as anything else.** A
+         * signature covers the body, so a captured one cannot be reused for a
+         * different payload; a token covers nothing, so anyone who obtains it
+         * can forge any delivery until it is rotated. Replay protection then
+         * rests entirely on `deliveryHeader`, which such providers often do not
+         * send either.
+         *
+         * It exists because for those providers the alternative is not a
+         * signature — it is not being able to use rn with them at all. Every
+         * page that shows a webhook names which of the two it is, so the
+         * install's actual position is legible rather than implied.
+         */
+        auth?: { kind: "token"; header: string };
+        /**
+         * Answer the caller with something this job computed, instead of the
+         * 202 the listener sends before the run.
+         *
+         * Off by default, and it should stay off for a provider that merely
+         * needs to be told the delivery arrived. Providers time out in seconds
+         * and retry on any non-2xx, so a synchronous job that takes a minute
+         * becomes a retry storm and a hook they mark as failing.
+         *
+         * The case it exists for is a provider that treats the response body as
+         * the reply — Slack's slash commands, with three seconds to answer. The
+         * job calls `ctx.respond(value)` inside `deadlineMs`, and the listener
+         * sends it as 200. Miss the deadline and the caller gets the ordinary
+         * 202: a late answer is not sent, because by then the socket has been
+         * answered and the provider has moved on.
+         *
+         * The run continues either way. Responding is not returning.
+         */
+        respond?: { deadlineMs: number };
     };
 
     /**

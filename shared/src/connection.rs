@@ -53,6 +53,16 @@ wire! {
         /// retry log is otherwise the only place that shows.
         #[serde(default)]
         pub webhook_ready: u32,
+        /// How many of them authenticate with a static token rather than a
+        /// signature.
+        ///
+        /// Counted separately because the two are not the same claim. A
+        /// signature covers the body and a token does not, so a token that
+        /// leaks is a delivery anyone can forge until it is rotated — and a
+        /// board that reported only "4 webhooks" would say nothing about which
+        /// kind of security position this install actually has.
+        #[serde(default)]
+        pub webhook_token_jobs: u32,
         /// True when the launcher is supervising. Unsupervised, the grant is
         /// whatever the shell handed the process, and none of it was applied.
         #[serde(default)]

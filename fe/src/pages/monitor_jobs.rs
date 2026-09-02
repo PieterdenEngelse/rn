@@ -1,7 +1,8 @@
 use crate::api::{
     fetch_job_errors, fetch_job_source, fetch_jobs, fetch_runs, reset_job_state, run_job,
-    CatalogueJob, JobErrors, JobRun, JobInput, JobInputType, JobRunResult, JobSource, JobStep,
-    JobsResponse, Outcome, ScheduledJob, StateResetResponse, Trigger,
+    send_test_delivery, CatalogueJob, JobErrors, JobRun, JobInput, JobInputType, JobRunResult,
+    JobSource, JobStep, JobsResponse, Outcome, ScheduledJob, StateResetResponse, TestDelivery,
+    Trigger, WebhookAuth, WebhookInfo, WebhookScheme,
 };
 use crate::app::Route;
 use crate::components::param::PARAM_INPUT_ROW_CLASS;
@@ -278,6 +279,21 @@ fn Catalogue(jobs: JobsResponse, on_ran: EventHandler<()>) -> Element {
     }
 }
 
+/// How a job's deliveries prove themselves, in the words the button uses.
+///
+/// A free function rather than a method: `WebhookInfo` is defined in `shared`,
+/// so `fe` cannot `impl` on it — the same rule `trigger_label` lives under.
+fn sent_as(w: &WebhookInfo) -> String {
+    match w.auth {
+        WebhookAuth::Token => format!("a static token in {}", w.header),
+        WebhookAuth::Signature => match w.scheme {
+            Some(WebhookScheme::Stripe) => "a Stripe signature over timestamp and body".to_string(),
+            Some(WebhookScheme::Slack) => "a Slack v0 signature over timestamp and body".to_string(),
+            _ => format!("an HMAC-SHA256 signature over the body in {}", w.header),
+        },
+    }
+}
+
 #[component]
 fn JobRow(
     job: CatalogueJob,
@@ -292,6 +308,12 @@ fn JobRow(
     let mut showing_source = use_signal(|| false);
     let mut errors: Signal<Option<Result<JobErrors, String>>> = use_signal(|| None);
     let mut showing_errors = use_signal(|| false);
+    // The webhook's own control. Absent from every row whose job declares no
+    // webhook, for the reason "Forget memory" is: a button that is always there
+    // teaches that every job has the thing it acts on.
+    let mut delivered: Signal<Option<Result<TestDelivery, String>>> = use_signal(|| None);
+    let mut sending = use_signal(|| false);
+    let hook = job.webhook.clone();
     // What this run is being asked to do, keyed by field id. Seeded from the
     // declared defaults so the form opens showing what would happen if you
     // pressed Run without touching it — a blank form implies the job has no
@@ -510,12 +532,87 @@ fn JobRow(
                             if_wrong: FORGET_IF_WRONG.to_string(),
                         }
                     }
+                    if let Some(w) = hook.clone() {
+                        button {
+                            class: "cursor-pointer",
+                            style: "color: #22d3ee;",
+                            onclick: {
+                                let id = job.id.clone();
+                                move |_| {
+                                    let id = id.clone();
+                                    sending.set(true);
+                                    delivered.set(None);
+                                    spawn(async move {
+                                        let out = send_test_delivery(&id).await;
+                                        delivered.set(Some(out));
+                                        sending.set(false);
+                                    });
+                                }
+                            },
+                            if sending() { "Sending…" } else { "Send test delivery" }
+                        }
+                        // Inline beside its own control, like Forget memory —
+                        // the exception CLAUDE.md names to the info column.
+                        InfoButton {
+                            title: "Send test delivery".to_string(),
+                            what: format!(
+                                "Signs a small JSON payload with this job's credential ({}) and posts it \
+                                 to the hooks port on this machine, as {} — a real request over the real \
+                                 socket, through the same listener a provider reaches.\n\nWhat that \
+                                 proves, in order: the hooks port is open, this job's id is routable, the \
+                                 credential is present, the signature is the construction the listener \
+                                 checks, and the run started. What it does not prove is that the job then \
+                                 succeeded — that is the run record, exactly as for a real delivery.",
+                                w.credential,
+                                sent_as(&w),
+                            ),
+                            why: "A webhook is the one trigger Run now cannot check. Running a job by \
+                                  hand skips the port, the credential and the signature, which is the half \
+                                  that goes wrong — and the usual alternative is to ask a provider to \
+                                  redeliver and then read their retry log, which needs the hook already \
+                                  registered somewhere.".to_string(),
+                            if_wrong: "The job really runs, with a payload marked rn: \"test-delivery\" so \
+                                       it can tell. A job that acts on what it receives will act on this.\n\n\
+                                       A refusal comes back with the reason: the listener answers a \
+                                       stranger with nothing at all, and this caller is not a stranger. \
+                                       401 with the credential set means the signature check failed; 404 \
+                                       means the route is not there; nothing answering at all means \
+                                       nothing is bound to the hooks port, which is the most common real \
+                                       fault and the one a test that skipped the socket would miss."
+                                .to_string(),
+                        }
+                    }
                     button {
                         class: "text-blue-400 hover:text-blue-300 cursor-pointer disabled:cursor-default",
                         onclick: start,
                         if busy() { "Running…" } else { "Run now" }
                     }
                 }
+            }
+
+            // What the listener answered, in its own numbers and in words. The
+            // status is kept rather than translated away: it is what a provider
+            // would have seen, and the sentence beside it is the reading this
+            // caller is entitled to.
+            match &*delivered.read() {
+                Some(Ok(d)) => rsx! {
+                    p {
+                        class: "mt-2 text-xs",
+                        style: if d.accepted { "color: #86efac;" } else { "color: #fca5a5;" },
+                        if d.status == 0 {
+                            "Not sent — {d.detail}"
+                        } else {
+                            "{d.status} — {d.detail}"
+                        }
+                    }
+                    p { class: "text-xs text-gray-400",
+                        "{d.bytes} bytes, {d.sent_as}, delivery id {d.delivery_id}"
+                    }
+                },
+                Some(Err(e)) => rsx! {
+                    p { class: "mt-2 text-xs", style: "color: #fca5a5;", "{e}" }
+                },
+                None => rsx! {},
             }
 
             if !job.inputs.is_empty() {

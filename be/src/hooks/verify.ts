@@ -295,6 +295,27 @@ export function verifyScheme(opts: {
 }
 
 /**
+ * A static token, compared without leaking its length.
+ *
+ * For providers that sign nothing and send a fixed string instead. Weaker than
+ * every scheme above and deliberately not dressed up as one: the value does not
+ * depend on the body, so a captured token forges any delivery until somebody
+ * rotates it. It exists because the alternative for those providers is not a
+ * signature — it is not being able to use rn at all.
+ *
+ * Digested before comparing rather than compared directly. `timingSafeEqual`
+ * throws on a length mismatch, and the lengths here are attacker-influenced:
+ * hashing both sides first makes every comparison 32 bytes against 32 bytes,
+ * so the only thing measurable is that the request was refused.
+ */
+export function tokenMatches(offered: string | undefined, secret: string): boolean {
+    if (offered === undefined || offered === "") return false;
+    const a = createHmac("sha256", secret).update(offered).digest();
+    const b = createHmac("sha256", secret).update(secret).digest();
+    return timingSafeEqual(a, b);
+}
+
+/**
  * Deliveries already seen, so a captured request cannot be replayed.
  *
  * A valid signature stays valid forever — that is what a signature is — so

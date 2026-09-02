@@ -7,7 +7,7 @@
 use super::wire::{
     ConnectionResponse, EnvResponse, HealthResponse, JobErrors, JobRunResult, JobSource, JobsResponse, NodeHistory, NodeMetrics,
     ParamsResponse, RestartOutcome, RunsResponse, SaveResponse, StateResetResponse, StatusResponse,
-    StopOutcome,
+    StopOutcome, TestDelivery,
 };
 
 /// Base URL of the backend API. In development the frontend is served by
@@ -305,6 +305,35 @@ pub async fn run_job(id: &str, input: &serde_json::Value) -> Result<JobRunResult
             .unwrap_or("the run failed")
             .to_string()),
         Err(_) => Err(format!("the run failed ({})", resp.status())),
+    }
+}
+
+/// Send this job a webhook from the backend, over the hooks socket.
+///
+/// The only way to check a webhook without a provider: pressing Run skips the
+/// port, the credential and the signature, which is the half that breaks. A
+/// refusal comes back as an ordinary answer with `accepted: false` and a
+/// sentence saying which check failed — the listener tells a stranger nothing,
+/// and this call is not a stranger.
+///
+/// It really runs the job. A job that acts on what it receives will act on this
+/// payload, which says `rn: "test-delivery"` so it can tell.
+pub async fn send_test_delivery(id: &str) -> Result<TestDelivery, String> {
+    let resp = gloo_net::http::Request::post(&format!("{API_BASE}/api/jobs/{id}/test-delivery"))
+        .send()
+        .await
+        .map_err(|e| format!("{e}"))?;
+
+    if resp.ok() {
+        return resp.json::<TestDelivery>().await.map_err(|e| format!("{e}"));
+    }
+    match resp.json::<serde_json::Value>().await {
+        Ok(v) => Err(v
+            .get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("the test delivery could not be sent")
+            .to_string()),
+        Err(_) => Err(format!("the test delivery could not be sent ({})", resp.status())),
     }
 }
 

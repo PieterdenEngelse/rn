@@ -15,7 +15,8 @@
 pub use shared::{
     CatalogueJob, ConnectionResponse, EnvEntry, HealthResponse, HooksHealth, EnvResponse, CredentialRef, JobErrors, JobInfo, JobInput, JobInputType,
     JobRun, JobRunResult, JobSource, JobStep, JobsConfig, JobsResponse, Outcome, RetryPolicy,
-    RunningJob, RunsResponse, Schedule, ScheduledJob, StateResetResponse, Trigger,
+    RunningJob, RunsResponse, Schedule, ScheduledJob, StateResetResponse, TestDelivery, Trigger,
+    WebhookAuth, WebhookInfo, WebhookScheme,
 };
 
 pub use shared::monitor::*;

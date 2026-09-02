@@ -42,6 +42,7 @@ import {
 } from "./settings.ts";
 import { config, remoteBindRefusal } from "./config.ts";
 import { createHookApp, hooksHealth, startHooks } from "./hooks/server.ts";
+import { sendTestDelivery } from "./hooks/test-delivery.ts";
 import { describeEnv } from "./env-file.ts";
 import { dryRun } from "./dry-run.ts";
 import * as secrets from "./secrets.ts";
@@ -247,6 +248,10 @@ export function createApp() {
                 webhookReady: JOBS.filter(
                     (j) => j.webhook !== undefined && secrets.isSet(j.webhook.credential),
                 ).length,
+                // Counted apart from the total because it is a different claim
+                // about this install: a token does not cover the body, so one
+                // that leaks forges every delivery until it is rotated.
+                webhookTokenJobs: JOBS.filter((j) => j.webhook?.auth?.kind === "token").length,
                 runtime,
                 // What the launcher passed, not what was saved — the two differ
                 // until a restart, which is exactly when someone looks here.
@@ -342,9 +347,25 @@ export function createApp() {
                         ? {}
                         : {
                               webhook: {
-                                  header: (j.webhook.header ?? "x-hub-signature-256").toLowerCase(),
+                                  header: (
+                                      j.webhook.auth?.header ??
+                                      j.webhook.header ??
+                                      "x-hub-signature-256"
+                                  ).toLowerCase(),
                                   credential: j.webhook.credential,
                                   secretSet: secrets.isSet(j.webhook.credential),
+                                  // Which of the two kinds of proof, and — for
+                                  // a signature — which construction. Sent
+                                  // because "webhook configured" is not one
+                                  // security position but two, and a page that
+                                  // spells them the same way hides the weaker.
+                                  auth: j.webhook.auth?.kind === "token" ? "token" : "signature",
+                                  ...(j.webhook.auth?.kind === "token"
+                                      ? {}
+                                      : { scheme: j.webhook.scheme ?? "hmac-body" }),
+                                  ...(j.webhook.respond === undefined
+                                      ? {}
+                                      : { respondDeadlineMs: j.webhook.respond.deadlineMs }),
                               },
                           }),
                     // And for the same reason again: three attempts of a
@@ -525,6 +546,43 @@ export function createApp() {
                 runsRetained: counts.runs,
                 failuresRetained: counts.failures,
             });
+            return done(200);
+        }
+
+        // Send this job a webhook, from here, over the socket.
+        //
+        // The one trigger that cannot be checked by pressing Run: running a job
+        // by hand skips the port, the credential and the signature, which is
+        // the half that goes wrong. See be/src/hooks/test-delivery.ts for why
+        // it makes a real request rather than calling the handler.
+        //
+        // POST because it has an effect — the job runs, for real, with a
+        // payload that says it is a test. A job that acts on what it receives
+        // will act on this one, which is why the panel beside the button says
+        // so rather than only the docs.
+        if (url.pathname.startsWith("/api/jobs/") && url.pathname.endsWith("/test-delivery")
+            && req.method === "POST") {
+            const id = decodeURIComponent(
+                url.pathname.slice("/api/jobs/".length, -"/test-delivery".length),
+            );
+            const job = jobById(id);
+            if (!job) {
+                send(res, 404, { message: `No job with id "${id}".` });
+                return done(404);
+            }
+            if (job.webhook === undefined) {
+                // 400 rather than 404: the job is real and the request is the
+                // thing that makes no sense, and saying so beats the listener's
+                // deliberate ambiguity — this endpoint is on the authenticated
+                // side of the app, where a reader is entitled to a reason.
+                send(res, 400, { message: `Job "${id}" declares no webhook.` });
+                return done(400);
+            }
+            // Never fails as a request: every way this can go wrong is a fact
+            // about the install that the caller asked to be told, so it comes
+            // back 200 with the failure described rather than as an error the
+            // page has to translate.
+            send(res, 200, await sendTestDelivery(job));
             return done(200);
         }
 

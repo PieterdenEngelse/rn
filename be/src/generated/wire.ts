@@ -206,6 +206,17 @@ webhookJobs: number,
  */
 webhookReady: number, 
 /**
+ * How many of them authenticate with a static token rather than a
+ * signature.
+ *
+ * Counted separately because the two are not the same claim. A
+ * signature covers the body and a token does not, so a token that
+ * leaks is a delivery anyone can forge until it is rotated — and a
+ * board that reported only "4 webhooks" would say nothing about which
+ * kind of security position this install actually has.
+ */
+webhookTokenJobs: number, 
+/**
  * True when the launcher is supervising. Unsupervised, the grant is
  * whatever the shell handed the process, and none of it was applied.
  */
@@ -1171,6 +1182,44 @@ running?: Array<RunningJob>,
 aborted?: Array<RunningJob>, };
 
 /**
+ * What happened when rn sent a delivery to its own listener.
+ *
+ * The point of the exercise is that it is a real request over the real
+ * socket, so this reports what any provider would have seen: the status
+ * the listener returned and whether that counts as accepted. `detail` is
+ * rn's own reading of it — the listener tells a stranger nothing, and this
+ * caller is not a stranger.
+ */
+export type TestDelivery = { 
+/**
+ * Status the listener answered with. 202 is the ordinary success.
+ */
+status: number, 
+/**
+ * Whether the delivery was accepted — a 2xx, and nothing else.
+ */
+accepted: boolean, 
+/**
+ * The delivery id this test sent, so the run it produced can be found
+ * in the history beside it.
+ */
+deliveryId: string, 
+/**
+ * Bytes of body signed and sent.
+ */
+bytes: number, 
+/**
+ * Which header the proof went in, and under which scheme.
+ */
+sentAs: string, 
+/**
+ * What that status means here, in a sentence. The listener refuses
+ * without explaining itself, on purpose; this is the explanation the
+ * operator is entitled to.
+ */
+detail: string, };
+
+/**
  * How a run was started.
  */
 export type Trigger = "manual" | "schedule" | "failure" | "webhook" | "change";
@@ -1184,6 +1233,11 @@ export type Trigger = "manual" | "schedule" | "failure" | "webhook" | "change";
  * "not reported" for both would flatten two different next steps into one.
  */
 export type Unavailable = { id: string, kind: string, reason: string, };
+
+/**
+ * What a delivery has to present.
+ */
+export type WebhookAuth = "signature" | "token";
 
 /**
  * A job's webhook, described without describing how to call it.
@@ -1201,18 +1255,47 @@ export type Unavailable = { id: string, kind: string, reason: string, };
  */
 export type WebhookInfo = { 
 /**
- * Header the signature arrives in, lowercased.
+ * Header the signature or token arrives in, lowercased.
  */
 header: string, 
 /**
- * The credential name the signature is verified against.
+ * The credential name the delivery is checked against.
  */
 credential: string, 
 /**
  * Whether that credential is configured. Never its value, never a
  * prefix or a length of one.
  */
-secretSet: boolean, };
+secretSet: boolean, 
+/**
+ * How a delivery proves it came from the provider.
+ *
+ * Sent because the two are not interchangeable and a page that spells
+ * them the same way is lying by omission: a signature covers the body
+ * and a static token does not, so a captured token is replayable for
+ * as long as it is valid.
+ */
+auth: WebhookAuth, 
+/**
+ * Which signature construction, when `auth` is a signature. `None`
+ * under a token, where there is no construction to name.
+ */
+scheme?: WebhookScheme | null, 
+/**
+ * How long the provider is made to wait for the job's own answer,
+ * when the job declared it answers. Absent — the ordinary case — is
+ * the 202 the listener sends before the run starts.
+ */
+respondDeadlineMs?: number | null, };
+
+/**
+ * The signature constructions the listener knows.
+ *
+ * A closed set rather than a string, so a scheme the verifier does not
+ * implement is a build failure rather than a delivery refused at three in
+ * the morning. The spellings match `Scheme` in `be/src/hooks/verify.ts`.
+ */
+export type WebhookScheme = "hmac-body" | "stripe" | "slack";
 
 /**
  * A flag the registry deliberately does not offer, and why.

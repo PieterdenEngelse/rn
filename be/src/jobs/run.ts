@@ -51,6 +51,16 @@ import type { Delivery } from "../generated/wire.ts";
 export interface WebhookRun {
     payload: JsonValue;
     delivery: Delivery;
+    /**
+     * Where `ctx.respond` sends its value, when the job declared it answers.
+     *
+     * A callback rather than a field on the result, because the answer is due
+     * while the run is still going: a result arrives when the job is finished,
+     * and a provider holding a socket open for three seconds cannot wait for
+     * that. The listener owns what happens to the value — including ignoring
+     * it, once it has already sent a 202.
+     */
+    respond?: (value: JsonValue) => void;
 }
 import type { Job, JobContext, JobResult } from "./types.ts";
 
@@ -505,6 +515,12 @@ export async function runJob(
                 ...(webhook === undefined ? {} : {
                     payload: webhook.payload,
                     delivery: webhook.delivery,
+                    // Only where the listener offered one. A job that calls
+                    // `ctx.respond` without declaring `webhook.respond` gets
+                    // undefined rather than a silent no-op, which is the
+                    // difference between a mistake that throws and one that
+                    // looks like it worked.
+                    ...(webhook.respond === undefined ? {} : { respond: webhook.respond }),
                 }),
             };
 

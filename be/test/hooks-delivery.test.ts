@@ -19,6 +19,7 @@ import { verifyScheme, DEFAULT_TOLERANCE_MS } from "../src/hooks/verify.ts";
 import { config } from "../src/config.ts";
 import * as history from "../src/jobs/history.ts";
 import { envVarFor } from "../src/secrets.ts";
+import type { Job, JobResult } from "../src/jobs/types.ts";
 
 // Before anything imports the runner: this file posts a real delivery to a real
 // listener, which records a real run. Without the redirect those runs land in
@@ -336,4 +337,180 @@ test("a content type the listener does not read is 415, after the signature", as
         deliveryId: `bin-${process.pid}`,
     });
     assert.equal(status, 415);
+});
+
+// ── A token, and a job that answers ───────────────────────────────────────
+
+/**
+ * A job that exists only here.
+ *
+ * The listener takes its lookup as a parameter for exactly this: a static
+ * token and a job that answers its caller are both real capabilities with no
+ * shipped example, and adding one to the catalogue to make a test possible
+ * would be shipping a job for the test suite's benefit.
+ */
+function jobThat(over: Partial<Job>): Job {
+    return {
+        id: "fixture",
+        label: "Fixture",
+        source: import.meta.filename,
+        info: {
+            what: "A job that exists only inside this test file.",
+            why: "So the listener can be exercised without shipping a job nobody runs.",
+            ifWrong: "Nothing: it is never registered.",
+        },
+        async run(): Promise<JobResult> {
+            return { changed: false, summary: {} };
+        },
+        ...over,
+    } as Job;
+}
+
+async function post(
+    job: Job,
+    headers: Record<string, string>,
+    body = '{"hello":"world"}',
+): Promise<{ status: number; text: string }> {
+    const { createHookApp } = await import("../src/hooks/server.ts");
+    const app = createHookApp(undefined, (id) => (id === job.id ? job : undefined));
+    await new Promise<void>((resolve) => app.listen(0, "127.0.0.1", resolve));
+    const { port } = app.address() as AddressInfo;
+    try {
+        const res = await fetch(`http://127.0.0.1:${port}/api/hooks/${job.id}`, {
+            method: "POST",
+            headers: { "content-type": "application/json", ...headers },
+            body,
+        });
+        return { status: res.status, text: await res.text() };
+    } finally {
+        await new Promise<void>((resolve) => app.close(() => resolve()));
+    }
+}
+
+test("a job authenticated by token accepts the right one and refuses the rest", async (t) => {
+    process.env[envVarFor("fixtureToken")] = SECRET;
+    t.after(() => {
+        delete process.env[envVarFor("fixtureToken")];
+    });
+
+    const job = jobThat({
+        webhook: { credential: "fixtureToken", auth: { kind: "token", header: "x-api-key" } },
+    });
+
+    assert.equal((await post(job, { "x-api-key": SECRET })).status, 202);
+    assert.equal((await post(job, { "x-api-key": "not it" })).status, 401);
+    // A token of a different length must be refused rather than throw:
+    // timingSafeEqual rejects mismatched lengths, which is why both sides are
+    // digested before they are compared.
+    assert.equal((await post(job, { "x-api-key": "s" })).status, 401);
+    assert.equal((await post(job, {})).status, 401);
+});
+
+test("a job that answers replies 200 with what it responded", async (t) => {
+    process.env[envVarFor("fixtureToken")] = SECRET;
+    t.after(() => {
+        delete process.env[envVarFor("fixtureToken")];
+    });
+
+    const job = jobThat({
+        id: "answers",
+        webhook: {
+            credential: "fixtureToken",
+            auth: { kind: "token", header: "x-api-key" },
+            respond: { deadlineMs: 5_000 },
+        },
+        async run(ctx): Promise<JobResult> {
+            ctx.respond?.({ text: "pong" });
+            return { changed: false, summary: {} };
+        },
+    });
+
+    const { status, text } = await post(job, { "x-api-key": SECRET });
+    assert.equal(status, 200);
+    assert.deepEqual(JSON.parse(text), { text: "pong" });
+});
+
+test("a job that misses its deadline gets the ordinary 202, and its late answer is dropped", async (t) => {
+    process.env[envVarFor("fixtureToken")] = SECRET;
+    t.after(() => {
+        delete process.env[envVarFor("fixtureToken")];
+    });
+
+    let responded: unknown;
+    const job = jobThat({
+        id: "slow",
+        webhook: {
+            credential: "fixtureToken",
+            auth: { kind: "token", header: "x-api-key" },
+            respond: { deadlineMs: 20 },
+        },
+        async run(ctx): Promise<JobResult> {
+            await new Promise((r) => setTimeout(r, 120));
+            // The socket has been answered by now. This must be a quiet no-op
+            // rather than a second write, which would throw inside the run.
+            ctx.respond?.({ text: "too late" });
+            responded = "called";
+            return { changed: false, summary: {} };
+        },
+    });
+
+    const { status, text } = await post(job, { "x-api-key": SECRET });
+    assert.equal(status, 202);
+    assert.deepEqual(JSON.parse(text), { ok: true, id: "slow" });
+
+    // The run keeps going after the answer went out — responding is not
+    // returning — so the late call still happens and is simply ignored.
+    await new Promise((r) => setTimeout(r, 250));
+    assert.equal(responded, "called");
+});
+
+// ── The test delivery ─────────────────────────────────────────────────────
+
+test("a test delivery signs itself and is accepted by the listener", async (t) => {
+    process.env[envVarFor("fixtureToken")] = SECRET;
+    const wasPort = config.hooksPort;
+    t.after(() => {
+        delete process.env[envVarFor("fixtureToken")];
+        (config as unknown as { hooksPort: number }).hooksPort = wasPort;
+    });
+
+    const job = jobThat({
+        id: "self-test",
+        webhook: {
+            credential: "fixtureToken",
+            deliveryHeader: "x-github-delivery",
+            eventHeader: "x-github-event",
+        },
+    });
+
+    const { createHookApp } = await import("../src/hooks/server.ts");
+    const app = createHookApp(undefined, (id) => (id === job.id ? job : undefined));
+    await new Promise<void>((resolve) => app.listen(0, "127.0.0.1", resolve));
+    // Pointed at the fixture rather than at 3011. Without this the test would
+    // post a delivery into whatever backend the developer has running, which is
+    // a side effect no test is entitled to.
+    (config as unknown as { hooksPort: number }).hooksPort = (app.address() as AddressInfo).port;
+
+    try {
+        const { sendTestDelivery } = await import("../src/hooks/test-delivery.ts");
+        const out = await sendTestDelivery(job);
+        assert.equal(out.accepted, true);
+        assert.equal(out.status, 202);
+        assert.match(out.sentAs, /hmac-body signature/);
+        assert.match(out.deliveryId, /^rn-test-/);
+        assert.ok(out.bytes > 0);
+    } finally {
+        await new Promise<void>((resolve) => app.close(() => resolve()));
+    }
+});
+
+test("a test delivery with no credential says so instead of sending an unsigned request", async () => {
+    // The failure this case exists to prevent: an unsigned request would come
+    // back 401 and read as a broken signature, when the truth is there was
+    // nothing to sign with.
+    const job = jobThat({ id: "unset", webhook: { credential: "neverSetAnywhere" } });
+    const out = await (await import("../src/hooks/test-delivery.ts")).sendTestDelivery(job);
+    assert.equal(out.accepted, false);
+    assert.equal(out.status, 0);
+    assert.match(out.detail, /RN_SECRET_NEVER_SET_ANYWHERE/);
 });

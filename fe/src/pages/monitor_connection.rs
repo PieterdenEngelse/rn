@@ -372,7 +372,8 @@ fn ConnectionBoards(c: ConnectionResponse, m: Option<NodeMetrics>, h: Option<Hea
                                                 "a job that exists without a webhook — the same 404, so the endpoint cannot be used to enumerate what this install runs." }
                                             li { "The job's signing credential is looked up. Missing → 401, logged as its own reason, because from the sender's side that is indistinguishable from a wrong secret." }
                                             li { "The body is read raw, refused mid-stream past 1 MB → 413. Raw, because a signature covers the exact bytes sent; parsing and re-serialising changes them and every signature would fail." }
-                                            li { "The signature is checked against those bytes, in constant time → 401 on mismatch. Three constructions are known: "
+                                            li { "The proof is checked in constant time → 401 on mismatch. Nearly always a signature over those exact bytes; a job may instead declare a static token, which the same check compares and every page names as the weaker thing it is." }
+                                            li { "For a signature, three constructions are known: "
                                                 span { class: "font-mono text-gray-300", "hmac-body" }
                                                 " — the default, HMAC-SHA256 over the body under a configurable header and prefix, GitHub's "
                                                 span { class: "font-mono text-gray-300", "x-hub-signature-256: sha256=" }
@@ -380,6 +381,9 @@ fn ConnectionBoards(c: ConnectionResponse, m: Option<NodeMetrics>, h: Option<Hea
                                             li { "The delivery id is checked against the ones already seen → 409. After the signature, so nobody unauthenticated can fill that log with ids of their choosing." }
                                             li { "Only now is the body parsed, by content type → 400 if it will not parse, 415 if it is a kind the listener does not read. JSON, form-encoded and text/*; a parser is never run on bytes from anyone who found the URL." }
                                             li { "202 is returned immediately, then the job is started. Providers time out in seconds and retry on any non-2xx, so waiting for a one-minute run would turn one delivery into a retry storm." }
+                                            li { "Unless the job declared that it answers: then the listener waits up to that job's deadline for it to call "
+                                                span { class: "font-mono text-gray-300", "ctx.respond(value)" }
+                                                ", and sends 200 with that value. Miss the deadline and the ordinary 202 goes out — a late answer is never sent, because the socket already has one in it. The run carries on either way." }
                                         }
                                         p { class: "mt-2 text-gray-200 leading-relaxed",
                                             "Every rejection is the same one-line body with no reason in it. Three distinguishable answers would let a caller map the catalogue and probe the secret; the log records which it was, because the operator needs to know and the sender does not."
@@ -393,10 +397,21 @@ fn ConnectionBoards(c: ConnectionResponse, m: Option<NodeMetrics>, h: Option<Hea
                                             li { "Replay protection under "
                                                 span { class: "font-mono text-gray-300", "hmac-body" }
                                                 " is process-local and bounded: the last 1024 delivery ids, in memory, forgotten on restart. A replay across a restart will be accepted, and a provider that sends no delivery id gets no deduplication at all. The timestamped schemes do not have this problem — five minutes of tolerance bounds a replay by the clock, which needs no memory." }
-                                            li { "202 means accepted, not succeeded. The provider sees green whether the job then worked or failed; the run record is the only place the second answer lives." }
+                                            li { "202 means accepted, not succeeded. The provider sees green whether the job then worked or failed; the run record is the only place the second answer lives. A job that declares it answers is the exception, and only within its own deadline." }
                                             li { "There is no queue. A delivery that arrives while the backend is down is not stored anywhere — the provider's own retry is the whole of the recovery." }
                                             li { "No rate limiting and no address filtering. The URL plus the secret is the entire control, and the 1 MB ceiling is the only bound on what someone who learns the URL can make this process buffer." }
+                                            li { "A static token, where a job uses one, is only as good as its secrecy: it does not depend on the body, so it forges every delivery rather than one. It exists because some providers sign nothing, and the honest answer to that is a named weaker mode rather than a silent one." }
                                             li { "The payload is handed to the job but kept off the run record, which stores the delivery id, the event name, and whichever headers and query parameters that job declared it reads. Forty deliveries stay forty distinguishable rows without the page becoming a place a stranger's headers are displayed — an undeclared header reaches neither the job nor the record." }
+                                        }
+                                    }
+                                    div {
+                                        h4 { class: "text-sm font-semibold text-gray-300", "Checking it without a provider" }
+                                        p { class: "mt-1 text-gray-200 leading-relaxed",
+                                            "Monitor → Jobs has a "
+                                            em { "Send test delivery" }
+                                            " button on every job that declares a webhook. It signs a small payload with that job's own credential and posts it to this port over the socket, through the same listener a provider reaches — so it proves the port is open, the id is routable, the credential is present and the construction matches, none of which pressing "
+                                            em { "Run now" }
+                                            " touches. It really runs the job, with a payload marked as a test."
                                         }
                                     }
                                     div {
@@ -456,6 +471,17 @@ fn ConnectionBoards(c: ConnectionResponse, m: Option<NodeMetrics>, h: Option<Hea
                         what: "How many jobs declare a webhook trigger — they want to be told, rather than to ask on a schedule.".to_string(),
                         why: "Read against the row below it. A job that declares a webhook but is not ready is configured and not usable, which is a state that looks like working from the job list alone.".to_string(),
                         if_wrong: "Zero here while you expected a delivery means the job never declared the trigger, so nothing was listening for it whatever the provider sent.".to_string(),
+                    }
+                    Metric {
+                        label: "by static token",
+                        value: if c.webhook_token_jobs == 0 {
+                            "none — every hook is signed".to_string()
+                        } else {
+                            format!("{} of {}", c.webhook_token_jobs, c.webhook_jobs)
+                        },
+                        what: "How many of those jobs accept a fixed string in a header instead of a signature over the body.".to_string(),
+                        why: "The two are not the same claim. A signature covers the bytes sent, so a captured one cannot be reused for a different payload; a token covers nothing, so whoever obtains it can forge any delivery until it is rotated. A board reporting only \"4 webhooks\" would describe two very different installs identically.".to_string(),
+                        if_wrong: "A token is not a fault — it is what a provider that signs nothing leaves you, and the alternative is not using them at all. It is a reason to prefer a delivery id for replay protection, to rotate on any suspicion, and to keep such a job's effects small. Monitor → Jobs names the scheme per job.".to_string(),
                     }
                     Metric {
                         label: "ready",

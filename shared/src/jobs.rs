@@ -217,13 +217,91 @@ wire! {
     /// delivery, and the provider's retries are the only place that shows.
     #[serde(rename_all = "camelCase")]
     pub struct WebhookInfo {
-        /// Header the signature arrives in, lowercased.
+        /// Header the signature or token arrives in, lowercased.
         pub header: String,
-        /// The credential name the signature is verified against.
+        /// The credential name the delivery is checked against.
         pub credential: String,
         /// Whether that credential is configured. Never its value, never a
         /// prefix or a length of one.
         pub secret_set: bool,
+        /// How a delivery proves it came from the provider.
+        ///
+        /// Sent because the two are not interchangeable and a page that spells
+        /// them the same way is lying by omission: a signature covers the body
+        /// and a static token does not, so a captured token is replayable for
+        /// as long as it is valid.
+        #[serde(default)]
+        pub auth: WebhookAuth,
+        /// Which signature construction, when `auth` is a signature. `None`
+        /// under a token, where there is no construction to name.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub scheme: Option<WebhookScheme>,
+        /// How long the provider is made to wait for the job's own answer,
+        /// when the job declared it answers. Absent — the ordinary case — is
+        /// the 202 the listener sends before the run starts.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub respond_deadline_ms: Option<f64>,
+    }
+}
+
+wire! {
+    /// What a delivery has to present.
+    #[derive(Default)]
+    #[serde(rename_all = "kebab-case")]
+    pub enum WebhookAuth {
+        /// An HMAC over the body, which is the default and the strong one.
+        #[default]
+        Signature,
+        /// A fixed string the provider sends every time. For providers that
+        /// sign nothing; weaker on purpose and named so on every page.
+        Token,
+    }
+}
+
+wire! {
+    /// The signature constructions the listener knows.
+    ///
+    /// A closed set rather than a string, so a scheme the verifier does not
+    /// implement is a build failure rather than a delivery refused at three in
+    /// the morning. The spellings match `Scheme` in `be/src/hooks/verify.ts`.
+    #[derive(Default)]
+    #[serde(rename_all = "kebab-case")]
+    pub enum WebhookScheme {
+        /// HMAC-SHA256 over the body alone: GitHub's, and most others'.
+        #[default]
+        HmacBody,
+        /// `t=<unix>,v1=<hex>` over `<t>.<body>`.
+        Stripe,
+        /// `v0=<hex>` over `v0:<timestamp>:<body>`.
+        Slack,
+    }
+}
+
+wire! {
+    /// What happened when rn sent a delivery to its own listener.
+    ///
+    /// The point of the exercise is that it is a real request over the real
+    /// socket, so this reports what any provider would have seen: the status
+    /// the listener returned and whether that counts as accepted. `detail` is
+    /// rn's own reading of it — the listener tells a stranger nothing, and this
+    /// caller is not a stranger.
+    #[serde(rename_all = "camelCase")]
+    pub struct TestDelivery {
+        /// Status the listener answered with. 202 is the ordinary success.
+        pub status: u32,
+        /// Whether the delivery was accepted — a 2xx, and nothing else.
+        pub accepted: bool,
+        /// The delivery id this test sent, so the run it produced can be found
+        /// in the history beside it.
+        pub delivery_id: String,
+        /// Bytes of body signed and sent.
+        pub bytes: u32,
+        /// Which header the proof went in, and under which scheme.
+        pub sent_as: String,
+        /// What that status means here, in a sentence. The listener refuses
+        /// without explaining itself, on purpose; this is the explanation the
+        /// operator is entitled to.
+        pub detail: String,
     }
 }
 

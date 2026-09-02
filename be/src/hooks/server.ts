@@ -29,8 +29,9 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { step, debug, warn } from "../log.ts";
 import { jobById, runJob } from "../jobs/index.ts";
+import type { Job } from "../jobs/types.ts";
 import * as secrets from "../secrets.ts";
-import { readRaw, verifyScheme, makeDeliveryLog, type DeliveryLog } from "./verify.ts";
+import { readRaw, verifyScheme, tokenMatches, makeDeliveryLog, type DeliveryLog } from "./verify.ts";
 import { parseBody } from "./body.ts";
 import type { Delivery } from "../generated/wire.ts";
 import type { JsonValue } from "../generated/serde_json/JsonValue.ts";
@@ -98,7 +99,18 @@ function refuse(res: ServerResponse, code: number): void {
     res.end(JSON.stringify({ ok: false }));
 }
 
-export function handle(deliveries: DeliveryLog) {
+/**
+ * Which job an id names.
+ *
+ * A parameter with the real registry as its default, so a test can hand this
+ * server a job that exists nowhere else. Steps 4 and 6 of docs/n8n.md §7 — a
+ * static token, and a job that answers its caller — are otherwise only
+ * reachable by adding such a job to the shipped catalogue, which is a poor
+ * reason to ship one.
+ */
+export type JobLookup = (id: string) => Job | undefined;
+
+export function handle(deliveries: DeliveryLog, lookup: JobLookup = jobById) {
     return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
         const url = new URL(req.url ?? "/", "http://localhost");
         const started = Date.now();
@@ -111,7 +123,7 @@ export function handle(deliveries: DeliveryLog) {
         }
 
         const id = decodeURIComponent(url.pathname.slice("/api/hooks/".length));
-        const job = jobById(id);
+        const job = lookup(id);
 
         // 404, not 403, and the same 404 as a path that does not exist. A job
         // that exists but has no webhook must be indistinguishable from one
@@ -159,14 +171,26 @@ export function handle(deliveries: DeliveryLog) {
         // "stale timestamp" from "wrong signature" apart has an oracle, and the
         // operator reading the log has a diagnosis — a stale timestamp is
         // nearly always a clock, not an attack.
-        const signed = verifyScheme({ scheme, raw, get: rawHeader, secret, header, prefix });
-        if (!signed.ok) {
+        //
+        // A token is checked in the same place as a signature and refused the
+        // same way, so nothing downstream has to know which a job uses. The
+        // difference is real and it is upstream of here: a token proves the
+        // sender holds a string, a signature proves these exact bytes came from
+        // them. See `Job.webhook.auth`.
+        const proven = cfg.auth?.kind === "token"
+            ? tokenMatches(rawHeader(cfg.auth.header), secret)
+                ? { ok: true as const }
+                : { ok: false as const, reason: "token did not match" }
+            : verifyScheme({ scheme, raw, get: rawHeader, secret, header, prefix });
+        if (!proven.ok) {
             warn("hook-signature-rejected", {
                 id,
-                scheme,
-                reason: signed.reason,
+                auth: cfg.auth?.kind ?? "signature",
+                ...(cfg.auth === undefined ? { scheme } : {}),
+                reason: proven.reason,
                 bytes: raw.length,
-                ...(scheme === "hmac-body" ? { header } : {}),
+                ...(cfg.auth === undefined && scheme === "hmac-body" ? { header } : {}),
+                ...(cfg.auth === undefined ? {} : { header: cfg.auth.header }),
             });
             return refuse(res, 401);
         }
@@ -219,29 +243,78 @@ export function handle(deliveries: DeliveryLog) {
         // a retry storm and mark the hook failing on their side. The cost is
         // that "the delivery was accepted" and "the job succeeded" become two
         // different statements — the run record is where the second one lives.
-        res.writeHead(202, { "content-type": "application/json" });
-        res.end(JSON.stringify({ ok: true, id: job.id }));
-        step("hook-accepted", {
-            id: job.id,
-            bytes: raw.length,
-            ...(deliveryId === undefined ? {} : { delivery: deliveryId }),
-            ...(event === undefined ? {} : { event }),
-            ms: Date.now() - started,
-        });
+        //
+        // Unless the job declared that it answers, which is the one case where
+        // the caller wants the second statement and is willing to wait a
+        // bounded time for it. Whichever way, exactly one response is written:
+        // `answer` is the only thing that writes it and it fires once.
+        let answered = false;
+        const answer = (code: number, body: unknown): void => {
+            if (answered) return;
+            answered = true;
+            res.writeHead(code, { "content-type": "application/json" });
+            res.end(JSON.stringify(body));
+            step("hook-accepted", {
+                id: job.id,
+                status: code,
+                bytes: raw.length,
+                ...(deliveryId === undefined ? {} : { delivery: deliveryId }),
+                ...(event === undefined ? {} : { event }),
+                ms: Date.now() - started,
+            });
+        };
 
-        // Nothing above awaits the run, so this is deliberately not awaited
-        // either — but it must not reject unhandled. runJob has already
-        // recorded the failure by the time it throws; this keeps the process
-        // from treating a failed automation as a fatal error.
-        void runJob(job, "webhook", undefined, {}, {
-            payload,
-            delivery: record,
-        }).catch(() => {});
+        // The run is never awaited by the response path, in either mode. In
+        // respond mode the *deadline* is awaited and the run is what might
+        // reach it first; a run that overruns is not cancelled, it just stops
+        // being able to say anything to the caller.
+        const run = (respond?: (value: JsonValue) => void): void => {
+            // Nothing above awaits this, and it must not reject unhandled:
+            // runJob has already recorded the failure by the time it throws,
+            // and an unhandled rejection would take the process down over a
+            // failed automation.
+            void runJob(job, "webhook", undefined, {}, {
+                payload,
+                delivery: record,
+                ...(respond === undefined ? {} : { respond }),
+            }).catch(() => {});
+        };
+
+        if (cfg.respond === undefined) {
+            answer(202, { ok: true, id: job.id });
+            run();
+            return;
+        }
+
+        // A job that answers. The deadline is the provider's patience, not
+        // ours: past it the ordinary 202 goes out and a later `ctx.respond` is
+        // a no-op, because the socket already has its one answer in it.
+        const deadline = setTimeout(() => {
+            if (answered) return;
+            warn("hook-response-deadline", {
+                id: job.id,
+                deadlineMs: cfg.respond?.deadlineMs,
+                effect: "answered 202 instead; the run continues and its record is where the outcome is",
+            });
+            answer(202, { ok: true, id: job.id });
+        }, cfg.respond.deadlineMs);
+        // The timer must not hold the process open on its own — a deadline is
+        // a bound on waiting, not a reason to stay alive.
+        deadline.unref?.();
+
+        run((value) => {
+            if (answered) return;
+            clearTimeout(deadline);
+            answer(200, value);
+        });
     };
 }
 
-export function createHookApp(deliveries: DeliveryLog = makeDeliveryLog()) {
-    return createServer(handle(deliveries));
+export function createHookApp(
+    deliveries: DeliveryLog = makeDeliveryLog(),
+    lookup: JobLookup = jobById,
+) {
+    return createServer(handle(deliveries, lookup));
 }
 
 /**
