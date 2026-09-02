@@ -2020,6 +2020,67 @@ fn MonitorBoards(
                             if h.tier_has_kernel(tier) {
                                 Board { title: "Kernel".to_string(),
                                 fill: true,
+                                    info: Some(rsx! {
+                                        InfoButton {
+                                            title: "Switches and file work, per second".to_string(),
+                                            what: concat!(
+                                                "Both lines are rates the operating system counted for this ",
+                                                "process, not figures the runtime reported, which is why they ",
+                                                "are drawn whichever runtime was running.\n\n",
+
+                                                "\"switches\" is context switches: every time the process ",
+                                                "stopped running on a CPU. Two kinds are added together here. ",
+                                                "A voluntary switch is the process giving up the CPU itself ",
+                                                "because it has nothing to do until something arrives — a file ",
+                                                "read, a socket, a timer. An involuntary one is the scheduler ",
+                                                "taking the CPU away mid-run because something else on the ",
+                                                "machine wanted it. A server ticking over on timers sits in the ",
+                                                "low hundreds a second; thousands means real I/O or real ",
+                                                "competition for cores.\n\n",
+
+                                                "\"fs ops\" is filesystem reads plus writes the kernel ",
+                                                "performed for it, added the same way.\n\n",
+
+                                                "Sampling is every two seconds: each reading is the count since ",
+                                                "the previous sample divided by the gap, and a bucket keeps the ",
+                                                "largest reading that fell inside it. So the busiest moment ",
+                                                "shown is really the busiest two-second sample expressed per ",
+                                                "second — a burst shorter than that is averaged into its sample ",
+                                                "and never draws at full height.",
+                                            ).to_string(),
+                                            why: concat!(
+                                                "The kernel's tallies are kept per process and start again at ",
+                                                "zero on a restart, so the counters panel above can only ever ",
+                                                "describe the process running now. Recorded as rates, these ",
+                                                "outlive it — this is where a slow run from last night can ",
+                                                "still be told apart from a busy one.\n\n",
+
+                                                "Read the two lines together and they say which. Switches ",
+                                                "climbing with fs ops is waiting: the process is asking for ",
+                                                "files and being parked until they come back, which is the case ",
+                                                "the libuv thread pool setting exists for. Switches climbing ",
+                                                "while fs ops stays flat is the machine — a build, a backup, ",
+                                                "something else wanting the cores — and nothing changed inside ",
+                                                "rn will move it.",
+                                            ).to_string(),
+                                            if_wrong: concat!(
+                                                "One scale for both, because both are counts per second, but ",
+                                                "they are rarely the same size: switches usually run well above ",
+                                                "fs ops, and a switch spike can flatten a real change in file ",
+                                                "work to a line along the axis. Compare each line against its ",
+                                                "own past, not against the other.\n\n",
+
+                                                "Voluntary and involuntary are summed here, so this line alone ",
+                                                "cannot say whether the process was waiting or being ",
+                                                "interrupted. The split is on the \"context switches\" reading ",
+                                                "in the Kernel counters board above — for the process running ",
+                                                "now, and only for that one.\n\n",
+
+                                                "A break is a stretch nothing was sampled, not a stretch that ",
+                                                "measured zero.",
+                                            ).to_string(),
+                                        }
+                                    }),
                                     Sparkline {
                                         before_start: marker,
                                         runtime_change: switch.clone(),
