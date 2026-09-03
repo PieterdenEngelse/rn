@@ -467,6 +467,8 @@ yours.
   API has no authentication, so the bind address is the whole of that security
   position; this is the ordered list of safer answers.
 - `docs/tunnel.md` — exposing the hooks listener, and only the hooks listener.
+  Includes why Smee is refused: a relay re-serialises the body and every
+  signature fails, measured rather than argued.
 - `docs/packaging.md` — shipping this as an installable app.
 - `docs/n8n.md` — what is worth borrowing from n8n and what is not, with steps.
 - `docs/todo.md` — open work, each item saying what goes wrong while it stays
