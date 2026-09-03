@@ -206,8 +206,13 @@ wire! {
         /// Filesystem operations per second over this interval. A rate, because the
         /// kernel's totals are per pid and restart at zero.
         #[serde(default, rename = "fsOpsPerSec")] pub fs_ops_per_sec: Option<f64>,
-        /// Context switches per second over this interval.
-        #[serde(default, rename = "ctxPerSec")] pub ctx_per_sec: Option<f64>,
+        /// Context switches per second over this interval, by kind. Voluntary is
+        /// the process parking itself until something arrives; forced is the
+        /// scheduler taking the CPU away for somebody else. None on samples stored
+        /// before the two were counted apart — those carried only their sum, and a
+        /// sum cannot be split afterwards.
+        #[serde(default, rename = "ctxVolPerSec")] pub ctx_vol_per_sec: Option<f64>,
+        #[serde(default, rename = "ctxInvolPerSec")] pub ctx_invol_per_sec: Option<f64>,
         /// Memory free on the machine, MB. None on samples stored before this was
         /// recorded.
         #[serde(default, rename = "hostFreeMB")] pub host_free_mb: Option<f64>,
@@ -240,8 +245,16 @@ wire! {
         #[serde(default, rename = "oldSpacePeakMB")] pub old_space_peak_mb: Option<f64>,
         /// Busiest second of filesystem work in the bucket.
         #[serde(default, rename = "fsOpsPeakPerSec")] pub fs_ops_peak_per_sec: Option<f64>,
-        /// Busiest second of context switching in the bucket.
+        /// Busiest second of context switching in the bucket, both kinds together.
+        /// Kept beside the split rather than derived from it: the busiest second
+        /// overall need not be the second either kind peaked in, so adding the two
+        /// peaks would overstate it. It is also all a bucket recorded before the
+        /// split has, and the widest tier keeps those for a year.
         #[serde(default, rename = "ctxPeakPerSec")] pub ctx_peak_per_sec: Option<f64>,
+        /// The same peak per kind. None on buckets recorded before the split, which
+        /// is why the chart draws the total for those and the two lines after.
+        #[serde(default, rename = "ctxVolPeakPerSec")] pub ctx_vol_peak_per_sec: Option<f64>,
+        #[serde(default, rename = "ctxInvolPeakPerSec")] pub ctx_invol_peak_per_sec: Option<f64>,
         /// Least free memory the machine had in the bucket.
         #[serde(default, rename = "hostFreeFloorMB")] pub host_free_floor_mb: Option<f64>,
         /// Fine samples that landed in it.

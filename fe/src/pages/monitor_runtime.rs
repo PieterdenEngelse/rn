@@ -2028,15 +2028,26 @@ fn MonitorBoards(
                                                 "process, not figures the runtime reported, which is why they ",
                                                 "are drawn whichever runtime was running.\n\n",
 
-                                                "\"switches\" is context switches: every time the process ",
-                                                "stopped running on a CPU. Two kinds are added together here. ",
+                                                "\"voluntary\" and \"forced\" are context switches: every time ",
+                                                "the process stopped running on a CPU. They are two different ",
+                                                "events and are drawn as two lines, because their sum says how ",
+                                                "often the process stopped and never why.\n\n",
+
                                                 "A voluntary switch is the process giving up the CPU itself ",
                                                 "because it has nothing to do until something arrives — a file ",
-                                                "read, a socket, a timer. An involuntary one is the scheduler ",
-                                                "taking the CPU away mid-run because something else on the ",
-                                                "machine wanted it. A server ticking over on timers sits in the ",
-                                                "low hundreds a second; thousands means real I/O or real ",
-                                                "competition for cores.\n\n",
+                                                "read, a socket, a timer. A forced one is the scheduler taking ",
+                                                "the CPU away mid-run because something else on the machine ",
+                                                "wanted it. A server ticking over on timers sits in the low ",
+                                                "hundreds a second between them; thousands means real I/O or ",
+                                                "real competition for cores, and which line carries it is the ",
+                                                "difference between a busy program and a crowded machine.\n\n",
+
+                                                "A third line, \"switches, unsplit\", is drawn only over buckets ",
+                                                "recorded before the two kinds were counted apart: those hold ",
+                                                "the total and nothing else, and a sum cannot be taken apart ",
+                                                "afterwards. It stops where the split begins and leaves the ",
+                                                "legend altogether once that stretch has aged out of the ",
+                                                "window.\n\n",
 
                                                 "\"fs ops\" is filesystem reads plus writes the kernel ",
                                                 "performed for it, added the same way.\n\n",
@@ -2055,26 +2066,32 @@ fn MonitorBoards(
                                                 "outlive it — this is where a slow run from last night can ",
                                                 "still be told apart from a busy one.\n\n",
 
-                                                "Read the two lines together and they say which. Switches ",
-                                                "climbing with fs ops is waiting: the process is asking for ",
-                                                "files and being parked until they come back, which is the case ",
-                                                "the libuv thread pool setting exists for. Switches climbing ",
-                                                "while fs ops stays flat is the machine — a build, a backup, ",
-                                                "something else wanting the cores — and nothing changed inside ",
-                                                "rn will move it.",
+                                                "Which line moved is the answer. Voluntary climbing, with fs ",
+                                                "ops climbing beside it, is the process waiting: it is asking ",
+                                                "for files and being parked until they come back, which is the ",
+                                                "case the libuv thread pool setting exists for. Forced climbing ",
+                                                "is the machine — a build, a backup, something else wanting the ",
+                                                "cores — and nothing changed inside rn will move it.\n\n",
+
+                                                "Summed, as this board drew them until now, those two shapes ",
+                                                "were one line and telling them apart meant reading the live ",
+                                                "counters above, which can only ever describe the process ",
+                                                "running now. This is the same distinction, kept for as long as ",
+                                                "the history is.",
                                             ).to_string(),
                                             if_wrong: concat!(
-                                                "One scale for both, because both are counts per second, but ",
-                                                "they are rarely the same size: switches usually run well above ",
-                                                "fs ops, and a switch spike can flatten a real change in file ",
-                                                "work to a line along the axis. Compare each line against its ",
-                                                "own past, not against the other.\n\n",
+                                                "One scale for all of them, because they are all counts per ",
+                                                "second, but they are rarely the same size: voluntary switches ",
+                                                "usually run well above both fs ops and forced ones, and one ",
+                                                "spike in it can flatten a real change in the others to a line ",
+                                                "along the axis. Compare each line against its own past, not ",
+                                                "against its neighbours.\n\n",
 
-                                                "Voluntary and involuntary are summed here, so this line alone ",
-                                                "cannot say whether the process was waiting or being ",
-                                                "interrupted. The split is on the \"context switches\" reading ",
-                                                "in the Kernel counters board above — for the process running ",
-                                                "now, and only for that one.\n\n",
+                                                "So a forced line lying flat near zero is worth reading twice. ",
+                                                "Flat on this scale can mean a handful a second rather than ",
+                                                "none, and on an idle machine that is the honest answer — this ",
+                                                "process was never interrupted. A break is different again, and ",
+                                                "means nothing was sampled.\n\n",
 
                                                 "A break is a stretch nothing was sampled, not a stretch that ",
                                                 "measured zero.",
@@ -2087,21 +2104,58 @@ fn MonitorBoards(
                                         unit: "/s".to_string(),
                                         fill_height: true,
                                         height: 120,
-                                        series: vec![
-                                            Series {
+                                        series: {
+                                            let mut v = vec![Series {
                                                 label: "fs ops".to_string(),
                                                 color: "#22d3ee".to_string(),
                                                 points: tier.buckets.iter().map(|b| b.fs_ops_peak_per_sec).collect(),
-                                            },
-                                            Series {
-                                                label: "switches".to_string(),
-                                                color: "#f59e0b".to_string(),
-                                                points: tier.buckets.iter().map(|b| b.ctx_peak_per_sec).collect(),
-                                            },
-                                        ],
+                                            }];
+                                            if h.tier_has_ctx_split(tier) {
+                                                v.push(Series {
+                                                    label: "voluntary".to_string(),
+                                                    color: "#f59e0b".to_string(),
+                                                    points: tier.buckets.iter().map(|b| b.ctx_vol_peak_per_sec).collect(),
+                                                });
+                                                v.push(Series {
+                                                    label: "forced".to_string(),
+                                                    color: "#f87171".to_string(),
+                                                    points: tier.buckets.iter().map(|b| b.ctx_invol_peak_per_sec).collect(),
+                                                });
+                                            }
+                                            // The total, and only where there is
+                                            // no split to draw instead: buckets
+                                            // recorded before the two kinds were
+                                            // counted apart keep the one reading
+                                            // they have rather than becoming a
+                                            // hole in the board. Under its own
+                                            // name and its own colour, so it
+                                            // cannot be mistaken for either kind,
+                                            // and gone from the legend once that
+                                            // history has rotated out.
+                                            if h.tier_has_ctx_total_only(tier) {
+                                                v.push(Series {
+                                                    label: "switches, unsplit".to_string(),
+                                                    color: "#9ca3af".to_string(),
+                                                    points: tier
+                                                        .buckets
+                                                        .iter()
+                                                        .map(|b| {
+                                                            if b.ctx_vol_peak_per_sec.is_none()
+                                                                && b.ctx_invol_peak_per_sec.is_none()
+                                                            {
+                                                                b.ctx_peak_per_sec
+                                                            } else {
+                                                                None
+                                                            }
+                                                        })
+                                                        .collect(),
+                                                });
+                                            }
+                                            v
+                                        },
                                     }
                                     p { class: "text-[10px] text-gray-400",
-                                        "busiest second in each bucket — file work and time given up waiting"
+                                        "busiest second in each bucket — file work, time given up waiting, and time taken away"
                                     }
                                 }
                             }

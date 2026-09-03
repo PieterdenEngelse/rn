@@ -81,6 +81,22 @@ pub trait NodeHistoryView {
     /// follows what was recorded, not what the current runtime can record.
     fn tier_has_handles(&self, tier: &HistoryTier) -> bool;
 
+    /// Whether a tier holds any bucket with the two kinds of context switch
+    /// counted apart.
+    fn tier_has_ctx_split(&self, tier: &HistoryTier) -> bool;
+
+    /// Whether a tier holds any bucket with a switch total and no split —
+    /// recorded before the two kinds were counted apart.
+    ///
+    /// Asked separately from [`Self::tier_has_ctx_split`] because both can be
+    /// true at once, and that is the ordinary case for a while after the split
+    /// arrives: the old buckets keep the only reading they ever had, the new
+    /// ones carry both kinds, and the chart draws each where it exists rather
+    /// than dropping either. A sum cannot be taken apart afterwards, so the
+    /// alternative would be a break in the line covering everything recorded
+    /// before today.
+    fn tier_has_ctx_total_only(&self, tier: &HistoryTier) -> bool;
+
     /// Where in the drawn series this process began, as a fraction of its
     /// width. Everything left of it was recorded by an earlier run, restored
     /// from disk — same numbers, different process, and worth a line saying so
@@ -152,6 +168,20 @@ impl NodeHistoryView for NodeHistory {
 
     fn tier_has_handles(&self, tier: &HistoryTier) -> bool {
         tier.buckets.iter().any(|b| b.handles_peak.is_some())
+    }
+
+    fn tier_has_ctx_split(&self, tier: &HistoryTier) -> bool {
+        tier.buckets
+            .iter()
+            .any(|b| b.ctx_vol_peak_per_sec.is_some() || b.ctx_invol_peak_per_sec.is_some())
+    }
+
+    fn tier_has_ctx_total_only(&self, tier: &HistoryTier) -> bool {
+        tier.buckets.iter().any(|b| {
+            b.ctx_peak_per_sec.is_some()
+                && b.ctx_vol_peak_per_sec.is_none()
+                && b.ctx_invol_peak_per_sec.is_none()
+        })
     }
 
     fn before_start_fraction(&self) -> f64 {
@@ -459,6 +489,8 @@ mod tests {
         assert!(!h.tier_has_cpu_wait(&empty));
         assert!(!h.tier_has_kernel(&empty));
         assert!(!h.tier_has_handles(&empty));
+        assert!(!h.tier_has_ctx_split(&empty));
+        assert!(!h.tier_has_ctx_total_only(&empty));
 
         let full = tier(json!({
             "id": "hour", "label": "Hour", "bucketMs": 60_000.0, "capacity": 60,
@@ -472,6 +504,38 @@ mod tests {
         assert!(h.tier_has_cpu_wait(&full));
         assert!(h.tier_has_kernel(&full));
         assert!(h.tier_has_handles(&full));
+    }
+
+    #[test]
+    fn a_tier_can_hold_both_shapes_of_switch_reading() {
+        // The ordinary state for a while after the split arrived: old buckets
+        // with only the total, new ones with both kinds. Both predicates are
+        // true, and the chart draws the old line and the two new ones.
+        let h = with_samples(vec![sample(0.0, None)], "node", 0.0);
+        let mixed = tier(json!({
+            "id": "year", "label": "Year", "bucketMs": 86_400_000.0, "capacity": 365,
+            "buckets": [
+                { "t": 0.0, "heapFloorMB": 1.0, "rssPeakMB": 2.0, "n": 1,
+                  "ctxPeakPerSec": 900.0 },
+                { "t": 1.0, "heapFloorMB": 1.0, "rssPeakMB": 2.0, "n": 1,
+                  "ctxPeakPerSec": 900.0, "ctxVolPeakPerSec": 880.0,
+                  "ctxInvolPeakPerSec": 30.0 },
+            ],
+        }));
+        assert!(h.tier_has_ctx_split(&mixed));
+        assert!(h.tier_has_ctx_total_only(&mixed));
+
+        // A bucket carrying the split is not "total only", even though it has
+        // a total as well — that is what keeps the legacy line from being
+        // redrawn over history that has the real thing.
+        let split = tier(json!({
+            "id": "hour", "label": "Hour", "bucketMs": 60_000.0, "capacity": 60,
+            "buckets": [{ "t": 0.0, "heapFloorMB": 1.0, "rssPeakMB": 2.0, "n": 1,
+                          "ctxPeakPerSec": 900.0, "ctxVolPeakPerSec": 880.0,
+                          "ctxInvolPeakPerSec": 30.0 }],
+        }));
+        assert!(h.tier_has_ctx_split(&split));
+        assert!(!h.tier_has_ctx_total_only(&split));
     }
 
     #[test]

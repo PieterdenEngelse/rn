@@ -80,7 +80,11 @@ const HANDLES_MEASURED = RUNTIME !== "bun";
  */
 let lastUsage = process.resourceUsage();
 
-function kernelRates(elapsedMs: number): { fsOpsPerSec: number; ctxPerSec: number } {
+function kernelRates(elapsedMs: number): {
+    fsOpsPerSec: number;
+    ctxVolPerSec: number;
+    ctxInvolPerSec: number;
+} {
     const now = process.resourceUsage();
     const per = (a: number, b: number): number => {
         // A restart cannot appear here — the module is loaded once per process —
@@ -90,15 +94,36 @@ function kernelRates(elapsedMs: number): { fsOpsPerSec: number; ctxPerSec: numbe
         const delta = Math.max(0, a - b);
         return Number(((delta * 1000) / elapsedMs).toFixed(1));
     };
+    // The two kinds of switch are kept apart rather than added up. Their sum
+    // says how often the process stopped running; only the split says why, and
+    // the two answers point at different machines: voluntary is this process
+    // waiting for something, involuntary is the scheduler taking the CPU away
+    // for somebody else. Summed, a quiet process doing heavy I/O and a starved
+    // process fighting for cores draw the same line.
     const out = {
         fsOpsPerSec:
             per(now.fsRead, lastUsage.fsRead) + per(now.fsWrite, lastUsage.fsWrite),
-        ctxPerSec:
-            per(now.voluntaryContextSwitches, lastUsage.voluntaryContextSwitches) +
-            per(now.involuntaryContextSwitches, lastUsage.involuntaryContextSwitches),
+        ctxVolPerSec: per(
+            now.voluntaryContextSwitches,
+            lastUsage.voluntaryContextSwitches,
+        ),
+        ctxInvolPerSec: per(
+            now.involuntaryContextSwitches,
+            lastUsage.involuntaryContextSwitches,
+        ),
     };
     lastUsage = now;
     return out;
+}
+
+/**
+ * Both kinds together, as the bucket's total.
+ *
+ * Rounded again: each half is already to one decimal, and adding two of those
+ * in binary floating point gives 112.89999999999999 as readily as 112.9.
+ */
+function ctxTotal(x: Sample): number {
+    return Number((x.ctxVolPerSec + x.ctxInvolPerSec).toFixed(1));
 }
 
 function oldSpaceUsedMB(): number | null {
@@ -207,8 +232,20 @@ export interface Bucket {
     oldSpacePeakMB?: number | null;
     /** Busiest second of filesystem work in the bucket, ops/s. */
     fsOpsPeakPerSec?: number | null;
-    /** Busiest second of context switching in the bucket, switches/s. */
+    /**
+     * Busiest second of context switching in the bucket, switches/s: the total,
+     * then each kind on its own.
+     *
+     * The total is kept rather than derived, because a peak does not add up:
+     * the busiest second of switching overall need not be the second either
+     * kind peaked in, so vol + invol would overstate it. It is also the only
+     * reading buckets recorded before the split have, and those live for up to
+     * a year in the widest tier.
+     */
     ctxPeakPerSec?: number | null;
+    /** Absent on buckets recorded before the two kinds were counted apart. */
+    ctxVolPeakPerSec?: number | null;
+    ctxInvolPeakPerSec?: number | null;
     /** How many fine samples landed in it — 0 buckets are never stored. */
     n: number;
     /**
@@ -251,8 +288,19 @@ function maxOrNull(
     return Math.max(a, b);
 }
 
-/** Fold one fine sample into every tier. */
-function record(x: Sample): void {
+/**
+ * Fold one fine sample into every tier.
+ *
+ * Exported for its test rather than for any caller: this is the one place a
+ * bucket's readings are combined, and it is otherwise reachable only from a
+ * timer. A merge that writes the wrong number here says nothing at the time.
+ * `hostFreeFloorMB` was assigned the old-space peak for weeks — every bucket
+ * that saw more than one sample recorded the machine as having tens of MB free
+ * — and nothing caught it, because no page draws that series yet. It was
+ * written to disk, sent to the browser and ignored, and would have become a
+ * plausible-looking line the day somebody plotted it.
+ */
+export function record(x: Sample): void {
     for (const tier of TIERS) {
         const buckets = tierData.get(tier.id)!;
         const start = Math.floor(x.t / tier.bucketMs) * tier.bucketMs;
@@ -267,12 +315,16 @@ function record(x: Sample): void {
             last.handlesPeak = maxOrNull(last.handlesPeak, x.handles);
             last.oldSpacePeakMB = maxOrNull(last.oldSpacePeakMB, x.oldSpaceMB);
             last.fsOpsPeakPerSec = maxOrNull(last.fsOpsPeakPerSec, x.fsOpsPerSec);
-            last.ctxPeakPerSec = maxOrNull(last.ctxPeakPerSec, x.ctxPerSec);
+            last.ctxPeakPerSec = maxOrNull(last.ctxPeakPerSec, ctxTotal(x));
+            last.ctxVolPeakPerSec = maxOrNull(last.ctxVolPeakPerSec, x.ctxVolPerSec);
+            last.ctxInvolPeakPerSec = maxOrNull(
+                last.ctxInvolPeakPerSec,
+                x.ctxInvolPerSec,
+            );
+            // The floor, not a max: free memory is the one reading here that
+            // matters at its lowest.
             last.hostFreeFloorMB =
-                last.oldSpacePeakMB = maxOrNull(last.oldSpacePeakMB, x.oldSpaceMB);
-            last.fsOpsPeakPerSec = maxOrNull(last.fsOpsPeakPerSec, x.fsOpsPerSec);
-            last.ctxPeakPerSec = maxOrNull(last.ctxPeakPerSec, x.ctxPerSec);
-            last.hostFreeFloorMB == null
+                last.hostFreeFloorMB == null
                     ? x.hostFreeMB
                     : Math.min(last.hostFreeFloorMB, x.hostFreeMB);
             last.n += 1;
@@ -296,7 +348,9 @@ function record(x: Sample): void {
             hostFreeFloorMB: x.hostFreeMB,
             oldSpacePeakMB: x.oldSpaceMB,
             fsOpsPeakPerSec: x.fsOpsPerSec,
-            ctxPeakPerSec: x.ctxPerSec,
+            ctxPeakPerSec: ctxTotal(x),
+            ctxVolPeakPerSec: x.ctxVolPerSec,
+            ctxInvolPeakPerSec: x.ctxInvolPerSec,
             n: 1,
             rt: x.rt,
         });
@@ -358,8 +412,24 @@ export interface Sample {
      * the chart. Rates either side of a restart are directly comparable.
      */
     fsOpsPerSec: number;
-    /** Context switches per second, voluntary and forced together. Same reasoning. */
-    ctxPerSec: number;
+    /**
+     * Context switches per second — every time the process stopped running on a
+     * CPU — split by which kind. Rates rather than the kernel's totals, for the
+     * same reason as the line above.
+     *
+     * Voluntary is the process giving up the CPU itself because it has nothing
+     * to do until something arrives: a file read, a socket, a timer. Forced is
+     * the scheduler taking the CPU away mid-run because something else on the
+     * machine wanted it. A server ticking over on timers sits in the low
+     * hundreds a second; thousands means real I/O or real competition for
+     * cores, and which of those it is is exactly what the split answers.
+     *
+     * Samples written before the split carried `ctxPerSec`, their sum. They are
+     * not converted: five minutes of fine samples rotate out on their own, and
+     * a sum cannot be taken apart afterwards anyway.
+     */
+    ctxVolPerSec: number;
+    ctxInvolPerSec: number;
     /**
      * Which runtime measured it. Absent on samples written before this existed;
      * see RUNTIME above for why the same field means different things under

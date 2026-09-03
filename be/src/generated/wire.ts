@@ -42,9 +42,18 @@ oldSpacePeakMB: number | null,
  */
 fsOpsPeakPerSec: number | null, 
 /**
- * Busiest second of context switching in the bucket.
+ * Busiest second of context switching in the bucket, both kinds together.
+ * Kept beside the split rather than derived from it: the busiest second
+ * overall need not be the second either kind peaked in, so adding the two
+ * peaks would overstate it. It is also all a bucket recorded before the
+ * split has, and the widest tier keeps those for a year.
  */
 ctxPeakPerSec: number | null, 
+/**
+ * The same peak per kind. None on buckets recorded before the split, which
+ * is why the chart draws the total for those and the two lines after.
+ */
+ctxVolPeakPerSec: number | null, ctxInvolPeakPerSec: number | null, 
 /**
  * Least free memory the machine had in the bucket.
  */
@@ -503,9 +512,13 @@ oldSpaceMB: number | null,
  */
 fsOpsPerSec: number | null, 
 /**
- * Context switches per second over this interval.
+ * Context switches per second over this interval, by kind. Voluntary is
+ * the process parking itself until something arrives; forced is the
+ * scheduler taking the CPU away for somebody else. None on samples stored
+ * before the two were counted apart — those carried only their sum, and a
+ * sum cannot be split afterwards.
  */
-ctxPerSec: number | null, 
+ctxVolPerSec: number | null, ctxInvolPerSec: number | null, 
 /**
  * Memory free on the machine, MB. None on samples stored before this was
  * recorded.
