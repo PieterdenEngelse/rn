@@ -682,13 +682,20 @@ const INT_WHY: &str =
      IDLE.";
 
 const INT_IF_WRONG: &str =
-    "The inbound half fails quietly, and it did not stop doing so when it started working. A \
-     dead tunnel, a missing secret and a hook nobody ever declared are three different faults \
-     that look identical from the provider's side, because a rejection deliberately says \
-     nothing a prober could use. The backend log is where they separate — \
-     hook-signature-rejected, hook-secret-missing, hook-not-found, hook-replayed — and the \
-     Webhooks board colours the missing-secret case, which is the one that reads as healthy \
-     from here while rejecting every delivery.\n\nThe outbound half fails honestly by \
+    "The inbound half fails quietly, and it did not stop doing so when it started working. No \
+     refusal ever says why — the body is {\"ok\":false} whatever went wrong, because a reason \
+     is exactly what someone probing the secret would want.\n\nThe status is coarser than the \
+     fault, and in one place that is the point. A hook nobody declared answers 404, the same \
+     404 as any unknown path, so the endpoint cannot be used to enumerate the catalogue. A \
+     missing credential and a wrong signature both answer 401, and that is the pair which \
+     genuinely collapses: from the sender's side they are one event, and the backend log is \
+     the only place hook-secret-missing and hook-signature-rejected part company. A repeated \
+     delivery id answers 409, which only a sender holding the secret ever sees — the replay \
+     check runs after the signature, so an unauthenticated caller cannot fill the log with \
+     ids of their choosing.\n\nA dead tunnel is none of these. It is no answer at all, and \
+     the provider's own delivery log is the only place it shows.\n\nThe Webhooks board \
+     colours the missing-secret case, because it is the one that reads as healthy from here \
+     while rejecting every delivery.\n\nThe outbound half fails honestly by \
      comparison: under Deno a host outside the grant is refused by the runtime, with the host \
      named in the error.\n\nWidening the bind address changes none of these verdicts. See \
      docs/network.md: the API still has no authentication, and the reason one route can face \
