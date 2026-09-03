@@ -351,8 +351,8 @@ fn Integrations(conn: ConnectionResponse) -> Element {
                     facts: vec![
                         "a long-lived token obtained elsewhere works like any other credential"
                             .to_string(),
-                        "the authorization-code flow needs a redirect URI the provider can \
-                         reach — the same wall as a webhook".to_string(),
+                        "the authorization-code flow ends in an unsigned inbound GET, which \
+                         the hooks listener deliberately does not serve".to_string(),
                         "a refreshed token has nowhere to be written back: the credentials \
                          file is read-only from here".to_string(),
                     ],
@@ -655,27 +655,45 @@ const REACT_IF_WRONG: &str =
 
 const INT_WHAT: &str =
     "The four shapes an integration with an outside service takes, and whether this install can \
-     be each one. Webhooks and the OAuth authorization flow are inbound: the other side needs \
-     to reach you. IMAP and an ordinary API call are outbound: you reach it. rn can do the \
-     second kind and not the first, and every verdict on this row is that one fact applied \
-     four times.\n\nThe boards read against each other on purpose. \"Can I integrate with X\" \
-     is nearly always answered by which of these four X uses, not by anything about X.";
+     be each one.\n\nDirection is what separates them. Webhooks and the OAuth authorization \
+     flow are inbound: the other side has to reach you. IMAP and an ordinary API call are \
+     outbound: you reach it, and outbound was never the difficulty.\n\nInbound used to be the \
+     whole answer — there was no address to give anyone. There is one now, for exactly one \
+     route: a tunnel client opens an outbound connection from this machine and a provider's \
+     push arrives back down it, into a listener serving POST /api/hooks/:id and nothing else. \
+     So webhooks work, and the API port is still exposed to nobody.\n\nThat leaves the OAuth \
+     redirect as the one inbound shape still out of reach, and no longer for want of an \
+     address: it is an unsigned GET, and a listener that accepted one would have given up the \
+     property that made publishing the first route survivable.\n\nThe boards read against each \
+     other on purpose. \"Can I integrate with X\" is nearly always answered by which of these \
+     four X uses, not by anything about X.";
 
 const INT_WHY: &str =
-    "Because the answer is otherwise found by building the thing and watching it not work. A \
-     provider's docs will offer a webhook first — it is the better design, on a server — and \
-     nothing about the offer says it needs an address you do not have. That discovery belongs \
-     on a page, before the job is written.\n\nIt also names the substitution that does work, \
-     which is the part a plain refusal leaves out: almost every push integration has a polled \
-     equivalent, usually a list endpoint with a since parameter, and it costs you one interval \
-     of latency rather than the integration.";
+    "Because the answer is otherwise found by building the thing and watching it not work, and \
+     which shape a provider uses is decided before a line of the job is written.\n\nIt is also \
+     where the conditions live that a bare \"yes, that works\" drops. A webhook wants a tunnel \
+     pointed at the hooks port and a signature on every delivery; there is no unsigned mode to \
+     fall back to while testing. An outbound call wants its host in the grant, which is a \
+     convention under Node and a refusal from the runtime under Deno.\n\nAnd the substitution \
+     is still worth knowing now that push works, because it is often the better trade rather \
+     than the consolation: almost every push integration has a polled equivalent, usually a \
+     list endpoint with a since parameter. It costs one interval of latency and needs no \
+     inbound anything — which is why IMAP is drawn here as a fetch on a schedule and not as \
+     IDLE.";
 
 const INT_IF_WRONG: &str =
-    "The failure is silent by construction. A webhook configured against an address that \
-     cannot be reached fires into nothing, and the only record is the sender's own delivery \
-     log — nothing here ever knew it was supposed to receive something.\n\nWiden the bind and \
-     these verdicts change, but not by as much as it looks: see docs/network.md, and note that \
-     an inbound route would still have to be written and authenticated.";
+    "The inbound half fails quietly, and it did not stop doing so when it started working. A \
+     dead tunnel, a missing secret and a hook nobody ever declared are three different faults \
+     that look identical from the provider's side, because a rejection deliberately says \
+     nothing a prober could use. The backend log is where they separate — \
+     hook-signature-rejected, hook-secret-missing, hook-not-found, hook-replayed — and the \
+     Webhooks board colours the missing-secret case, which is the one that reads as healthy \
+     from here while rejecting every delivery.\n\nThe outbound half fails honestly by \
+     comparison: under Deno a host outside the grant is refused by the runtime, with the host \
+     named in the error.\n\nWidening the bind address changes none of these verdicts. See \
+     docs/network.md: the API still has no authentication, and the reason one route can face \
+     the internet is that it is one signed route on a listener of its own — not that anything \
+     was opened up.";
 
 const WEBHOOK_WHAT: &str =
     "The provider makes an HTTP request the moment something happens, and rn now accepts one: \
@@ -772,7 +790,11 @@ const OAUTH_WHAT: &str =
      credential: put it in ~/.config/rn/credentials and read it with [[ctx]].secret, exactly like \
      any other.\n\nThe authorization-code flow is the other thing: the provider redirects a \
      browser back to a URI you registered, with a code in it. That redirect is an inbound \
-     request, so it hits the same wall as a webhook.";
+     request — and it is not the wall a webhook used to hit, since a tunnel could carry it \
+     here as easily as a push. It is what the listener on the other end is: one route, one \
+     method, and a signature required on every call. An OAuth redirect is an unsigned GET to \
+     a different path, and serving it would mean a route that verifies nothing, on the \
+     listener whose whole safety is that it verifies everything.";
 
 const OAUTH_WHY: &str =
     "The distinction is worth drawing because \"does it support OAuth\" has two answers and \
