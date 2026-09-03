@@ -312,7 +312,9 @@ Detail, measured sizes and the build checklist: `docs/packaging.md`.
 Look at it, for anything visual, rather than inferring the page from API
 payloads. A route rename, a value wrapping mid-number, a panel heading that
 contradicts its contents — none show up in the data, and all have shipped here
-because the data looked right.
+because the data looked right. Two more joined that list in one session: rows
+wrapping so a control left its own row, and prose still saying a tile was "at
+the bottom" after it had moved to the top.
 
     chromium --headless=new --no-sandbox --disable-gpu --hide-scrollbars \
       --window-size=1400,2000 --virtual-time-budget=30000 \
@@ -320,6 +322,31 @@ because the data looked right.
 
 The PNG can be read directly. The user's own screenshots come off the clipboard
 with `xclip -selection clipboard -t image/png -o > /tmp/p.png`.
+
+**Ask before you look, and batch what you look at.** The rule above is about
+what to trust, not about how often to reach for a browser, and the two were
+being read as one thing. The image is cheap — nine of them came to about 14K
+tokens. The *loop* around them is not: build, wait, shoot, crop, read, tweak,
+repeat, with each shot a near-duplicate of the one before. That loop was a large
+share of 398 shell calls in a single session, and since every turn re-sends the
+whole conversation, round-trips are the cost rather than payload. So: make every
+pending change first, then look once, and say what you would be checking rather
+than deciding alone that it is worth the trip.
+
+**Most questions do not need a picture.** `cargo check`, `./scripts/check.sh`
+and `curl` against the endpoint answer more than they get credit for, and for
+markup specifically there is a cheap middle step — dump the DOM and grep it,
+which needs no rasterising and no memory:
+
+    chromium --headless=new --no-sandbox --disable-gpu --window-size=900,700 \
+      --virtual-time-budget=20000 --dump-dom http://localhost:PORT/... > /tmp/d.html
+    grep -o '<input[^>]*type="password"[^>]*>' /tmp/d.html
+
+That is how "is the field write-only" and "does the page ever render this value"
+were answered without a single screenshot. It settles anything expressible as a
+string in the markup. It cannot settle whether a row wraps, whether two panels
+line up, or whether a heading contradicts what is under it — those are what a
+picture is for, and what to spend one on.
 
 **A screenshot saved inside the repository is ignored whatever you call it.**
 `.gitignore` covers `*.png`, so a shot dropped anywhere in the tree cannot ride
