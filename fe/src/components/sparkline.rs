@@ -172,7 +172,19 @@ pub fn Sparkline(
             // board shrank to fit what was left, and the labels were drawn over
             // the board beside it.
             div { class: if fill_height { "flex gap-4 flex-1 min-h-0" } else { "flex gap-4" },
-            div { class: if fill_height { "relative flex-1 min-h-0" } else { "relative flex-1" },
+            // `height` is a floor here, not a target. `flex-1` alone asks the
+            // parent column for its leftover, and a board whose parent has no
+            // height of its own has none to give: the plot resolves to zero and
+            // the board draws a legend under a title with nothing between them.
+            // That is what the History boards did — the svg was in the page,
+            // its polylines carried real coordinates, and the box holding them
+            // was a few pixels tall. So the box may grow past `height` when
+            // there is room, and may not shrink below it when there is not,
+            // which also makes the fixed and the stretched plot agree on a
+            // minimum instead of differing by everything.
+            div {
+                class: if fill_height { "relative flex-1" } else { "relative flex-1" },
+                style: if fill_height { "min-height: {height}px" } else { "" },
                 svg {
                     class: if fill_height { "absolute inset-0 w-full h-full" } else { "" },
                     width: "100%",
