@@ -438,7 +438,19 @@ fn JobConfigRow(
                 dt { class: "text-gray-400", "Credentials" }
                 dd { class: "text-gray-300 flex items-center gap-2 flex-wrap",
                     if job.credentials.is_empty() {
-                        span { class: "text-gray-400", "none — this job authenticates to nothing" }
+                        // "nothing" is only true when there is no webhook row
+                        // above saying otherwise. A card that named a signing
+                        // secret and then said the job authenticates to nothing
+                        // contradicted itself, in two rows a centimetre apart —
+                        // the webhook's credential is declared on the webhook,
+                        // not in this list, and the page has to say which.
+                        if job.webhook.is_some() {
+                            span { class: "text-gray-400",
+                                "none of its own — the secret above is declared by the webhook, not here"
+                            }
+                        } else {
+                            span { class: "text-gray-400", "none — this job authenticates to nothing" }
+                        }
                     } else {
                         for c in job.credentials.iter() {
                             span {
