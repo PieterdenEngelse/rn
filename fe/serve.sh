@@ -96,6 +96,14 @@ fi
 # tree, correctly, so a pane running ./s quietly stopped every landing from
 # reaching the checkout it was serving. Observed on ~/rn, two commits behind
 # main with one generated file as the only thing in its way.
+# Built once, synchronously, before anything is served. The watcher only reacts
+# to *changes*, so on its own it leaves whatever the last one wrote — and if that
+# was a watcher running an older css:watch line, the first paint uses the wrong
+# file and a `git status` reports a modified tree nobody touched. Restarting this
+# script is then the whole remedy, which is the property worth having and was not
+# true before. About a third of a second.
+npm run css:build >/dev/null 2>&1 || echo "serve.sh: css:build failed — the page may be unstyled" >&2
+
 fifo="$(mktemp -u)"
 mkfifo "$fifo"
 npm run css:watch < "$fifo" >/dev/null 2>&1 &
