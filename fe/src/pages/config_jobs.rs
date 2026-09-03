@@ -411,14 +411,21 @@ fn JobConfigRow(
                     dd { class: "text-gray-300 flex items-center gap-2 flex-wrap",
                         span { "POST /api/hooks/" code { "{job.id}" } }
                         span { class: "text-gray-400", "— {webhook_proof(&w)}" }
+                        // The state, and where to act on it — not a second
+                        // copy of how credentials work. The Webhooks tile at
+                        // the top of this page carries a Credentials board that
+                        // can set this one, and repeating its instructions here
+                        // is how two descriptions of one mechanism start to
+                        // disagree.
                         span {
                             class: if w.secret_set { "text-gray-300" } else { "text-red-400" },
                             if w.secret_set {
-                                "{w.credential} is set"
+                                "signed with {w.credential}, which is set"
                             } else {
-                                "{w.credential} is not set — put it in {w.env_var}"
+                                "signed with {w.credential}, which is not set — set it in Credentials, in the tile at the top"
                             }
                         }
+                        code { class: "text-gray-400 text-xs", "{w.env_var}" }
                         InfoButton {
                             title: "Where a webhook secret comes from".to_string(),
                             what: WEBHOOK_SECRET_WHAT.to_string(),
@@ -557,13 +564,16 @@ fn webhook_proof(w: &WebhookInfo) -> String {
 const WEBHOOK_SECRET_WHAT: &str =
     "A value you choose, not one rn issues and not one the provider gives you. It is a shared \
      secret: the same string goes in two places — this machine, and the provider's webhook \
-     settings — and each delivery is signed with it so the listener can tell a real delivery \
-     from anyone else who found the URL.\n\nThat is the opposite direction from a credential \
-     like githubToken, which GitHub issues and you paste in. Here you invent it. Any long random \
-     string does; `openssl rand -hex 32` is the usual way, and length is the only property that \
-     matters.\n\nWhere it goes: ~/.config/rn/credentials, as one line reading \
-     RN_SECRET_<NAME>=value, with the exact variable named on this row. The launcher reads that \
-     file at startup, so a new value needs a restart before the listener checks against it.";
+     settings — and every delivery is signed with it so the listener can tell a real one from \
+     anyone else who found the URL.\n\nThat is the opposite direction from a credential like \
+     githubToken, which GitHub issues and you paste in. Here you invent it, and nothing checks \
+     your choice: any long random string does, `openssl rand -hex 32` is the usual way, and \
+     length is the only property that matters.\n\nSet it in the Credentials board, inside the \
+     Webhooks tile at the top of this page. Typed there it applies immediately — the backend \
+     puts it in its own environment first and writes ~/.config/rn/credentials second, so the \
+     next delivery is checked against it and it survives a restart. The variable named on this \
+     row is the same one, for anyone editing that file by hand instead; a value written straight \
+     into the file is not read until the launcher restarts.";
 
 const WEBHOOK_SECRET_WHY: &str =
     "Because the hooks listener is the one part of rn a stranger can reach, and its URL is a \
@@ -575,18 +585,20 @@ const WEBHOOK_SECRET_WHY: &str =
      before that.";
 
 const WEBHOOK_SECRET_IF_WRONG: &str =
-    "This page will not tell you the value, and neither will any other — not a prefix, not a \
-     length. Displaying a secret is a broadcast rather than a read: it lands in a screenshot, a \
-     scrollback, a screen share. See docs/token-sec.md.\n\nSo if you have forgotten it, there \
-     are two honest answers. Read it out of ~/.config/rn/credentials yourself, which is a \
-     plaintext file this account owns — the same access that would let you change it. Or replace \
-     it: generate a new value, write it to the file, restart, and paste the same string into the \
-     provider. Rotating is usually quicker than remembering, and it is the only answer that also \
-     covers a secret you are unsure about.\n\nA mismatch between the two copies reads as a \
-     wrong signature: every delivery is refused 401 and the backend log says \
-     hook-signature-rejected. Set here but not at the provider looks identical to the reverse, \
-     which is why the fix is to write both ends from one freshly generated value rather than to \
-     work out which side is stale.";
+    "No page here will tell you the value — not a prefix, not a length. Displaying a secret is a \
+     broadcast rather than a read: it lands in a screenshot, a scrollback, a screen share. See \
+     docs/token-sec.md.\n\nSo a forgotten value has two honest answers. Read it out of \
+     ~/.config/rn/credentials yourself, which is a plaintext file this account owns — the same \
+     access that would let you change it. Or replace it: set a fresh value in the Credentials \
+     board and paste the same string into the provider. Rotating is usually quicker than \
+     remembering, and it is the only answer that also covers a secret you are unsure \
+     about.\n\nA mismatch between the two copies reads as a wrong signature: every delivery is \
+     refused 401 and the backend log says hook-signature-rejected. Set here but stale at the \
+     provider looks identical to the reverse, which is why the fix is to write both ends from \
+     one freshly generated value rather than to work out which side is wrong.\n\nTo check the \
+     rn half on its own, Monitor → Jobs has Send test delivery on this job: it signs a payload \
+     with this credential and posts it to the hooks port, so an accepted delivery says the \
+     secret and the listener agree and the provider is the other half to look at.";
 
 const CREDENTIALS_WHAT: &str =
     "The credentials this job needs, by name, and whether each one is configured on this \
