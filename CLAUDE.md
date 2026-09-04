@@ -407,10 +407,27 @@ therefore serves the worktree it sits in, on that pane's own port:
 
 | worktree | port | build directory |
 |---|---|---|
-| `~/rn` | 1790 | `~/.cache/rn-target` |
+| `~/rn` | 1790 | whatever `CARGO_TARGET_DIR` says — see below |
 | `~/ca` | 1791 | `~/.cache/rn-target-ca` |
 | `~/cb` | 1792 | `~/.cache/rn-target-cb` |
 | `~/cc` | 1793 | `~/.cache/rn-target-cc` |
+
+**Only three of those four rows are a property of the worktree.** `~/rn`'s is a
+property of the *pane*, because `dev-target.sh` deliberately overrides nothing
+there: started from a grid pane it inherits `rn-grid`'s
+`CARGO_TARGET_DIR=~/.cache/rn-target`, and started from an ordinary terminal —
+a VS Code one, say — it inherits nothing and cargo uses `~/rn/target`. Both are
+real and both have builds in them on this machine.
+
+This row used to name `~/.cache/rn-target` flatly, and the cost of that was
+fifteen minutes spent watching it for a rebuild that had already finished
+somewhere else. Read the directory off the process rather than off this table
+when it matters:
+
+    tr '\0' '\n' < /proc/$(pgrep -x dx)/environ | grep CARGO_TARGET_DIR
+
+No output is the answer too — it means `~/rn/target`. That is also why
+`RN_TARGET_SEARCH` in `dev-target.sh` has three entries and not one.
 
 **The ports are not `serve.sh`'s doing** — `rn-grid.service` already exports a
 `PORT` per pane, and those are the four `RN_CORS_ORIGIN` allows for `localhost`
