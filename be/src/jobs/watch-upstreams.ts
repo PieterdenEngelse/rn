@@ -189,8 +189,8 @@ export function major(v: string): number {
  *
  * Path dependencies are skipped: `shared` has no upstream to watch.
  */
-export function cargoDependencyNames(toml: string): string[] {
-    const names: string[] = [];
+export function cargoDependencies(toml: string): Map<string, string> {
+    const deps = new Map<string, string>();
     let inDeps = false;
     for (const raw of toml.split("\n")) {
         const line = raw.trim();
@@ -207,9 +207,17 @@ export function cargoDependencyNames(toml: string): string[] {
         const m = /^([A-Za-z0-9_-]+)\s*=/.exec(line);
         if (!m) continue;
         if (/\bpath\s*=/.test(line)) continue;
-        names.push(m[1]!);
+        // The requirement, not just the name, because the lock can hold two
+        // versions of one crate and this is the only thing that says which of
+        // them is ours. Both spellings: `js-sys = "0.3"` and the table form
+        // `dioxus = { version = "=0.7.9", features = [...] }`. A dependency
+        // with no version at all — a bare git or workspace entry — gets the
+        // empty string, which pickLockedVersion reads as "no opinion".
+        const inline = /^[A-Za-z0-9_-]+\s*=\s*"([^"]+)"/.exec(line);
+        const table = /\bversion\s*=\s*"([^"]+)"/.exec(line);
+        deps.set(m[1]!, inline?.[1] ?? table?.[1] ?? "");
     }
-    return names;
+    return deps;
 }
 
 /**
@@ -219,8 +227,8 @@ export function cargoDependencyNames(toml: string): string[] {
  * against — a manifest range of `"1.0"` says nothing about whether the tree is
  * on 1.0.100 or 1.0.230.
  */
-export function cargoLockVersions(lock: string): Map<string, string> {
-    const out = new Map<string, string>();
+export function cargoLockVersions(lock: string): Map<string, string[]> {
+    const out = new Map<string, string[]>();
     let name: string | undefined;
     for (const raw of lock.split("\n")) {
         const line = raw.trim();
@@ -235,14 +243,60 @@ export function cargoLockVersions(lock: string): Map<string, string> {
         }
         const v = /^version\s*=\s*"(.+)"$/.exec(line);
         if (v && name !== undefined) {
-            // First wins: two versions of one crate can be in the lock, and the
-            // report is about the direct dependency, which is the one the
-            // workspace resolved first.
-            if (!out.has(name)) out.set(name, v[1]!);
+            // Every version, not the first one. This used to keep the first and
+            // call it the direct dependency; the lock is sorted by name and then
+            // version, so the first is the *lowest*, which is usually somebody
+            // else's. That is how the report claimed the workspace was behind on
+            // gloo-net 0.6 the morning after fe moved to 0.7 — dioxus-fullstack
+            // has an optional 0.6 that no enabled build even reaches, and it
+            // sorts first. Choosing between them needs the manifest's
+            // requirement, so it happens in pickLockedVersion, not here.
+            const seen = out.get(name);
+            if (seen === undefined) out.set(name, [v[1]!]);
+            else seen.push(v[1]!);
             name = undefined;
         }
     }
     return out;
+}
+
+/**
+ * Which of a crate's locked versions this manifest actually asked for.
+ *
+ * Prefix matching rather than semver, and the limit is worth stating: the
+ * requirement is stripped of its comparator (`^0.7`, `~0.7`, `=0.7.9`, `0.7`
+ * all reduce to a numeric core) and a locked version matches when it is that
+ * core or extends it at a dot boundary. So `0.7` matches `0.7.0` and `0.7.10`
+ * but never `0.70.0`, and `=0.7.9` matches only itself.
+ *
+ * That is enough because cargo has already done the resolving. The question
+ * here is not "what satisfies this range" — the lock is the answer to that —
+ * but "which of these entries is the one cargo picked for us", and every form
+ * that appears in this repository's manifests reduces to a series prefix.
+ * A requirement cargo would satisfy across a major boundary is the case this
+ * cannot read, and it returns undefined rather than guessing.
+ *
+ * One version and no usable requirement is the ordinary case and stays
+ * ordinary: nothing to choose between, so it is returned as it always was.
+ */
+export function pickLockedVersion(
+    requirement: string,
+    versions: readonly string[],
+): string | undefined {
+    if (versions.length === 0) return undefined;
+    if (versions.length === 1) return versions[0];
+
+    const core = requirement.trim().replace(/^[\^~=><\s]+/, "");
+    if (core === "" || core === "*") {
+        // Several versions and nothing to tell them apart. The newest is the
+        // least wrong answer, and it is still a guess, so it is not silent —
+        // see the cargo-ambiguous step in readUpstreams.
+        return undefined;
+    }
+
+    const matches = versions.filter((v) => v === core || v.startsWith(`${core}.`));
+    if (matches.length === 0) return undefined;
+    return matches.reduce((a, b) => (compareVersions(a, b) >= 0 ? a : b));
 }
 
 /** Everything the repository pins, from its manifests. */
@@ -280,10 +334,28 @@ async function readUpstreams(
     if (ecosystems.has("cargo")) {
         const locked = cargoLockVersions(await readFile(join(root, "Cargo.lock"), "utf8"));
         for (const rel of CARGO_MANIFESTS) {
-            const names = cargoDependencyNames(await readFile(join(root, rel), "utf8"));
-            for (const name of names) {
+            const deps = cargoDependencies(await readFile(join(root, rel), "utf8"));
+            for (const [name, requirement] of deps) {
                 if (found.some((u) => u.key === `cargo:${name}`)) continue;
-                const version = locked.get(name);
+                const candidates = locked.get(name);
+                const version =
+                    candidates === undefined
+                        ? undefined
+                        : pickLockedVersion(requirement, candidates);
+                if (candidates !== undefined && version === undefined) {
+                    // Locked more than once, with nothing in the manifest that
+                    // picks one. Skipped rather than guessed: a wrong `pinned`
+                    // here is a release reported as available that is already
+                    // installed, every run, which is the noise the cursor
+                    // exists to remove.
+                    ctx.step("cargo-ambiguous", {
+                        crate: name,
+                        from: rel,
+                        requirement,
+                        locked: candidates.join(", "),
+                    });
+                    continue;
+                }
                 if (version === undefined) {
                     // Named in a manifest and absent from the lock means the
                     // lock is stale — worth saying, since every other number in

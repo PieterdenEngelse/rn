@@ -27,7 +27,7 @@ it. The decisions below are a different list and are still waiting.
 
 # Decisions waiting on the user
 
-## Seven stale pins, as of 2026-09-04
+## Six stale pins, as of 2026-09-04
 
 The standing output of `watch-upstreams`. Deliberately not maintained as a list
 here — the list is what the job is for, and a copy in a document is a copy that
@@ -37,11 +37,20 @@ the last one, which on most days is nothing at all.
 
 What it reported on the day this line was written: `typescript ^5.8 → 7.0.2`,
 `@types/node ^24 → 26.4.1`, `tailwindcss` and `@tailwindcss/cli
-^4.1.14 → 4.3.3`, `daisyui ^5.0 → 5.7.28`, `gloo-net 0.6 → 0.7`, and
-`gloo-timers 0.3 → 0.4`.
+^4.1.14 → 4.3.3`, `daisyui ^5.0 → 5.7.28`, and `gloo-timers 0.3 → 0.4`.
 
-`gloo-net` is the one with real change behind it. `typescript` is a major and
-wants reading about before it is taken.
+`typescript` is a major and wants reading about before it is taken.
+
+For an hour it said seven, and the seventh was `gloo-net 0.6 → 0.7` — a crate
+taken in 66ca839, with `fe/Cargo.toml` plainly reading `0.7`. That was the job
+being wrong, not the manifest, and it is worth knowing the shape of it because
+this section tells you to trust the job's output: `cargoLockVersions` kept the
+first entry when a crate appeared twice in `Cargo.lock` and called it the direct
+dependency, but the lock is sorted by name and then version, so the first is the
+*lowest* — dioxus-fullstack's optional `gloo-net 0.6.0`, which no enabled build
+reaches. The parser reads the manifest's requirement now and picks the version
+that satisfies it. Taking an upgrade is what exposed it; nothing about a run
+that never upgrades anything would have.
 
 Four of the eleven this replaces were taken the same day. Two were Node, which
 the job counts twice because `be/.nvmrc` answers both the `node:24` and the

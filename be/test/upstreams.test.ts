@@ -25,8 +25,9 @@ import { mkdtemp, writeFile, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-    cargoDependencyNames,
+    cargoDependencies,
     cargoLockVersions,
+    pickLockedVersion,
     compareVersions,
     findRepoRoot,
     major,
@@ -102,8 +103,8 @@ test("major reads the line, whatever the prefix", () => {
 
 // ---- manifest reading ---------------------------------------------------
 
-test("cargo dependency names come from every dependency table", () => {
-    const names = cargoDependencyNames(`
+test("cargo dependencies come from every dependency table, with requirements", () => {
+    const deps = cargoDependencies(`
 [package]
 name = "fe"
 version = "0.1.0"
@@ -126,10 +127,14 @@ web = ["dioxus/web"]
     // `shared` is a path dependency with no upstream, and the [package] and
     // [features] tables both contain `name =` / `default =` lines that a
     // careless scan would take for dependencies.
-    assert.deepEqual(names, ["dioxus", "js-sys", "libc", "tempfile"]);
+    assert.deepEqual([...deps.keys()], ["dioxus", "js-sys", "libc", "tempfile"]);
+    // The requirement comes back too, from both spellings — it is the only
+    // thing that can tell two locked versions of one crate apart.
+    assert.equal(deps.get("dioxus"), "=0.7.9");
+    assert.equal(deps.get("js-sys"), "0.3");
 });
 
-test("cargo versions come from the lock, first entry winning", () => {
+test("cargo versions come from the lock, every entry kept", () => {
     const versions = cargoLockVersions(`
 [[package]]
 name = "dioxus"
@@ -144,11 +149,39 @@ version = "1.0.109"
 name = "syn"
 version = "2.0.87"
 `);
-    assert.equal(versions.get("dioxus"), "0.7.9");
-    // Two versions of one crate in a lock is ordinary. The direct dependency
-    // is the one resolved first, and picking the other would report an upgrade
-    // for a crate that already has it.
-    assert.equal(versions.get("syn"), "1.0.109");
+    assert.deepEqual(versions.get("dioxus"), ["0.7.9"]);
+    // Two versions of one crate in a lock is ordinary. Both are kept, because
+    // the lock alone cannot say which is ours — it is sorted by name and then
+    // version, so "first" means "lowest", not "direct".
+    assert.deepEqual(versions.get("syn"), ["1.0.109", "2.0.87"]);
+});
+
+test("the manifest's requirement picks between two locked versions", () => {
+    // The gloo-net case, reduced. fe asks for 0.7; dioxus-fullstack has an
+    // optional 0.6 that no enabled build reaches, and it sorts first. Taking
+    // the first reported the workspace as behind on a crate it had just
+    // upgraded — every run, forever, since nothing about it would ever change.
+    assert.equal(pickLockedVersion("0.7", ["0.6.0", "0.7.0"]), "0.7.0");
+    assert.equal(pickLockedVersion("0.6", ["0.6.0", "0.7.0"]), "0.6.0");
+
+    // Comparators reduce to the series they name.
+    assert.equal(pickLockedVersion("^0.7", ["0.6.0", "0.7.0"]), "0.7.0");
+    assert.equal(pickLockedVersion("=0.7.9", ["0.7.9", "0.8.0"]), "0.7.9");
+    assert.equal(pickLockedVersion("~0.3", ["0.3.1", "0.4.0"]), "0.3.1");
+
+    // A prefix is a prefix at a dot boundary, never a digit boundary.
+    assert.equal(pickLockedVersion("0.7", ["0.70.0", "0.7.1"]), "0.7.1");
+
+    // One entry needs no requirement, which is the ordinary case and the one
+    // that must not regress.
+    assert.equal(pickLockedVersion("", ["1.2.3"]), "1.2.3");
+    assert.equal(pickLockedVersion("anything", ["1.2.3"]), "1.2.3");
+
+    // Nothing to choose with, or nothing that matches: undefined, so the caller
+    // reports the ambiguity instead of publishing a number it guessed.
+    assert.equal(pickLockedVersion("", ["0.6.0", "0.7.0"]), undefined);
+    assert.equal(pickLockedVersion("*", ["0.6.0", "0.7.0"]), undefined);
+    assert.equal(pickLockedVersion("2.0", ["0.6.0", "0.7.0"]), undefined);
 });
 
 test("the repository root is found by both markers, not either", async () => {
