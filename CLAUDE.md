@@ -512,6 +512,31 @@ the reason each gets its own build directory: four backends sharing one
 `job-state.json` would have one worktree's run clear another's cursors, with
 nothing in the store to say whose entry it was.
 
+**Installed dependencies go the other way — they are shared, by symlink into
+`~/rn`.** Nothing in the repository says so, which is why it is written here;
+both halves of it have already surprised a session in one morning. As of
+2026-09-04:
+
+| | `be/node_modules` | `fe/node_modules` | `be/runtime` |
+|---|---|---|---|
+| `~/rn` | own | own | own |
+| `~/ca` | → `~/rn` | → `~/rn` | absent |
+| `~/cb` | → `~/rn` | → `~/rn` | → `~/rn` |
+| `~/cc` | → `~/rn` | own | own |
+
+So **`npm install` is never a local act**: run in any worktree it rewrites
+`~/rn`'s tree and every symlink pointing at it. Upgrading daisyUI in `~/rn`
+moved `ca` and `cb` at the same instant, and reinstalling the bundled Node
+there moved `cb`'s runtime, neither of which asked for it. The reverse is the
+one to watch: a session on an older commit running `npm install` installs *that*
+lockfile for everybody, and nothing reports the disagreement.
+
+Two consequences worth holding. A worktree whose `node_modules` is a symlink
+cannot be on a different lockfile than `~/rn`, whatever its `package-lock.json`
+says — check what is installed rather than what is committed. And the CSS
+watcher trap above reaches across trees for the same reason: an `npm install`
+anywhere can swap a package under a watcher running somewhere else.
+
 The backend on **:3010** is launcher-supervised and the launcher is
 **systemd-supervised** — `rn-backend.service`, a user unit, runs
 `target/debug/rn` in the foreground and that process runs the Node child. So
