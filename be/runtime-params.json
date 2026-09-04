@@ -10,7 +10,7 @@
       "options": [
         {
           "value": "node",
-          "label": "Node v24.19.0 — the default",
+          "label": "Node v24.20.0 — the default",
           "info": {
             "what": "The runtime rn ships with: a Node binary inside the install directory, launched by absolute path. Never the Node on the user's PATH — a machine that \"has Node\" often has one installed through nvm, which a desktop launcher or systemd unit cannot see.",
             "why": "The baseline, for good reasons: the largest package ecosystem, the runtime every dependency is tested against, and the only one native addons are compiled for here. Stay on it unless one of the others names a problem you actually have.",
@@ -90,8 +90,8 @@
           "value": "24",
           "label": "Node 24 — current (bundled)",
           "info": {
-            "what": "The newest line, and the one this install actually carries — be/.nvmrc and be/runtime both say v24.19.0.",
-            "why": "It is already here, so it costs nothing. It gets V8 upgrades and new APIs first, and becomes an LTS line later.\n\nWorth knowing before choosing it over leaving this unset: both run v24.19.0 today, and they part company at the next upgrade — this one holds 24 while unpinned moves with the install. Pick this only to freeze the line deliberately.",
+            "what": "The newest line, and the one this install actually carries — be/.nvmrc and be/runtime both say v24.20.0.",
+            "why": "It is already here, so it costs nothing. It gets V8 upgrades and new APIs first, and becomes an LTS line later.\n\nWorth knowing before choosing it over leaving this unset: both run v24.20.0 today, and they part company at the next upgrade — this one holds 24 while unpinned moves with the install. Pick this only to freeze the line deliberately.",
             "ifWrong": "Native addons lag newest-line releases by weeks or months, so one with no prebuilt binary for this version tries to compile from source at install time — and fails on a machine with no toolchain."
           }
         }
@@ -100,7 +100,7 @@
       "category": "runtime",
       "label": "Node version line",
       "info": {
-        "what": "Which Node major line the app should run on. Unset means 'use whatever is bundled', which is the value in be/.nvmrc — currently v24.19.0.\n\nTwo entries in this list look like the same thing, and today they are: 'Bundled runtime — no version pinned' and 'Node 24 — current (bundled)' both start v24.19.0. What separates them is the next upgrade. Unpinned follows whatever ships, so an install that moves to Node 26 takes you with it and there is nothing here to change. Pinning 24 says stay on 24 whatever happens — after that upgrade the setting names a line the install no longer carries, the launcher falls back to the bundled runtime and says so, and what you are left with is a setting that disagrees with the process. Leave it unpinned unless you have a reason to freeze the version.",
+        "what": "Which Node major line the app should run on. Unset means 'use whatever is bundled', which is the value in be/.nvmrc — currently v24.20.0.\n\nTwo entries in this list look like the same thing, and today they are: 'Bundled runtime — no version pinned' and 'Node 24 — current (bundled)' both start v24.20.0. What separates them is the next upgrade. Unpinned follows whatever ships, so an install that moves to Node 26 takes you with it and there is nothing here to change. Pinning 24 says stay on 24 whatever happens — after that upgrade the setting names a line the install no longer carries, the launcher falls back to the bundled runtime and says so, and what you are left with is a setting that disagrees with the process. Leave it unpinned unless you have a reason to freeze the version.",
         "why": "Pin an older line when a native addon has not been rebuilt for a newer one yet. It buys compatibility at the cost of being on a clock: a maintenance line stops getting fixes before the others do.",
         "ifWrong": "The mismatch that actually bites is drift — settings asking for one line while the bundled binary is another. The active row above reports what the process really is, so trust that over this and treat any disagreement as the bug."
       }

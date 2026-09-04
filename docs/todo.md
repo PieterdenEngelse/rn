@@ -27,20 +27,25 @@ it. The decisions below are a different list and are still waiting.
 
 # Decisions waiting on the user
 
-## Eleven stale pins, as of 2026-09-01
+## Nine stale pins, as of 2026-09-04
 
 The standing output of `watch-upstreams`. Deliberately not maintained as a list
 here — the list is what the job is for, and a copy in a document is a copy that
-goes stale. Run the job for the current answer.
+goes stale. Run the job for the current answer, and turn *report everything
+already behind* on when you do: without it a run reports only what moved since
+the last one, which on most days is nothing at all.
 
 What it reported on the day this line was written: `typescript ^5.8 → 7.0.2`,
-`@types/node ^24 → 26.4.0`, `tailwindcss` and `@tailwindcss/cli
-^4.1.14 → 4.3.3`, `daisyui ^5.0 → 5.7.24`, `dioxus` and `dioxus-router
-=0.7.9 → 0.7.10`, `gloo-net 0.6 → 0.7`, `gloo-timers 0.3 → 0.4`, and — new
-since the 2026-08-26 snapshot this replaces — Node `v24.19.0 → v24.20.0` in
-`be/.nvmrc`, which the job counts twice because `.nvmrc` answers both the
-`node:24` and the `node:lts` question.
+`@types/node ^24 → 26.4.1`, `tailwindcss` and `@tailwindcss/cli
+^4.1.14 → 4.3.3`, `daisyui ^5.0 → 5.7.28`, `dioxus` and `dioxus-router
+=0.7.9 → 0.7.10`, `gloo-net 0.6 → 0.7`, and `gloo-timers 0.3 → 0.4`.
 
 `dioxus` and `gloo-net` are the two with real change behind them. `typescript`
-is a major and wants reading about before it is taken. Node is a patch on the
-line already pinned, which is the cheap one.
+is a major and wants reading about before it is taken.
+
+Two of the eleven this replaces were Node, which the job counts twice because
+`be/.nvmrc` answers both the `node:24` and the `node:lts` question. That one was
+taken on 2026-09-04 — `v24.19.0 → v24.20.0`, a patch on the line already pinned.
+Taking it is not only the pin: every checkout with a `be/runtime` needs
+`scripts/install-node.sh` re-run, or the bundled runtime and `.nvmrc` disagree
+and Monitor → Runtime says so.

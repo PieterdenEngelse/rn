@@ -245,11 +245,11 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
                 info: {
                     what:
                         "The newest line, and the one this install actually carries — " +
-                        "be/.nvmrc and be/runtime both say v24.19.0.",
+                        "be/.nvmrc and be/runtime both say v24.20.0.",
                     why:
                         "It is already here, so it costs nothing. It gets V8 upgrades and " +
                         "new APIs first, and becomes an LTS line later.\n\nWorth knowing " +
-                        "before choosing it over leaving this unset: both run v24.19.0 " +
+                        "before choosing it over leaving this unset: both run v24.20.0 " +
                         "today, and they part company at the next upgrade — this one holds " +
                         "24 while unpinned moves with the install. Pick this only to " +
                         "freeze the line deliberately.",
@@ -266,10 +266,10 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
         info: {
             what:
                 "Which Node major line the app should run on. Unset means 'use whatever " +
-                "is bundled', which is the value in be/.nvmrc — currently v24.19.0.\n\n" +
+                "is bundled', which is the value in be/.nvmrc — currently v24.20.0.\n\n" +
                 "Two entries in this list look like the same thing, and today they are: " +
                 "'Bundled runtime — no version pinned' and 'Node 24 — current (bundled)' " +
-                "both start v24.19.0. What separates them is the next upgrade. Unpinned " +
+                "both start v24.20.0. What separates them is the next upgrade. Unpinned " +
                 "follows whatever ships, so an install that moves to Node 26 takes you " +
                 "with it and there is nothing here to change. Pinning 24 says stay on 24 " +
                 "whatever happens — after that upgrade the setting names a line the " +

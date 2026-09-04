@@ -37,8 +37,8 @@ These were checked on this machine, not assumed:
 
 | Thing | Value | Notes |
 |---|---|---|
-| Node | `v24.19.0` ("Krypton", LTS) | via nvm at `~/.config/nvm` |
-| npm | `11.17.0` | ships with Node 24 |
+| Node | `v24.20.0` ("Krypton", LTS) | via nvm at `~/.config/nvm` |
+| npm | `11.19.0` | ships with Node 24 |
 | pnpm | `11.22.0` | installed but not used here — see §2 |
 | corepack | present | not enabled — see §2 |
 | Native TypeScript | **works** — `node file.ts` runs, no flag, no build | see §4 |
@@ -58,7 +58,7 @@ that version into `be/runtime`.
 
 **How it's set**: two places, deliberately.
 
-- `be/.nvmrc` → `v24.19.0`. `nvm use` in that directory switches to it.
+- `be/.nvmrc` → `v24.20.0`. `nvm use` in that directory switches to it.
 - `be/package.json` → `"engines": { "node": ">=24.0.0" }` (added in §3). npm
   *warns* on mismatch; it doesn't block.
 
@@ -87,7 +87,7 @@ if (major < 24) throw new Error(`Node 24+ required, got ${process.version}`);
 ## 2. Package manager — npm
 
 **How it's set**: by using it. Optionally make it explicit in `package.json`:
-`"packageManager": "npm@11.17.0"` (corepack reads this and enforces it).
+`"packageManager": "npm@11.19.0"` (corepack reads this and enforces it).
 
 **Why this way**: npm ships with Node, so there's zero setup drift and anyone
 who can run `node` can run this project. pnpm 11.22.0 *is* installed on this
@@ -353,7 +353,7 @@ hand:
 
 ```bash
 cd ~/rn/be
-node --version              # v24.19.0
+node --version              # v24.20.0
 npm test                    # runner starts (no tests yet is fine)
 npm run typecheck           # clean
 npm run start:sealed        # runs on the BUNDLED runtime — what users get

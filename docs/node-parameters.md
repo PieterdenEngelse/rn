@@ -2,7 +2,7 @@
 
 **Generated from `be/src/runtime-params.ts` by `npm run params:build`. Do not edit.**
 
-Node v24.19.0 has 1,035 command-line flags (177 Node, 858 V8) and 19 environment
+Node v24.20.0 has 1,038 command-line flags (180 Node, 858 V8) and 19 environment
 variables. Almost none of them belong in front of a user. These are the ones that do:
 settings someone running rn could plausibly need, understand, and not silently break.
 
@@ -62,9 +62,9 @@ Default: unset (system default) · Takes effect: on restart · Settings key: `ne
 
 ### Node version line — `nodeVersion`
 
-**What it does.** Which Node major line the app should run on. Unset means 'use whatever is bundled', which is the value in be/.nvmrc — currently v24.19.0.
+**What it does.** Which Node major line the app should run on. Unset means 'use whatever is bundled', which is the value in be/.nvmrc — currently v24.20.0.
 
-Two entries in this list look like the same thing, and today they are: 'Bundled runtime — no version pinned' and 'Node 24 — current (bundled)' both start v24.19.0. What separates them is the next upgrade. Unpinned follows whatever ships, so an install that moves to Node 26 takes you with it and there is nothing here to change. Pinning 24 says stay on 24 whatever happens — after that upgrade the setting names a line the install no longer carries, the launcher falls back to the bundled runtime and says so, and what you are left with is a setting that disagrees with the process. Leave it unpinned unless you have a reason to freeze the version.
+Two entries in this list look like the same thing, and today they are: 'Bundled runtime — no version pinned' and 'Node 24 — current (bundled)' both start v24.20.0. What separates them is the next upgrade. Unpinned follows whatever ships, so an install that moves to Node 26 takes you with it and there is nothing here to change. Pinning 24 says stay on 24 whatever happens — after that upgrade the setting names a line the install no longer carries, the launcher falls back to the bundled runtime and says so, and what you are left with is a setting that disagrees with the process. Leave it unpinned unless you have a reason to freeze the version.
 
 **Why you would change it.** Pin an older line when a native addon has not been rebuilt for a newer one yet. It buys compatibility at the cost of being on a clock: a maintenance line stops getting fixes before the others do.
 

@@ -53,7 +53,7 @@ function markdown(): string {
     );
     lines.push("");
     lines.push(
-        "Node v24.19.0 has 1,035 command-line flags (177 Node, 858 V8) and 19 environment",
+        "Node v24.20.0 has 1,038 command-line flags (180 Node, 858 V8) and 19 environment",
     );
     lines.push(
         "variables. Almost none of them belong in front of a user. These are the ones that do:",
