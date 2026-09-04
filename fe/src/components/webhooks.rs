@@ -1678,7 +1678,12 @@ fn JobOptions(jobs: Vec<String>, catalogue: Vec<CatalogueJob>, selected: String)
 
     rsx! {
         div { class: "space-y-3",
-            p { class: "max-w-3xl text-gray-300 leading-relaxed",
+            // Unconstrained, unlike the running prose elsewhere in the app: an
+            // info panel's own sections are full-width, so a 3xl paragraph
+            // above five full-width blocks reads as a mistake rather than as a
+            // measure. The line length that buys is a property of every panel
+            // here, not of this one.
+            p { class: "text-gray-300 leading-relaxed",
                 "The options in the dropdown, in the order it offers them. rn's part ends the \
                  moment the signature checks out and the payload is handed over — everything \
                  after that is the job, so this is the choice that decides what a stranger's \
