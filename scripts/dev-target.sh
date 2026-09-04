@@ -2,12 +2,13 @@
 # Where this worktree's cargo output goes — and therefore where a binary it
 # built is found.
 #
-# Sourced by fe/serve.sh, which needs cargo to *write* somewhere private, and by
-# be/s, which needs to *read* what that wrote. Those were two halves of one rule
-# living in one of the two files: serve.sh set the directory, be/s looked in
-# `<worktree>/target` regardless, and so `be/s --status` in any worktree but
-# ~/rn failed with a bare "No such file or directory" naming a path nothing had
-# ever written to.
+# Sourced by fe/serve.sh, which needs cargo to *write* somewhere private; by
+# be/s, which needs to *read* what that wrote; and by scripts/check.sh, which
+# needs both. Those were three copies of one rule, and only one of them was
+# right about anything: serve.sh set the directory, check.sh set the same one
+# again, and be/s looked in `<worktree>/target` regardless — so `be/s --status`
+# in any worktree but ~/rn failed with a bare "No such file or directory"
+# naming a path nothing had ever written to.
 #
 # The rule itself is forced by rn-grid.service, which exports one shared
 # CARGO_TARGET_DIR into every pane. Without an override each pane's cargo writes

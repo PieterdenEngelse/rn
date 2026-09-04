@@ -33,9 +33,21 @@ cd "$(dirname "$0")/.."
 # look like drift: rn-grid is a tmux layout on this machine, there is no pane
 # exporting a shared CARGO_TARGET_DIR on Windows, and copying the workaround
 # there would be inventing a cache path to solve a collision that cannot happen.
-worktree="$(basename "$PWD")"
-if [ "$worktree" != "rn" ] && [ -z "${RN_CHECK_TARGET_DIR:-}" ]; then
-    export CARGO_TARGET_DIR="$HOME/.cache/rn-target-$worktree"
+#
+# The path itself is not written here. It was, and this file was the third copy
+# of it after fe/serve.sh and be/s — which is how the first two managed to
+# disagree for as long as they did, one setting the directory and the other
+# reading somewhere else entirely. scripts/dev-target.sh owns it now.
+#
+# RN_CHECK_TARGET_DIR opts out, and its *value* is deliberately not read:
+# setting it to anything at all leaves CARGO_TARGET_DIR exactly as the
+# environment had it, which is what a CI runner or a bisect wants. The name
+# reads like it should name a directory and does not — kept as it is because
+# honouring the value would turn `RN_CHECK_TARGET_DIR=1`, the way anyone would
+# have written an opt-out, into a target directory called `1`.
+if [ -z "${RN_CHECK_TARGET_DIR:-}" ]; then
+    # shellcheck source=./dev-target.sh
+    . scripts/dev-target.sh
 fi
 
 failed=()

@@ -422,8 +422,9 @@ the page itself looks fine.
 The build directory is the part the environment gets wrong: that same service
 exports one `CARGO_TARGET_DIR` into every pane, so without an override each
 server writes crate `fe` over the others' output. That rule lives in
-`scripts/dev-target.sh`, sourced by `fe/serve.sh` and by `be/s`, because it has
-two halves — where cargo *writes*, and where something it wrote is *found*.
+`scripts/dev-target.sh`, sourced by `fe/serve.sh`, `be/s` and `scripts/check.sh`,
+because it has two halves — where cargo *writes*, and where something it wrote
+is *found*.
 While only the first half existed, `be/s --status` in any worktree but `~/rn`
 failed with a bare "No such file or directory" naming a path nothing had ever
 built into.
