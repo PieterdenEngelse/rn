@@ -51,8 +51,12 @@ import type {
 export type { Webhook, WebhookDef, WebhookKind } from "./generated/wire.ts";
 
 /**
- * GitHub's scheme, because it is the most common sender — and Slack and most
- * others use the same construction under a different header name.
+ * GitHub's scheme, because it is the most common sender, and most others copied
+ * it under a different header name.
+ *
+ * Not Slack or Stripe: both sign a timestamp alongside the body, so no header
+ * and no prefix makes a form-made hook verify one. They are reachable only as a
+ * job-declared webhook naming a `scheme`, which this form has no field for.
  *
  * Defined once here and sent to the page as `defaults`, so the form's
  * placeholders cannot drift from what the listener actually does when a field

@@ -1436,8 +1436,11 @@ label: string, kind: WebhookKind,
 credential: string, 
 /**
  * Header carrying the signature. Empty means GitHub's
- * `x-hub-signature-256`, which is also Slack's and most others' scheme
- * under a different name.
+ * `x-hub-signature-256`, whose construction most providers copied.
+ *
+ * Not Slack's or Stripe's, though: both sign a timestamp alongside the
+ * body, so no header and no prefix makes a form-made hook verify one.
+ * They need a `scheme`, which only a job-declared webhook can name.
  */
 header?: string | null, 
 /**

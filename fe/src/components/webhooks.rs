@@ -1072,8 +1072,35 @@ fn Form(
             }
 
             details { class: "rounded border border-gray-700 p-3",
-                summary { class: "text-gray-300 text-xs cursor-pointer",
-                    "How this provider signs — leave alone for GitHub, Slack and most others"
+                summary { class: "text-gray-300 text-xs cursor-pointer flex items-center gap-2",
+                    // "and Slack" used to be here. It is not true of this form:
+                    // Slack signs v0:timestamp:body and a hook made on this
+                    // page always digests the body alone, so no header and no
+                    // prefix makes a Slack delivery verify. The panel says so
+                    // at length; the summary at least stops promising it.
+                    span { "How this provider signs — leave alone for GitHub and anything that copies it" }
+                    // Wrapped, because a bare button inside a summary toggles
+                    // the disclosure as well as opening the panel: the click
+                    // reaches the summary and the browser acts on it. Stopping
+                    // it here leaves the info button doing one thing.
+                    //
+                    // On the header rather than in the info column — the
+                    // exception CLAUDE.md names — and the section is closed by
+                    // default, so this is the only place a reader can be told
+                    // whether it is worth opening.
+                    span {
+                        onclick: move |evt| {
+                            evt.stop_propagation();
+                            evt.prevent_default();
+                        },
+                        InfoButton {
+                            title: "How this provider signs".to_string(),
+                            what: SIGNING_WHAT.to_string(),
+                            why: SIGNING_WHY.to_string(),
+                            if_wrong: SIGNING_IF_WRONG.to_string(),
+                            glossary: glossary(),
+                        }
+                    }
                 }
                 div { class: "mt-3 space-y-3",
                     Field {
@@ -1573,6 +1600,52 @@ const ACTION_FIELD_IF_WRONG: &str =
      provider sees success; the card's \"accepted but started nothing\" is the only place it \
      shows.\n\nThe backend logs hook-unrouted with the action it read and the list it compared \
      against, which is usually enough to see the mismatch immediately.";
+
+const SIGNING_WHAT: &str =
+    "Four boxes that say where the signature is and how it is wrapped — never what is signed. A \
+     webhook made on this page always verifies one way: HMAC-SHA256 over the exact bytes of the \
+     request body, keyed with the signing [[credential]], compared in constant time against the \
+     digest found in the header named here once its prefix is stripped. The value has to be hex \
+     and the right length or it is refused before any comparison happens, because a malformed \
+     one would otherwise be silently truncated and compared against a shorter buffer.\n\nLeft \
+     empty, all four take GitHub's: the signature in x-hub-signature-256 behind sha256=, the \
+     event name in x-github-event. GitHub is the most common sender and most providers copied \
+     it, which is why this is a closed section rather than four more fields on the form.\n\nThe \
+     delivery id header is the odd one out — it is no part of the check. It names the header \
+     carrying a unique id per delivery, which rn remembers so the same signed request cannot be \
+     accepted twice. See [[signature]] for why that is a separate problem.";
+
+const SIGNING_WHY: &str =
+    "Leave it closed for GitHub and anything that copied it, which is most of them. Open it in \
+     four cases.\n\nThe provider names a different header. Their webhook documentation says \
+     which — x-signature, x-webhook-signature, x-hub-signature-256 under another spelling. Copy \
+     it as they write it; the case does not matter, since the listener lowercases before it \
+     looks.\n\nThe provider sends a bare hex digest with nothing in front of it. Tick the \
+     checkbox rather than emptying the prefix box: empty means unset, and unset means sha256=. \
+     That distinction is the whole reason the checkbox exists, and it is the difference between \
+     every delivery verifying and every delivery being refused.\n\nThe provider offers a delivery \
+     id. Set it. It is the only thing between a captured delivery and a hundred replays of it, \
+     and it costs nothing.\n\nThe provider names its events. Set the event header, so the run \
+     records say push or invoice.paid instead of being forty identical rows.\n\nThe way to use \
+     this section is against a real delivery rather than by reading the documentation twice. \
+     Save the hook, press the provider's own \"send test\" button, and read the backend log: \
+     hook-signature-rejected names the reason and the header it looked in, which finds a wrong \
+     box faster than any amount of re-reading does.";
+
+const SIGNING_IF_WRONG: &str =
+    "Every mistake in here has one symptom: 401, on every delivery, and from the provider's side \
+     that is indistinguishable from a secret that does not match. The log separates them — \
+     hook-signature-rejected, with the header it looked in, for a wrong header or prefix; \
+     hook-secret-missing for a credential that was never set. The listener deliberately tells the \
+     caller nothing, because a stranger who could tell \"wrong header\" from \"wrong signature\" \
+     would have an oracle.\n\nThe prefix is the usual culprit, and the usual shape of it is a \
+     provider sending a bare digest into a box still holding sha256=.\n\nWhat this section cannot \
+     do is worth knowing before you spend an afternoon in it. It changes where the digest is, \
+     never what was digested. Stripe signs a timestamp and the body joined together, and Slack \
+     signs v0:timestamp:body — no combination of header and prefix produces either, so a webhook \
+     made on this page cannot verify those two at all. They need a webhook declared in a job \
+     file, which can name the scheme; the listener implements both, and this form has no field \
+     for choosing one. The header name is the only thing they share with GitHub.";
 
 const HEADER_WHAT: &str =
     "Which header the [[signature]] arrives in. GitHub uses X-Hub-Signature-256; Slack uses \
