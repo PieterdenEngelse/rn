@@ -15,10 +15,32 @@
 # running instance and change nothing, so they go straight through; the guard is
 # only about starting and stopping.
 # Absolute, resolved from the worktree root rather than left relative: the
-# root exists whatever the cwd, target/debug may not exist yet, and the
-# message below compares this path against the one the unit runs.
+# root exists whatever the cwd, the build directory may not, and the message
+# below compares this path against the one the unit runs.
+#
+# Where cargo puts things is the shared rule, not a guess made here. `<root>/
+# target` was the guess, and it is wrong in every worktree but ~/rn: the grid
+# exports one CARGO_TARGET_DIR into each pane and fe/serve.sh overrides it per
+# worktree, so cc's launcher is at ~/.cache/rn-target-cc/debug/rn and this
+# script used to report a bare "No such file or directory" for a path nothing
+# had ever written to.
 root="$(cd "$(dirname "$0")/.." && pwd)"
-launcher="$root/target/debug/rn"
+# shellcheck source=../scripts/dev-target.sh
+. "$root/scripts/dev-target.sh"
+launcher="$RN_TARGET_DIR/debug/rn"
+
+# The one that exists wins, searched in RN_TARGET_SEARCH's order. Resolved
+# before the guard below so its "a different build" line names the binary this
+# would really have run, rather than a path in a directory nobody built into.
+_found=""
+IFS=: read -ra _dirs <<< "$RN_TARGET_SEARCH"
+for _d in "${_dirs[@]}"; do
+    if [ -x "$_d/debug/rn" ]; then
+        _found="$_d/debug/rn"
+        break
+    fi
+done
+[ -n "$_found" ] && launcher="$_found"
 
 # Every flag the launcher treats as a question. Anything else — including no
 # arguments at all, which is the ordinary start — acts on the process.
@@ -67,6 +89,15 @@ if [ "$reads_only" -eq 0 ] && command -v systemctl >/dev/null 2>&1 &&
     fi
 
     echo "be/s: nothing was done. Run the launcher directly if you meant to bypass this."
+    exit 1
+fi
+
+if [ -z "$_found" ]; then
+    echo "be/s: no launcher built for this worktree. Looked in"
+    for _d in "${_dirs[@]}"; do
+        echo "be/s:     ${_d/#$HOME/\~}/debug/rn"
+    done
+    echo "be/s: build it with:  cargo build -p rn"
     exit 1
 fi
 

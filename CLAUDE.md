@@ -419,10 +419,22 @@ a second copy could only ever disagree with the first. A fifth worktree needs
 a port in the service and in `RN_CORS_ORIGIN`, or its fetches fail CORS while
 the page itself looks fine.
 
-The build directory is the part the environment gets wrong, and the only thing
-`serve.sh` overrides: that same service exports one `CARGO_TARGET_DIR` into
-every pane, so without it each server writes crate `fe` over the others'
-output.
+The build directory is the part the environment gets wrong: that same service
+exports one `CARGO_TARGET_DIR` into every pane, so without an override each
+server writes crate `fe` over the others' output. That rule lives in
+`scripts/dev-target.sh`, sourced by `fe/serve.sh` and by `be/s`, because it has
+two halves — where cargo *writes*, and where something it wrote is *found*.
+While only the first half existed, `be/s --status` in any worktree but `~/rn`
+failed with a bare "No such file or directory" naming a path nothing had ever
+built into.
+
+Finding a binary is the harder half, and the file exports `RN_TARGET_SEARCH` for
+it: three directories, most specific first, because on this machine all three
+hold a launcher. The per-worktree directory is what `serve.sh` builds into; the
+pane's shared one is where a plain `cargo build` actually lands, since the
+override is `serve.sh`'s and not the shell's; and `<worktree>/target` is where
+builds predating the variable went. A reader that consults only the first tells
+you to build something you have already built.
 
 - To check the frontend compiles, run `cargo check` in `fe/`. It needs no port
   and is the answer nearly every time.

@@ -18,16 +18,14 @@ cd "$(dirname "$0")"
 # shellcheck source=../scripts/dev-ports.sh
 . ../scripts/dev-ports.sh
 
-# The build directory is the part the environment gets wrong. That same service
-# exports one CARGO_TARGET_DIR into every pane, so without this override each
-# server writes crate `fe` over the others' output — the mismatched js/wasm
-# pair that serves a blank page, and the reason a second dx serve used to be
-# banned outright. ~/rn keeps the shared path, so its existing build is not
-# orphaned and the native artifacts every worktree's cargo shares stay shared.
-worktree="$(basename "$(cd .. && pwd)")"
-if [ "$worktree" != "rn" ]; then
-    export CARGO_TARGET_DIR="$HOME/.cache/rn-target-$worktree"
-fi
+# The build directory is the part the environment gets wrong — that same service
+# exports one CARGO_TARGET_DIR into every pane, so without an override each
+# server writes crate `fe` over the others' output. The rule moved out of here
+# when be/s turned out to need the other half of it: this sets where cargo
+# writes, be/s reads what that wrote, and while the two were separate be/s
+# looked in a directory nothing had ever written to.
+# shellcheck source=../scripts/dev-target.sh
+. ../scripts/dev-target.sh
 
 port="${PORT:-1790}"
 
