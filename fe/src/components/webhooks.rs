@@ -20,9 +20,9 @@
 //! anyone holding that can reach the listener, so it is not a thing to render.
 
 use crate::api::{
-    delete_credential, delete_webhook, fetch_credentials, fetch_webhooks, save_credential,
-    save_webhook, CommandRoute, CredentialEntry, Lookup, Webhook, WebhookDef, WebhookKind,
-    WebhooksResponse,
+    delete_credential, delete_webhook, fetch_credentials, fetch_jobs, fetch_webhooks,
+    save_credential, save_webhook, CatalogueJob, CommandRoute, CredentialEntry, CredentialRef,
+    JobInput, Lookup, Webhook, WebhookDef, WebhookKind, WebhooksResponse,
 };
 use crate::components::param::PARAM_INPUT_ROW_CLASS;
 use crate::components::{GlossaryEntry, InfoButton, Panel};
@@ -680,6 +680,25 @@ fn Form(
         }
     };
 
+    // The catalogue behind the job dropdown. The list of ids arrives with the
+    // webhooks, which is all the `select` needs; what a reader needs is what
+    // each of those ids *does*, and that is only on `/api/jobs`. Fetched here
+    // rather than in the tile because the form is the only thing that asks: a
+    // page showing three saved hooks and no open form has no dropdown to
+    // explain.
+    //
+    // Above the early return, because a hook that runs on some renders and not
+    // others is the one rule Dioxus does not forgive.
+    let catalogue = use_resource(fetch_jobs);
+    let described: Vec<CatalogueJob> = match &*catalogue.read_unchecked() {
+        Some(Ok(r)) => r.catalogue.clone(),
+        // Empty while it is in flight, and empty if it failed. `JobOptions`
+        // says so per row rather than rendering an empty panel, so a reader
+        // never sees a list that silently claims the job they picked does not
+        // exist.
+        _ => Vec::new(),
+    };
+
     // A snapshot for rendering. The form is only mounted while the signal holds
     // a draft, so this is the ordinary case and `None` renders nothing rather
     // than a half-form.
@@ -811,6 +830,18 @@ fn Form(
                             why: JOB_WHY.to_string(),
                             if_wrong: JOB_IF_WRONG.to_string(),
                             glossary: glossary(),
+                            // The options themselves, above the prose. A
+                            // dropdown of ids is the one control on this form
+                            // whose choices cannot be read off it — `notify`
+                            // and `demo` look equally harmless, and one of them
+                            // posts to the internet.
+                            extra: Some(rsx! {
+                                JobOptions {
+                                    jobs: jobs.clone(),
+                                    catalogue: described.clone(),
+                                    selected: draft.job.clone(),
+                                }
+                            }),
                         }
                     }),
                     select {
@@ -909,6 +940,32 @@ fn Form(
                     div { class: "flex items-baseline gap-3",
                         span { class: "text-gray-200 text-xs font-medium", "The routing table" }
                         span { class: HINT, "one action, one job — matched exactly" }
+                        // The same catalogue as "runs this job", because a
+                        // command hook never renders that field: its job is
+                        // picked once per route instead. Without this the one
+                        // kind of webhook that can start several different jobs
+                        // was the only kind that never said what any of them do.
+                        //
+                        // On the section header rather than on each row's
+                        // select — the exception CLAUDE.md names to the info
+                        // column, and a button per route would put five
+                        // identical panels on one board.
+                        InfoButton {
+                            title: "The jobs a route can name".to_string(),
+                            what: JOB_WHAT.to_string(),
+                            why: JOB_WHY.to_string(),
+                            if_wrong: JOB_IF_WRONG.to_string(),
+                            glossary: glossary(),
+                            extra: Some(rsx! {
+                                JobOptions {
+                                    jobs: jobs.clone(),
+                                    catalogue: described.clone(),
+                                    // Every route has its own answer, so none
+                                    // of them is "the" selected one here.
+                                    selected: String::new(),
+                                }
+                            }),
+                        }
                     }
 
                     Field {
@@ -1316,11 +1373,22 @@ const CREDENTIAL_IF_WRONG: &str =
      one, and it is invisible.";
 
 const JOB_WHAT: &str =
-    "The job a verified delivery runs. It is started with the delivery as ctx.payload — the body \
-     as it arrived for a [[data payload webhook]], and { id, notification, detail } for a \
+    "The job a verified delivery runs — the options above, in the order the dropdown offers \
+     them. It is started with the delivery as ctx.payload: the body as it arrived for a \
+     [[data payload webhook]] and for a [[command webhook]], which routes on a field inside the \
+     body rather than replacing it, and { id, notification, detail } for a \
      [[notification webhook]], where detail is what the lookup returned.\n\nOnly jobs registered \
      in this process are offered, so a job renamed out from under a webhook is caught here \
-     rather than at 03:00.";
+     rather than at 03:00.\n\nA delivery supplies no input. Whatever the job declares takes its \
+     declared default, exactly as a scheduled run does — which is why a job with a field that has \
+     no default cannot be driven from a webhook at all, and why the list above says which those \
+     are.\n\nThe listener answers 202 as soon as the signature checks out and starts the job \
+     afterwards, so nothing the job does reaches the provider: not its result, not its failure, \
+     not the twenty minutes it spent. Their delivery log stays green either way, and Monitor → \
+     Jobs is the only place the answer exists.\n\nOne run of a job at a time. A burst of ten \
+     valid deliveries does not start ten copies — the ones that find it busy are recorded as \
+     skipped rather than queued, because they are ten distinct legitimate events and replay \
+     protection is no help against that.";
 
 const JOB_WHY: &str =
     "Start with demo. It records what a delivery contained — how many top-level keys, what they \
@@ -1329,13 +1397,29 @@ const JOB_WHY: &str =
      delivery usually arrives before you are ready for it: a webhook fires when the other system \
      decides, not when you finish. Better that it arrives at a job with nothing to undo. Read \
      the shape off the run record on Monitor → Jobs, then write the job that does the real work \
-     against what they actually send rather than against their documentation of it.";
+     against what they actually send rather than against their documentation of it.\n\nFor every \
+     other job, the question to take to the list above is what a single delivery causes: what it \
+     writes, what it sends, and to whom. That is in each job's own description, because it is a \
+     property of the job and not of the webhook — and the flag some of them carry, effect-free, \
+     is a narrower claim than it sounds, saying only that a disarmed run may keep its \
+     cursor.\n\nTwo more worth checking there. A job that needs a \
+     credential fails before its first line while the credential is unset — the board beside this \
+     form is where that is fixed. And a job naming an on-failure or on-change handler starts a \
+     second job per delivery, which is the difference between a chatty provider being noisy and \
+     being expensive.";
 
 const JOB_IF_WRONG: &str =
     "If the job is later removed or renamed, this webhook keeps accepting deliveries and starts \
      nothing — the card says so in red, and the counter's \"accepted but started nothing\" is \
-     where it accumulates.\n\nA job that fails is a different thing and is visible where every \
-     other failure is: the run record, the error log, and the header light.";
+     where it accumulates.\n\nIf it declares an input with no default, every delivery is refused \
+     before the job starts, with job-input-rejected in the log and a failed run in the record. \
+     The webhook is not the thing to fix — the declaration is.\n\nIf it declares a credential \
+     that is not set, every delivery fails the same way, one step later, naming the variable it \
+     wanted.\n\nIf it is simply the wrong job, nothing tells you: a signed delivery running a \
+     job that quietly does the wrong thing is a success everywhere it is recorded. That is the \
+     case the descriptions above exist for, and it is why demo is worth pointing at first.\n\nA \
+     job that fails is a different thing again, and is visible where every other failure is: the \
+     run record, the error log, and the header light.";
 
 const ID_FIELD_WHAT: &str =
     "Where in the delivery the id is, as a dotted path. ticket_id for a body like \
@@ -1469,6 +1553,229 @@ const STATS_IF_WRONG: &str =
      process: check the listener line at the top of this tile, then the tunnel, then that the id \
      in their URL matches the one here.\n\nThe counters reset on every restart, so zeroes shortly \
      after one mean nothing at all.";
+
+// --- the options behind the job dropdown -----------------------------------
+
+/// Whether a declared input has a usable default.
+///
+/// A serialised `null` is not one. The backend treats `undefined` and `null`
+/// alike — see `resolveInput` in `be/src/jobs/input.ts` — so a page that read
+/// `Some(Null)` as "has a default" would promise a delivery would run and be
+/// wrong every time.
+fn has_default(field: &JobInput) -> bool {
+    !matches!(field.default.as_ref(), None | Some(serde_json::Value::Null))
+}
+
+/// What a delivery does to a job's declared inputs.
+///
+/// The interesting half is that it supplies none. A run started from a webhook
+/// passes `{}`, exactly as the scheduler does, so every declared field falls
+/// back to its default — and an input without one is not an empty field, it is
+/// a refusal before the job's first line.
+fn input_note(inputs: &[JobInput]) -> String {
+    if inputs.is_empty() {
+        return "Takes no input, so a delivery runs it exactly as it is declared.".to_string();
+    }
+    let listed = inputs
+        .iter()
+        .map(|f| match f.default.as_ref() {
+            Some(v) if has_default(f) => format!("{} = {v}", f.id),
+            _ => format!("{} — no default", f.id),
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let missing: Vec<&str> = inputs
+        .iter()
+        .filter(|f| !has_default(f))
+        .map(|f| f.id.as_str())
+        .collect();
+    if missing.is_empty() {
+        format!(
+            "A delivery supplies no input, so each declared field takes its default: {listed}. \
+             Changing one of these per delivery is not something a webhook can do — it is a \
+             setting, or it is a value in the body the job reads for itself."
+        )
+    } else if missing.len() == 1 {
+        format!(
+            "Inputs: {listed}. A delivery supplies none and cannot, so {}, which has no default, \
+             refuses the run before the job starts — on every delivery, not just the first. \
+             Pointing a webhook here does nothing until the declaration gives it one.",
+            missing[0],
+        )
+    } else {
+        format!(
+            "Inputs: {listed}. A delivery supplies none and cannot, so {}, which have no \
+             defaults, refuse the run before the job starts — on every delivery, not just the \
+             first. Pointing a webhook here does nothing until the declaration gives them one.",
+            missing.join(" and "),
+        )
+    }
+}
+
+/// What the job needs configured before a delivery can get anywhere.
+///
+/// `None` for the jobs that need nothing, which is most of them: a row saying
+/// "needs no credentials" on four jobs out of five teaches that the fifth's
+/// requirement is ordinary, and it is the whole reason its deliveries fail.
+fn credential_note(creds: &[CredentialRef]) -> Option<String> {
+    if creds.is_empty() {
+        return None;
+    }
+    let listed = creds
+        .iter()
+        .map(|c| format!("{} ({})", c.name, c.env_var))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let missing: Vec<&str> = creds
+        .iter()
+        .filter(|c| !c.set)
+        .map(|c| c.name.as_str())
+        .collect();
+    Some(if missing.is_empty() {
+        format!("Needs {listed} — all set, in the credentials board beside this form.")
+    } else {
+        format!(
+            "Needs {listed}. {} not set, so every delivery routed here fails before the job's \
+             first line, naming the variable it wanted and sending nothing anywhere. The \
+             credentials board beside this form is where that is fixed.",
+            if missing.len() == 1 {
+                format!("{} is", missing[0])
+            } else {
+                format!("{} are", missing.join(" and "))
+            },
+        )
+    })
+}
+
+/// Every job the dropdown offers, said out loud.
+///
+/// The `select` can only show ids, and an id is the one thing about a job that
+/// does not say what a delivery to it will do: `demo` and `notify` are the same
+/// width and the same shade of grey, and one of them posts to the internet. So
+/// the panel behind the button carries the catalogue — what each job is,
+/// whether it changes anything, what it needs, and what it does with the input
+/// a delivery never supplies.
+///
+/// Ordered by the dropdown rather than by the catalogue, so the two can be read
+/// side by side without searching. A job the dropdown offers but the catalogue
+/// has not described still gets a row saying so, rather than disappearing out
+/// of a list that claims to be complete — the fetch may simply still be in
+/// flight, and a silently short list is the worse of the two failures.
+#[component]
+fn JobOptions(jobs: Vec<String>, catalogue: Vec<CatalogueJob>, selected: String) -> Element {
+    // Paired before rendering, so the row markup below is about one job rather
+    // than about looking one up.
+    let rows: Vec<(String, Option<CatalogueJob>, bool)> = jobs
+        .iter()
+        .map(|id| {
+            (
+                id.clone(),
+                catalogue.iter().find(|j| &j.id == id).cloned(),
+                *id == selected,
+            )
+        })
+        .collect();
+
+    rsx! {
+        div { class: "space-y-3",
+            p { class: "max-w-3xl text-gray-300 leading-relaxed",
+                "The options in the dropdown, in the order it offers them. rn's part ends the \
+                 moment the signature checks out and the payload is handed over — everything \
+                 after that is the job, so this is the choice that decides what a stranger's \
+                 delivery actually causes."
+            }
+
+            if rows.iter().all(|(_, j, _)| j.is_none()) {
+                p { class: HINT,
+                    "The catalogue behind these ids has not arrived yet. It comes from \
+                     /api/jobs, the same endpoint Monitor → Jobs reads; if this stays empty, \
+                     that is the request to look at."
+                }
+            }
+
+            for (id , job , chosen) in rows.iter() {
+                div {
+                    key: "{id}",
+                    class: "rounded border p-3 space-y-2",
+                    // The chosen one is outlined rather than lifted to the top:
+                    // the order here is the dropdown's, and a list that
+                    // reorders itself as you pick is one you cannot scan twice
+                    // the same way.
+                    style: if *chosen { "border-color: #0D98BA;" } else { "border-color: #4b5563;" },
+
+                    div { class: "flex items-baseline gap-2 flex-wrap",
+                        code { class: "text-gray-200 text-xs", "{id}" }
+                        if let Some(j) = job.as_ref() {
+                            span { class: "text-gray-300", "{j.label}" }
+                        }
+                        if *chosen {
+                            span { class: "text-xs", style: "color: #0D98BA;", "· selected" }
+                        }
+                    }
+
+                    match job.as_ref() {
+                        Some(j) => rsx! {
+                            p { class: "text-gray-200 leading-relaxed whitespace-pre-line", "{j.info.what}" }
+
+                            // Only when it is set. The flag is a narrow claim —
+                            // every request a GET, the cursor the only write —
+                            // and not a safety rating: `demo` writes nothing at
+                            // all and does not declare it, having no cursor for
+                            // it to mean anything about. An `else` branch here
+                            // said "makes changes outside rn", which would have
+                            // contradicted the panel below telling you to point
+                            // a provider at `demo` first. What each job actually
+                            // does is its own description, above.
+                            if j.effect_free {
+                                p { class: "text-gray-300",
+                                    "Declared effect-free: every request it makes is a GET, and the only \
+                                     thing it writes is its own cursor. That is why the safety switch \
+                                     leaves its memory alone — a disarmed run still reports incrementally \
+                                     rather than re-announcing everything it has ever seen."
+                                }
+                            }
+
+                            p { class: "text-gray-300", "{input_note(&j.inputs)}" }
+
+                            if let Some(note) = credential_note(&j.credentials) {
+                                p { class: "text-gray-300", "{note}" }
+                            }
+
+                            if let Some(w) = j.webhook.as_ref() {
+                                p { class: "text-gray-300",
+                                    "Declares a webhook of its own in code, verified against {w.credential} \
+                                     in {w.header}. A hook made here pointing at the same job is a second \
+                                     door rather than a conflict: both start it, and the run record says \
+                                     which one did."
+                                }
+                            }
+
+                            if let Some(handler) = j.on_failure.as_ref() {
+                                p { class: "text-gray-300",
+                                    "On failure it runs {handler}, so a delivery that fails here starts a \
+                                     second job — worth knowing before pointing a chatty provider at it."
+                                }
+                            }
+                            if let Some(handler) = j.on_change.as_ref() {
+                                p { class: "text-gray-300",
+                                    "On change it runs {handler}, so a delivery that finds something new \
+                                     starts a second job as well."
+                                }
+                            }
+                        },
+                        None => rsx! {
+                            p { class: HINT,
+                                "Offered by the dropdown, but not described in the catalogue this panel \
+                                 fetched. Either the fetch is still in flight, or the two lists disagree \
+                                 — in which case Monitor → Jobs is the one that knows."
+                            }
+                        },
+                    }
+                }
+            }
+        }
+    }
+}
 
 // --- the credentials board -------------------------------------------------
 
