@@ -41,6 +41,24 @@ What it reported on the day this line was written: `typescript ^5.8 → 7.0.2`,
 
 `typescript` is a major and wants reading about before it is taken.
 
+`gloo-timers 0.3 → 0.4` was taken on 2026-09-04 and dropped again before it
+landed, which is a decision against and so belongs here rather than in a commit
+nobody will find. The whole release note is "MSRV updated to 1.82": no API
+change, and the five `TimeoutFuture::new` call sites compile either way. What it
+costs is a duplicate that does not go away — `dioxus-web 0.7.10` depends on
+`gloo-timers 0.3`, and that path is enabled (`dioxus-web → dioxus → fe`), so
+taking 0.4 puts both in the wasm bundle where one copy is shared today. Small,
+since the crate is a wrapper over `setTimeout`, and invisible, which is the
+problem: nobody measures it later. **Take it when `dioxus-web` moves to 0.4**,
+at which point it deduplicates instead.
+
+That the lockfile looks the same in both cases is the part worth carrying
+forward. `gloo-net` left an identical-looking duplicate behind and it was
+harmless — its stale `0.6.0` belongs to `dioxus-fullstack`, which is optional
+and reaches no enabled build, so `cargo tree -i --target all` finds no path to
+it at all. Two duplicates of the same shape, opposite answers, and only the
+dependency graph tells them apart. Check it before assuming either way.
+
 For an hour it said seven, and the seventh was `gloo-net 0.6 → 0.7` — a crate
 taken in 66ca839, with `fe/Cargo.toml` plainly reading `0.7`. That was the job
 being wrong, not the manifest, and it is worth knowing the shape of it because
