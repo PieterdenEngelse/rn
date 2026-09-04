@@ -26,6 +26,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
     cargoDependencies,
+    npmLockVersions,
     cargoLockVersions,
     pickLockedVersion,
     compareVersions,
@@ -132,6 +133,36 @@ web = ["dioxus/web"]
     // thing that can tell two locked versions of one crate apart.
     assert.equal(deps.get("dioxus"), "=0.7.9");
     assert.equal(deps.get("js-sys"), "0.3");
+});
+
+test("npm versions come from the lock, not from the manifest's range", () => {
+    // The bug this replaces: `^4.1.14` was reported as the version in use, so
+    // a dependency npm had already resolved to 4.3.3 read as behind by its own
+    // floor — every run, forever, however current the install was.
+    const versions = npmLockVersions(JSON.stringify({
+        lockfileVersion: 3,
+        packages: {
+            "": { name: "fe", dependencies: { tailwindcss: "^4.1.14" } },
+            "node_modules/tailwindcss": { version: "4.3.3" },
+            "node_modules/daisyui": { version: "5.7.20" },
+            "node_modules/@types/node": { version: "24.13.3" },
+            // A transitive copy resolved for somebody else. Reporting it as
+            // this repository's version is the same mistake one level down.
+            "node_modules/daisyui/node_modules/tailwindcss": { version: "3.4.1" },
+        },
+    }));
+    assert.equal(versions.get("tailwindcss"), "4.3.3");
+    assert.equal(versions.get("daisyui"), "5.7.20");
+    // Scoped names keep their slash — the path is node_modules/@types/node.
+    assert.equal(versions.get("@types/node"), "24.13.3");
+    assert.equal(versions.size, 3);
+});
+
+test("an unparseable npm lock yields nothing rather than throwing", () => {
+    // It is not this job's to repair, and a run that dies on it reports none of
+    // the other two ecosystems either.
+    assert.equal(npmLockVersions("{ not json").size, 0);
+    assert.equal(npmLockVersions("{}").size, 0);
 });
 
 test("cargo versions come from the lock, every entry kept", () => {

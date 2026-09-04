@@ -20,7 +20,11 @@
  *     (the upgrade with no work in it) and the newest LTS line (the one with
  *     work in it, eventually).
  *   - **npm** — the dependencies of `be/package.json` and `fe/package.json`,
- *     against each package's `latest` tag.
+ *     at the versions the sibling `package-lock.json` resolved, against each
+ *     package's `latest` tag. The lock, not the range: `^4.1.14` had already
+ *     resolved to 4.3.3, and comparing a caret range's *floor* to the newest
+ *     release reports every such dependency as behind forever, however current
+ *     the install is.
  *   - **Cargo** — the direct dependencies named by the workspace manifests,
  *     at the versions `Cargo.lock` actually resolved, against crates.io's
  *     newest stable release. Direct only: `Cargo.lock` holds several hundred
@@ -115,7 +119,11 @@ interface Upstream {
     /** Cursor key and display name — `npm:daisyui`, `cargo:dioxus`, `node:24`. */
     key: string;
     ecosystem: "node" | "npm" | "cargo";
-    /** What the repository asks for, as written. `^4.1.14`, `=0.7.9`, `v24.19.0`. */
+    /**
+     * The version this repository is actually on — resolved, not requested.
+     * `4.3.3`, `0.7.0`, `v24.20.0`. A manifest range is the wrong thing to
+     * compare against a release: `^4.1.14` is not a version anybody is running.
+     */
     pinned: string;
     /** Where that was read from, for the report. */
     from: string;
@@ -189,6 +197,40 @@ export function major(v: string): number {
  *
  * Path dependencies are skipped: `shared` has no upstream to watch.
  */
+/**
+ * What `package-lock.json` resolved each top-level dependency to.
+ *
+ * The npm half of what `cargoLockVersions` does, and it was missing: this job
+ * read cargo's resolved versions out of `Cargo.lock` while reading npm's
+ * *requirements* out of `package.json`, so the two ecosystems answered
+ * different questions and only one of them was the right one.
+ *
+ * Lockfile v2 and v3 both key `packages` by install path, with `""` for the
+ * root. Only `node_modules/<name>` is read — a nested
+ * `node_modules/a/node_modules/b` is a transitive copy resolved for somebody
+ * else, and reporting it as this repository's version would be the same
+ * mistake one level down.
+ */
+export function npmLockVersions(lock: string): Map<string, string> {
+    const out = new Map<string, string>();
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(lock);
+    } catch {
+        // A lockfile that will not parse is worth nothing here and is not this
+        // job's to repair. The caller names the manifest and moves on.
+        return out;
+    }
+    const packages = (parsed as { packages?: Record<string, { version?: string }> }).packages;
+    if (packages === undefined) return out;
+    for (const [path, entry] of Object.entries(packages)) {
+        const name = /^node_modules\/(.+)$/.exec(path)?.[1];
+        if (name === undefined || name.includes("/node_modules/")) continue;
+        if (typeof entry?.version === "string") out.set(name, entry.version);
+    }
+    return out;
+}
+
 export function cargoDependencies(toml: string): Map<string, string> {
     const deps = new Map<string, string>();
     let inDeps = false;
@@ -324,9 +366,33 @@ async function readUpstreams(
                 devDependencies?: Record<string, string>;
             };
             const deps = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) };
+
+            // The sibling lock, which is committed, so this is not a question
+            // about whether anyone has run npm install.
+            const lockRel = rel.replace(/package\.json$/, "package-lock.json");
+            let locked = new Map<string, string>();
+            try {
+                locked = npmLockVersions(await readFile(join(root, lockRel), "utf8"));
+            } catch {
+                // Missing or unreadable. Named once per manifest rather than
+                // once per dependency, and its dependencies are skipped: a
+                // range reported as a version is what this whole change is
+                // about, so falling back to one would defeat it.
+                ctx.step("npm-unlocked", { from: lockRel, effect: "its dependencies were not checked" });
+                continue;
+            }
+
             for (const [name, range] of Object.entries(deps)) {
                 if (found.some((u) => u.key === `npm:${name}`)) continue;
-                found.push({ key: `npm:${name}`, ecosystem: "npm", pinned: range, from: rel });
+                const version = locked.get(name);
+                if (version === undefined) {
+                    // In the manifest, absent from the lock — the lock is stale
+                    // against its own package.json, which is worth saying since
+                    // every other number here is read from it.
+                    ctx.step("npm-unlocked-package", { package: name, from: rel, range });
+                    continue;
+                }
+                found.push({ key: `npm:${name}`, ecosystem: "npm", pinned: version, from: rel });
             }
         }
     }
