@@ -27,7 +27,7 @@ it. The decisions below are a different list and are still waiting.
 
 # Decisions waiting on the user
 
-## Six stale pins, as of 2026-09-04
+## Four stale pins, as of 2026-09-04
 
 The standing output of `watch-upstreams`. Deliberately not maintained as a list
 here — the list is what the job is for, and a copy in a document is a copy that
@@ -35,69 +35,67 @@ goes stale. Run the job for the current answer, and turn *report everything
 already behind* on when you do: without it a run reports only what moved since
 the last one, which on most days is nothing at all.
 
-What it reported on the day this line was written: `typescript ^5.8 → 7.0.2`,
-`@types/node ^24 → 26.4.1`, `tailwindcss` and `@tailwindcss/cli
-^4.1.14 → 4.3.3`, `daisyui ^5.0 → 5.7.28`, and `gloo-timers 0.3 → 0.4`.
+What it reported on the day this line was written, as resolved versions rather
+than manifest ranges:
 
-`typescript` is a major and wants reading about before it is taken.
+| upstream | on | latest | what to do |
+|---|---|---|---|
+| `typescript` | 5.9.3 | 7.0.2 | a major — read about it first |
+| `@types/node` | 24.13.3 | 26.4.1 | **never on its own** — see below |
+| `daisyui` | 5.7.20 | 5.7.28 | `npm update daisyui`; `^5.0.0` already permits it |
+| `gloo-timers` | 0.3.0 | 0.4.0 | **not yet** — see below |
 
-`@types/node ^24 → 26.4.1` is reported and should not be taken, and this one is
-permanent rather than a matter of timing. Its majors track Node's: `26.4.1`
-describes Node 26, and `be/.nvmrc` says `v24.20.0`. Ahead of the runtime, the
-definitions describe APIs the process does not have — `npm run typecheck`
-passes, nothing links, nothing warns, and the failure arrives at runtime. Being
-types-only is what makes it dangerous rather than cheap: there is no build step
-left to catch the disagreement.
+Two of the four are decisions rather than work nobody got to.
 
-There is also nothing on offer. `^24.0.0` already floats to `24.13.3`, the
-newest of 66 releases on that line and the one installed. The only thing the
-report names is the major jump.
+**`@types/node` is `be/.nvmrc` spelled a second time.** Its majors track Node's:
+26.4.1 describes Node 26, and the pin is v24.20.0. Definitions ahead of the
+runtime describe APIs the process does not have — `npm run typecheck` passes,
+nothing links, nothing warns, and the failure lands at runtime. Being types-only
+is what makes it dangerous rather than cheap: there is no build step left to
+catch the disagreement. It moves when the runtime moves. The job will report it
+for as long as the runtime is not on the newest Node major, because it asks npm
+for the `latest` tag and that tag is the newest major by definition — the job
+being right about the registry and wrong about this repository.
 
-So **`@types/node` moves when `be/.nvmrc` moves**, and not before — it is a
-second spelling of the runtime version, not an independent pin. The job will go
-on reporting it for as long as the runtime is not on the newest Node major,
-because it asks npm for the `latest` tag and that is the newest major by
-definition. That is the job being right about the registry and wrong about this
-repository, and it is not a bug to fix in the parser.
+**`gloo-timers 0.4` was taken on 2026-09-04 and dropped before it landed.** The
+whole release note is "MSRV updated to 1.82" — nothing gained — and
+`dioxus-web 0.7.10` holds `gloo-timers 0.3` on an enabled path
+(`dioxus-web → dioxus → fe`), so taking 0.4 puts two copies in the wasm bundle
+where one is shared today. Small, since the crate wraps `setTimeout`, and
+invisible, which is the argument for writing it down rather than against. **Take
+it when `dioxus-web` moves to 0.4**, at which point it deduplicates instead.
 
-`gloo-timers 0.3 → 0.4` was taken on 2026-09-04 and dropped again before it
-landed, which is a decision against and so belongs here rather than in a commit
-nobody will find. The whole release note is "MSRV updated to 1.82": no API
-change, and the five `TimeoutFuture::new` call sites compile either way. What it
-costs is a duplicate that does not go away — `dioxus-web 0.7.10` depends on
-`gloo-timers 0.3`, and that path is enabled (`dioxus-web → dioxus → fe`), so
-taking 0.4 puts both in the wasm bundle where one copy is shared today. Small,
-since the crate is a wrapper over `setTimeout`, and invisible, which is the
-problem: nobody measures it later. **Take it when `dioxus-web` moves to 0.4**,
-at which point it deduplicates instead.
+`gloo-net` left a duplicate of exactly the same shape and it was harmless: its
+stale `0.6.0` belongs to `dioxus-fullstack`, which is optional and reaches no
+enabled build, so `cargo tree -i --target all` finds no path to it. Same
+lockfile, opposite answer — only the dependency graph tells them apart.
 
-That the lockfile looks the same in both cases is the part worth carrying
-forward. `gloo-net` left an identical-looking duplicate behind and it was
-harmless — its stale `0.6.0` belongs to `dioxus-fullstack`, which is optional
-and reaches no enabled build, so `cargo tree -i --target all` finds no path to
-it at all. Two duplicates of the same shape, opposite answers, and only the
-dependency graph tells them apart. Check it before assuming either way.
+## The job has been wrong twice, both times found by taking an upgrade
 
-For an hour it said seven, and the seventh was `gloo-net 0.6 → 0.7` — a crate
-taken in 66ca839, with `fe/Cargo.toml` plainly reading `0.7`. That was the job
-being wrong, not the manifest, and it is worth knowing the shape of it because
-this section tells you to trust the job's output: `cargoLockVersions` kept the
-first entry when a crate appeared twice in `Cargo.lock` and called it the direct
-dependency, but the lock is sorted by name and then version, so the first is the
-*lowest* — dioxus-fullstack's optional `gloo-net 0.6.0`, which no enabled build
-reaches. The parser reads the manifest's requirement now and picks the version
-that satisfies it. Taking an upgrade is what exposed it; nothing about a run
-that never upgrades anything would have.
+Worth knowing, because the section above tells you to trust its output.
 
-Four of the eleven this replaces were taken the same day. Two were Node, which
-the job counts twice because `be/.nvmrc` answers both the `node:24` and the
-`node:lts` question — `v24.19.0 → v24.20.0`, a patch on the line already
-pinned. Taking that one is not only the pin: every checkout with a `be/runtime`
+**It read the lowest of a duplicated crate's locked versions** and called it the
+direct dependency, on the grounds that `Cargo.lock`'s first entry is ours. The
+lock is sorted by name and then version, so the first is the lowest — and it
+reported `gloo-net 0.6 → 0.7` the morning `fe/Cargo.toml` was changed to `0.7`.
+Fixed in 94b5932: the parser reads the manifest's requirement and picks the
+version that satisfies it.
+
+**It compared npm's caret ranges against the newest release**, so `^4.1.14` read
+as behind by 4.3.3 while `node_modules` held 4.3.3. Two of five npm entries were
+false — `tailwindcss` and `@tailwindcss/cli` are already current — and the other
+three overstated the distance, which is the same category of wrong because the
+reader budgets from it. Fixed in 250055b: the npm half reads
+`package-lock.json`, as the cargo half always read `Cargo.lock`.
+
+Both were invisible for as long as the report was only ever read; neither would
+have surfaced from inspection. And the count in that heading was wrong three
+times in one morning — eleven, nine, seven, six — every time it was reasoned to
+rather than run. **Run the job.**
+
+Node was the other half of that day: `v24.19.0 → v24.20.0`, two of the original
+eleven because `be/.nvmrc` answers both the `node:24` and the `node:lts`
+question. Taking it is not only the pin — every checkout with a `be/runtime`
 needs `scripts/install-node.sh` re-run, or the bundled runtime and `.nvmrc`
-disagree and Monitor → Runtime says so. The other two were `dioxus` and
-`dioxus-router`.
-
-This heading said *nine* for an hour, because it was written by subtracting
-Node from eleven rather than by running the job — and `dioxus` had already gone
-by then. Arithmetic on a snapshot is exactly the copy this section says not to
-keep. Run it.
+disagree and Monitor → Runtime says so. `dioxus`, `dioxus-router` and `gloo-net`
+went the same day.
