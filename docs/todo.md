@@ -27,7 +27,7 @@ it. The decisions below are a different list and are still waiting.
 
 # Decisions waiting on the user
 
-## Four stale pins, as of 2026-09-04
+## Three stale pins, as of 2026-09-04
 
 The standing output of `watch-upstreams`. Deliberately not maintained as a list
 here — the list is what the job is for, and a copy in a document is a copy that
@@ -42,10 +42,22 @@ than manifest ranges:
 |---|---|---|---|
 | `typescript` | 5.9.3 | 7.0.2 | a major — read about it first |
 | `@types/node` | 24.13.3 | 26.4.1 | **never on its own** — see below |
-| `daisyui` | 5.7.20 | 5.7.28 | `npm update daisyui`; `^5.0.0` already permits it |
 | `gloo-timers` | 0.3.0 | 0.4.0 | **not yet** — see below |
 
-Two of the four are decisions rather than work nobody got to.
+Two of the three are decisions rather than work nobody got to, which leaves
+`typescript` as the only open one — and it is a reading task before it is an
+upgrade. 5.9.3 is the top of a line with 24 stable releases behind it; 7.0.2 is
+the single stable release on its own, two majors away, and `latest` points at it
+because that is what `latest` means. Newest published and ready for this
+repository are different questions.
+
+`daisyui 5.7.20 → 5.7.28` was taken in 306cdba. Worth one line for the method
+rather than the outcome: `^5.0.0` already permitted it, so it was `npm update`
+plus the `output.css` that `css:build` regenerates, and the whole 583-byte delta
+was two additions this app cannot reach — `.checkbox[aria-checked=mixed]` and
+`.join`, neither selector appearing anywhere in `fe/`. Established by grepping
+for the two selectors, which is why it needed no look at the page. The next
+daisyUI bump deserves the same check and not this conclusion.
 
 **`@types/node` is `be/.nvmrc` spelled a second time.** Its majors track Node's:
 26.4.1 describes Node 26, and the pin is v24.20.0. Definitions ahead of the
