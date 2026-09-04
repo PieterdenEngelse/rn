@@ -108,7 +108,10 @@ The rest — signature verification, replay, what a rejection reveals — is in
 `docs/sec.md` → *Webhooks, and why they are on their own port*.
 
 This has been tried against a real public URL rather than only reasoned about;
-`docs/tunnel.md` records what that proved, and the two things it did not.
+`docs/tunnel.md` records what that proved, and what it did not. What runs on
+this machine is Tailscale Funnel onto 3011 — `cloudflared` above is the generic
+example, not the local setup, and the choice between them turns on which side
+terminates TLS.
 
 ---
 

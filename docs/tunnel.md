@@ -10,9 +10,11 @@ posting it. What `curl` on loopback cannot do is prove that a request arriving
 from the public internet reaches the listener, and — the part that actually
 worried me — that **the body survives byte-identical through a proxy**.
 
-Two hops have now been through it. A tunnel passed; Smee, which is a relay
+Three hops have now been through it. Two tunnels passed — `localhost.run` over
+`ssh`, and Tailscale Funnel, which is the one still up; Smee, which is a relay
 rather than a tunnel, failed on exactly the property this document exists to
-check. The second is the more useful result.
+check. The failure is the more useful result, and the tunnel still up is the
+one this machine actually uses.
 
 ## Why byte-identity is the whole question
 
@@ -85,6 +87,118 @@ settings endpoint was not forbidden — it was *absent*, because the hooks serve
 has no such route. Structural rather than configured, which is the argument
 `docs/network.md` §4 and `docs/sec.md` both make, now observed instead of
 asserted.
+
+## The tunnel that stayed: Tailscale Funnel
+
+Everything above was a throwaway: a scratch backend, a throwaway secret, a
+tunnel closed the moment the test finished. What runs here now is not that, and
+the difference is worth recording because it was a second measurement, not a
+second opinion.
+
+### Why the ssh tunnel had to go, and it was not reliability
+
+An anonymous `localhost.run` tunnel gets a **different random hostname every
+connection**. The provider does not know that: GitHub keeps posting to the name
+it was given, that name is dead, and deliveries fail at an hour nobody is
+watching. The tunnel dropping is the ordinary event; the *hostname moving* is
+what makes the drop permanent.
+
+That was papered over first — a `rn-tunnel.service` unit running an ssh
+keepalive with `Restart=always`, scraping the new hostname out of the tunnel's
+own output, publishing it to a file, and patching the GitHub hook by API on
+every reconnect. It worked. It was also a supervisor, a pty trick and a
+URL-scraping loop existing only to fake a stable name, and all of it is now
+deleted: the unit, the wrapper in `~/.local/bin/rn-tunnel`, the file in `/run`.
+The fix for a script that keeps something alive is usually not a better script.
+
+### What runs instead
+
+```bash
+tailscale funnel --bg 3011                 # note the port, as ever
+tailscale funnel status                    # what it actually mapped
+```
+
+`tailscaled` holds that config itself and reconnects on its own, so nothing of
+ours supervises it — checked the hard way, by a reboot: the machine came back
+and the public URL answered with no unit, no wrapper and no session involved.
+
+`funnel status` reports `/ proxy http://127.0.0.1:3011` — the **whole origin**,
+so `/api/hooks/demo` needs no path rule. Do not add one: `docs/network.md` §4
+says why a path rule is the wrong place for this boundary, and here it would
+also be redundant, since the port it forwards to serves exactly one route.
+
+### Measured through the public URL, 2026-09-04
+
+Same checks as the table above, on the **real backend on 3011** rather than a
+scratch one, with the same 87-byte payload — the double space, the em dash, the
+accents, the checkmark:
+
+| Request, over `https://<node>.<tailnet>.ts.net` | Expected | Got |
+|---|---|---|
+| Signed delivery, straight to the hooks port (control) | 202 | **202** |
+| The identical signed delivery, through Funnel | 202 | **202** |
+| Tampered body, genuine signature | 401 | **401** |
+| Replay, same delivery id | 409 | **409** |
+| Unsigned | 401 | **401** |
+| `GET /api/settings` | 404 | **404** |
+| `PUT /api/settings` | 404 | **404** |
+
+The 202 on row two is the byte-identity result restated: the HMAC is over the
+bytes, so a proxy that moved one of them would have produced row three's 401
+instead.
+
+### A real provider, at last
+
+The section below used to say no GitHub delivery had been involved. It has
+been now. GitHub's own ping returned **202**, and six real `push` deliveries
+landed while peers were merging work:
+
+```
+2026-09-04T05:39:30Z  push  OK  202  0.64s
+2026-09-04T05:32:35Z  push  OK  202  0.47s      (six of these, 0.47–0.65s)
+```
+
+The largest carried **12,432 bytes across 13 top-level keys** — `ref`, `before`,
+`after`, `repository`, `pusher`, `sender`, `commits`, `head_commit` and the rest
+— and rn recorded it as a `webhook`-triggered run in 10 ms. That is two orders
+of magnitude past the 87-byte probe, through a real provider's own retry
+machinery, with the signature verifying at the far end.
+
+### Who can read the payloads
+
+The row that actually decided the move. `localhost.run` terminates TLS at
+**their** edge — it has to, to route by hostname — so a third party sees
+webhook bodies in plaintext, and webhook bodies carry ticket text, email
+addresses and branch names. Funnel forwards to the node, which holds the
+certificate:
+
+```
+0 s:CN=laptop.tail1e7abb.ts.net
+  i:C=US, O=Let's Encrypt, CN=YE1
+1 s:C=US, O=Let's Encrypt, CN=YE1
+  i:C=US, O=ISRG, CN=Root YE
+```
+
+A leaf for this machine's own name, issued to it, served by it. That is
+consistent with the node terminating TLS rather than an edge doing it on our
+behalf; it is not by itself proof about what Tailscale's infrastructure could
+do, and the honest claim is the narrower one.
+
+### What the stable name costs
+
+The old URL was random and rotated, so its obscurity was accidental protection
+that nobody had asked for. `laptop.<tailnet>.ts.net` is stable and structured,
+which is the entire point — the Payload URL goes into GitHub once — and it means
+that accident is gone. Nothing is lost that was ever load-bearing: the listener
+is protected by the signature and by having no other route, which is why the
+`/api/settings` rows are in every table here. But a URL you would have called
+secret is now a URL you would call guessable, and that is worth saying out loud.
+
+**One trap, since it cost an hour.** `gh api ... PATCH` with only `config[url]`
+**replaces the whole config object**: the secret is deleted and `content_type`
+reverts to `form`, and the symptom is deliveries turning 401 — which reads as a
+wrong secret, not as a config you just erased. Send the whole object, secret
+included.
 
 ## A relay is not a tunnel: Smee, tested and refused
 
@@ -161,23 +275,24 @@ post to it, which rn refuses but which still reaches your log.
 Listed because a verification note that only records its wins is worth less
 than none.
 
-- **A real provider.** No GitHub, Stripe or Slack delivery was involved; `curl`
-  signed the body. What a provider adds is its own signature scheme, and only
-  the one construction is implemented — HMAC-SHA256, hex, configurable header
-  and prefix. Stripe's timestamped scheme is not that and needs its own
-  verifier.
-- **Tunnels in general.** One tunnel was tested, `localhost.run` over `ssh`.
-  `cloudflared`, `ngrok` and Tailscale Funnel are different implementations and
-  could in principle handle bodies differently. The result is encouraging about
-  the approach, not a guarantee about any specific tool — and the Smee section
-  above is what "could in principle handle bodies differently" looks like when
-  it happens: same test, two bytes lost, every signature refused.
-- **Anything at scale.** One delivery at a time, 87 bytes. Not a large payload
-  near the 1 MB ceiling, not a burst, not a long-lived tunnel.
-- **That a tunnel is safe to leave up.** The URL is a bearer capability: anyone
-  who learns it can reach the listener and be rejected all day. This one was
-  throwaway and was closed immediately — no `ssh` process left holding it, both
-  scratch ports closed, the URL returning 503.
+- **Providers other than GitHub.** GitHub is now real — its ping and its `push`
+  deliveries have both been verified end to end through Funnel. Stripe and Slack
+  have not: their timestamped schemes are implemented and unit-tested, but no
+  delivery signed by Stripe or Slack themselves has ever reached this listener.
+  That is the same gap the GitHub rows just closed, still open for two providers.
+- **Tunnels in general.** Two are now tested — `localhost.run` over `ssh` and
+  Tailscale Funnel — and both passed byte-identity. `cloudflared` and `ngrok`
+  are still different implementations that could in principle handle bodies
+  differently, and the Smee section above is what that looks like when it
+  happens: same test, two bytes lost, every signature refused.
+- **Anything at scale.** The largest real delivery was 12,432 bytes, and they
+  arrived one at a time. Not a payload near the 1 MB ceiling, and not a burst —
+  six pushes over half an hour is not concurrency.
+- **That leaving a tunnel up is free.** One is up permanently now, which is a
+  change of posture rather than a proven-safe result. The URL is a bearer
+  capability: anyone who learns it reaches the listener and is rejected all day,
+  and every rejection is still work this machine does on a stranger's schedule.
+  What makes that acceptable is the 404 rows, not the tunnel.
 
 ## Repeating it
 
