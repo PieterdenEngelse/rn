@@ -124,6 +124,15 @@ pub fn InfoButton(
     /// thing the reader can point at beats a paragraph describing it.
     #[props(default = None)]
     extra: Option<Element>,
+    /// One line under the title, above `extra`, rendered as rich text.
+    ///
+    /// It exists so a panel can open with a `[[term]]` link. `extra` is a raw
+    /// `Element` and cannot carry one — the marker is only read by [`RichText`],
+    /// whose link trail is this component's own state — so without this a panel
+    /// whose first offer is "here is the long version" had nowhere to put it
+    /// but the middle of "What it does", four screens below the top.
+    #[props(default = None)]
+    lead: Option<String>,
 ) -> Element {
     let mut open = use_signal(|| false);
     // A trail, not a single term: entries link to each other, and "back"
@@ -159,6 +168,10 @@ pub fn InfoButton(
                             onclick: move |_| open.set(false),
                             "×"
                         }
+                    }
+
+                    if let Some(lead) = lead.clone() {
+                        RichText { text: lead, glossary: glossary.clone(), open_term }
                     }
 
                     if let Some(extra) = extra.clone() {

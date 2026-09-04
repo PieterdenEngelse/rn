@@ -251,6 +251,21 @@ fn glossary() -> Vec<GlossaryEntry> {
     ]
 }
 
+/// The glossary the two job-picking panels use: everything the others link to,
+/// plus the long-form answer to "which of these should I name?".
+///
+/// Its own list rather than an entry in [`glossary`], because the term is about
+/// this one field. A panel explaining the signing credential offering "How to
+/// choose" would be offering an essay about something else.
+fn job_glossary() -> Vec<GlossaryEntry> {
+    let mut entries = glossary();
+    entries.push(GlossaryEntry {
+        term: "How to choose".to_string(),
+        body: HOW_TO_CHOOSE_TERM.to_string(),
+    });
+    entries
+}
+
 /// Config → Jobs → Webhooks.
 #[component]
 pub fn WebhookTile() -> Element {
@@ -829,7 +844,12 @@ fn Form(
                             what: JOB_WHAT.to_string(),
                             why: JOB_WHY.to_string(),
                             if_wrong: JOB_IF_WRONG.to_string(),
-                            glossary: glossary(),
+                            glossary: job_glossary(),
+                            // At the top, above the options, because it is the
+                            // thing to read before them rather than after: the
+                            // list says what each job is, and this says how to
+                            // decide between them.
+                            lead: Some(LEAD.to_string()),
                             // The options themselves, above the prose. A
                             // dropdown of ids is the one control on this form
                             // whose choices cannot be read off it — `notify`
@@ -955,7 +975,8 @@ fn Form(
                             what: JOB_WHAT.to_string(),
                             why: JOB_WHY.to_string(),
                             if_wrong: JOB_IF_WRONG.to_string(),
-                            glossary: glossary(),
+                            glossary: job_glossary(),
+                            lead: Some(LEAD.to_string()),
                             extra: Some(rsx! {
                                 JobOptions {
                                     jobs: jobs.clone(),
@@ -1371,6 +1392,79 @@ const CREDENTIAL_IF_WRONG: &str =
      hook-signature-rejected.\n\nIf it is set but wrong, every delivery is refused the same way. \
      Copy it again from the provider rather than retyping it; a trailing newline is the classic \
      one, and it is invisible.";
+
+/// The line at the top of both job panels. Its whole job is to carry the link,
+/// so it says what is behind it rather than restating the panel.
+const LEAD: &str =
+    "[[How to choose]] — the question that actually decides this, worked through on the cases \
+     that come up: a provider you have not met, a delivery that is only an id, one endpoint doing \
+     several things, and a scheduled job you want to poke.";
+
+const HOW_TO_CHOOSE_TERM: &str =
+    "One question decides this, and it is not \"which job sounds right\". It is: what does one \
+     delivery cause? A webhook hands a stranger the trigger, so the job you pick is the whole of \
+     what they can make happen, and the answer is in each job's own description above — what it \
+     writes, what it sends, and to whom.\n\n\
+     WHEN YOU HAVE JUST BEEN GIVEN A URL BOX AND DO NOT KNOW WHAT THEY SEND\n\
+     Point a [[data payload webhook]] at demo and save it. demo records how many top-level keys \
+     arrived, what they are called, what type each one is and how many bytes the body was, and \
+     does nothing else — no file, no request, nothing outside its own run record. Let the \
+     provider send one, read the shape off Monitor → Jobs, and only then write the job that does \
+     the real work. This is the recommended path rather than a fallback, because the first \
+     delivery arrives when the other system decides and not when you are finished: better it \
+     lands somewhere with nothing to undo. It is also the only reliable way to find the field \
+     names, which providers nest one level deeper than their documentation says more often than \
+     not.\n\n\
+     WHEN THE DELIVERY IS A DOORBELL RATHER THAN THE FACTS\n\
+     A body that is only {\"ticket_id\": 999} tells you something changed and not what it now \
+     says. That is a [[notification webhook]]: rn fetches the record first and hands the job \
+     { id, notification, detail }. The job to name here is the one that acts on the *record* — \
+     the delivery has already been dealt with by the time it starts. Get the lookup working \
+     against demo before naming the real job; a failed fetch leaves the delivery accepted and no \
+     job started at all, which looks like silence rather than like an error.\n\n\
+     WHEN ONE ENDPOINT HAS TO DO SEVERAL DIFFERENT THINGS\n\
+     A chat command, a home-automation panel, a deploy button: that is a [[command webhook]], and \
+     the choice is made once per row of the routing table rather than once for the hook. Two \
+     things follow. The blast radius is every job in the table, not the one you were thinking \
+     about when you added the credential; and one signing secret admits a caller to all of them, \
+     so the table is the security boundary. Keep the destructive ones out of it unless the \
+     sender is something you control.\n\n\
+     WHEN YOU WANT A SCHEDULED JOB POKED ON DEMAND\n\
+     watch-upstreams and watch-feeds run on a schedule and read nothing out of ctx.payload. \
+     Pointing a data-payload hook at one of them is still a perfectly good use of this field — CI \
+     publishes a release, the hook fires, the watcher runs now instead of at the top of the hour. \
+     The delivery is the trigger, and the body is ignored on purpose. Two caveats: one run of a \
+     job at a time, so a burst records skips rather than queueing; and the job's own memory means \
+     the second run inside a minute has nothing new to report, which is correct and looks like \
+     nothing happening.\n\n\
+     WHEN THE JOB SENDS SOMETHING OUTWARD\n\
+     notify posts to whatever URL notifyWebhook holds — a Slack or Discord or ntfy endpoint. \
+     Wiring a provider straight to it turns their delivery rate into your notification rate, and \
+     providers retry. It is usually the wrong job to name here: notify is built to be another \
+     job's onChange or onFailure handler, where it fires on something worth saying rather than \
+     on every delivery.\n\n\
+     WHEN THE JOB CHANGES THINGS ON DISK\n\
+     prune-profiles deletes files. Nothing stops you naming it, and the risk is not that it is \
+     reckless — its patterns are anchored — but that the timing stops being yours. It runs with \
+     maxAgeDays at its declared default on every delivery, because a webhook cannot supply input; \
+     \"just this once, thirty days\" is not a thing a delivery can say.\n\n\
+     WHEN THE JOB YOU WANT DOES NOT EXIST YET\n\
+     Name demo, register the endpoint with the provider, and let it collect. A job file is a \
+     restart away and a provider's settings screen is often not open again for a week — the \
+     deliveries you gather meanwhile are what you write the real job against.\n\n\
+     FIVE QUESTIONS FOR ANY OPTION\n\
+     What does one run write, and where — its description says. Does it need a credential that is \
+     not set? Then every delivery fails before its first line. Does it declare an input with no \
+     default? Then every delivery is refused before it starts, because a delivery supplies none. \
+     Does it name an onFailure or onChange handler? Then one delivery starts two jobs. Does it \
+     already declare a webhook of its own? Then you are adding a second door to the same room, \
+     which is allowed and worth knowing.\n\n\
+     WHAT THIS CHOICE CANNOT DO\n\
+     It cannot vary anything per delivery — inputs are declared, not sent. It cannot get an \
+     answer back to the provider: the listener replies 202 the moment the signature checks out, \
+     so their log is green whether the job succeeded, failed, or was skipped. And it cannot be \
+     checked from their side at all. Monitor → Jobs is the only place the answer exists, which is \
+     why naming the wrong job is the one mistake here that nothing reports.";
 
 const JOB_WHAT: &str =
     "The job a verified delivery runs — the options above, in the order the dropdown offers \
