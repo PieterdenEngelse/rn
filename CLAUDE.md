@@ -475,13 +475,18 @@ restart it the way systemd owns it:
 Restarting to pick up a registry change, or a new bundled runtime, is normal and
 expected. It is the packaged runtime, not `be/d`, and it does not watch source.
 
-**Do not reach for `rn --stop` or the `be/s` shorthand to cycle it.** They still
-work, and they are the wrong tool here for a reason written into the unit: a
-deliberate `--stop` exits 0, `Restart=on-failure` therefore leaves it down on
-purpose, and starting it again by hand puts the launcher back under whatever
-shell you were in — which is precisely the orphan the unit was added to remove.
-Those two commands are for a launcher you started yourself, and `--status` is
-worth reading either way.
+**`be/s` refuses to start or stop it while that unit is active**, and names the
+command to use instead — the guard is in the script rather than only here,
+because this paragraph used to give the opposite advice and a session followed
+it. The reason is written into the unit: a deliberate `--stop` exits 0,
+`Restart=on-failure` therefore leaves the API down *on purpose*, and starting
+the launcher again from a shell puts it back outside the cgroup, under whatever
+terminal ran it — precisely the orphan the unit was added to remove.
+
+`--status` and `--print-env` pass straight through, since they only read. The
+launcher binary itself is deliberately unguarded: it is what the unit's own
+`ExecStop` runs, and it is the right tool for a launcher you started yourself —
+the scratch backend in `docs/dev.md`, for one.
 
 **Because it can still be orphaned, and has been.** The launcher runs in the
 foreground and does not daemonize, so a session that starts it in the background

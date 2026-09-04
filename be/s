@@ -1,3 +1,73 @@
 #!/bin/bash
 # Shorthand for the launcher — keeps the path in one place.
-exec "$(dirname "$0")/../target/debug/rn" "$@"
+#
+# It also refuses to start or stop the backend while systemd owns one, which is
+# the case on this machine: rn-backend.service runs target/debug/rn in the
+# foreground and that launcher runs the Node child. Two supervisors for one
+# process is the bug, and it is not a loud one — `be/s --stop` succeeds, exits
+# 0, and the unit's Restart=on-failure then leaves the API down *on purpose*,
+# because a deliberate stop is not a failure. The obvious recovery, starting the
+# launcher again from a shell, is worse: it comes back outside the cgroup, under
+# whatever terminal ran it, which is exactly the orphan the unit was added to
+# remove. CLAUDE.md walked into this and told a session to do it.
+#
+# Reads are still reads. --status and --print-env answer questions about the
+# running instance and change nothing, so they go straight through; the guard is
+# only about starting and stopping.
+# Absolute, resolved from the worktree root rather than left relative: the
+# root exists whatever the cwd, target/debug may not exist yet, and the
+# message below compares this path against the one the unit runs.
+root="$(cd "$(dirname "$0")/.." && pwd)"
+launcher="$root/target/debug/rn"
+
+# Every flag the launcher treats as a question. Anything else — including no
+# arguments at all, which is the ordinary start — acts on the process.
+reads_only=1
+[ $# -eq 0 ] && reads_only=0
+for arg in "$@"; do
+    case "$arg" in
+        --status|--print-env|-h|--help) ;;
+        *) reads_only=0 ;;
+    esac
+done
+
+# `is-active` is the whole test, and its absence has to mean "no opinion"
+# rather than "no service": this script runs in containers and on machines with
+# no user manager, and a guard that mistakes a missing systemctl for a free
+# field would refuse to start the backend anywhere it is actually needed.
+if [ "$reads_only" -eq 0 ] && command -v systemctl >/dev/null 2>&1 &&
+    systemctl --user is-active --quiet rn-backend.service 2>/dev/null; then
+
+    pid=$(systemctl --user show -p MainPID --value rn-backend.service 2>/dev/null)
+    since=$(systemctl --user show -p ActiveEnterTimestamp --value rn-backend.service 2>/dev/null)
+    echo "be/s: rn-backend.service is running it (pid ${pid:-unknown}${since:+, since $since})."
+
+    # Which half of the advice is right depends on what was asked for, and the
+    # wrong half is worse than none — telling someone to restart when they
+    # meant to stop leaves them with a service they wanted down.
+    case " $* " in
+        *" --stop "*)
+            echo "be/s: systemd owns stopping it:  systemctl --user stop rn-backend"
+            echo "be/s: doing it from here exits 0, so Restart=on-failure keeps it down and"
+            echo "be/s: systemd still believes it is running." ;;
+        *)
+            echo "be/s: to pick up a registry change or a new bundled runtime:"
+            echo "be/s:     systemctl --user restart rn-backend" ;;
+    esac
+
+    # Worth saying when they differ, because they do in every worktree but one:
+    # the service runs ~/rn's launcher, and a be/s in ~/cc is a different binary
+    # reaching the same ~/.config/rn state. That is how a stop from one tree
+    # takes down a backend built from another.
+    running=$(systemctl --user show -p ExecStart --value rn-backend.service 2>/dev/null |
+        grep -o 'path=[^ ;]*' | head -1 | cut -d= -f2)
+    if [ -n "$running" ] && [ "$running" != "$launcher" ]; then
+        echo "be/s: it runs ${running/#$HOME/\~}; this is ${launcher/#$HOME/\~} — a different build,"
+        echo "be/s: the same ~/.config/rn underneath it."
+    fi
+
+    echo "be/s: nothing was done. Run the launcher directly if you meant to bypass this."
+    exit 1
+fi
+
+exec "$launcher" "$@"
