@@ -1,7 +1,7 @@
 #!/bin/bash
 # Where a worktree's dev backend listens, and where its frontend looks for it.
 #
-# Sourced by fe/serve.sh and be/s so the rule lives once. Both need the same
+# Sourced by fe/serve.sh and be/d so the rule lives once. Both need the same
 # answer — a frontend pointed at a backend that is not there is a page of
 # "backend unreachable", which looks like a broken build rather than a
 # misconfigured pair.

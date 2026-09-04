@@ -468,9 +468,20 @@ nothing in the store to say whose entry it was.
 The backend on **:3010** is launcher-supervised and the launcher is
 **systemd-supervised** — `rn-backend.service`, a user unit, runs
 `target/debug/rn` in the foreground and that process runs the Node child. So
-restart it the way systemd owns it:
+restart it the way systemd owns it — `be/r` is that line, and reports what you
+restarted for:
 
-    systemctl --user restart rn-backend
+    $ be/r
+    be/r: rn-backend.service restarted — launcher pid 84540, node pid 84545
+    be/r: runtime ~/rn/be/runtime/bin/node (v24.20.0)
+    be/r: listening on 3010 3011
+
+The runtime line is the one that earns it: after `scripts/install-node.sh` the
+old process keeps executing the binary it opened, however many times the file
+underneath is replaced, so "restarted" on its own does not answer the question
+you restarted to ask. `be/r` restarts *the service*, never your worktree —
+there is one unit and it runs `~/rn`'s launcher, so `be/r` from `~/cc` restarts
+`~/rn`'s backend, which is the right answer and not the obvious one.
 
 Restarting to pick up a registry change, or a new bundled runtime, is normal and
 expected. It is the packaged runtime, not `be/d`, and it does not watch source.
