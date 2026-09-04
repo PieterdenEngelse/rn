@@ -524,18 +524,33 @@ both halves of it have already surprised a session in one morning. As of
 | `~/cb` | → `~/rn` | → `~/rn` | → `~/rn` |
 | `~/cc` | → `~/rn` | own | own |
 
-So **`npm install` is never a local act**: run in any worktree it rewrites
-`~/rn`'s tree and every symlink pointing at it. Upgrading daisyUI in `~/rn`
-moved `ca` and `cb` at the same instant, and reinstalling the bundled Node
-there moved `cb`'s runtime, neither of which asked for it. The reverse is the
-one to watch: a session on an older commit running `npm install` installs *that*
-lockfile for everybody, and nothing reports the disagreement.
+**Which direction you run `npm install` from decides what it does**, and the two
+outcomes are opposites:
 
-Two consequences worth holding. A worktree whose `node_modules` is a symlink
-cannot be on a different lockfile than `~/rn`, whatever its `package-lock.json`
-says — check what is installed rather than what is committed. And the CSS
-watcher trap above reaches across trees for the same reason: an `npm install`
-anywhere can swap a package under a watcher running somewhere else.
+- **In `~/rn`**, it updates the real directory, and every worktree symlinked to
+  it changes at that instant. Upgrading daisyUI there moved `ca` and `cb`;
+  reinstalling the bundled Node moved `cb`'s runtime. Neither asked for it, and
+  nothing announced it.
+- **In a symlinked worktree**, npm does *not* write through the link. It deletes
+  it and puts a real directory there — `npm warn reify Removing non-directory
+  …/be/node_modules`, one line, easy to miss. That worktree is then un-shared
+  for good and drifts on its own, while the others are untouched.
+
+So the hazard is not a session on an old commit installing its lockfile for
+everybody; that cannot happen from a symlinked tree. It is that a routine
+`npm install` silently changes the topology, and afterwards two trees that look
+identical are not.
+
+Two consequences worth holding. **Check what is installed, not what is
+committed** — a symlinked `node_modules` cannot disagree with `~/rn` whatever
+its own `package-lock.json` says, and an un-shared one can disagree with
+everything. And the CSS watcher trap above reaches across trees for the same
+reason: an `npm install` in `~/rn` can swap a package under a watcher running
+somewhere else.
+
+Landing a dependency bump therefore has a second half. `~/rn` needs the
+`npm install`, because that is the copy the symlinks point at; any worktree that
+has un-shared itself needs its own.
 
 The backend on **:3010** is launcher-supervised and the launcher is
 **systemd-supervised** — `rn-backend.service`, a user unit, runs
