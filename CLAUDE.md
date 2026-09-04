@@ -465,12 +465,25 @@ the reason each gets its own build directory: four backends sharing one
 `job-state.json` would have one worktree's run clear another's cursors, with
 nothing in the store to say whose entry it was.
 
-The backend on **:3010** is launcher-supervised — that is the packaged runtime,
-not `be/d`, and it does not watch source: manage it with `./target/debug/rn
---stop` and `--status`, or the `be/s` shorthand for the same binary. Restarting it to pick up a registry change is normal and
-expected.
+The backend on **:3010** is launcher-supervised and the launcher is
+**systemd-supervised** — `rn-backend.service`, a user unit, runs
+`target/debug/rn` in the foreground and that process runs the Node child. So
+restart it the way systemd owns it:
 
-**But it can still be orphaned, and has been.** The launcher runs in the
+    systemctl --user restart rn-backend
+
+Restarting to pick up a registry change, or a new bundled runtime, is normal and
+expected. It is the packaged runtime, not `be/d`, and it does not watch source.
+
+**Do not reach for `rn --stop` or the `be/s` shorthand to cycle it.** They still
+work, and they are the wrong tool here for a reason written into the unit: a
+deliberate `--stop` exits 0, `Restart=on-failure` therefore leaves it down on
+purpose, and starting it again by hand puts the launcher back under whatever
+shell you were in — which is precisely the orphan the unit was added to remove.
+Those two commands are for a launcher you started yourself, and `--status` is
+worth reading either way.
+
+**Because it can still be orphaned, and has been.** The launcher runs in the
 foreground and does not daemonize, so a session that starts it in the background
 leaves it running after that session ends — one survived 21 hours that way, with
 no tty and a parent that had exited, while `--status` reported only `running (pid
