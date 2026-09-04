@@ -52,8 +52,12 @@ whichever panel reads it first. One definition makes that a build failure.
   `#[serde(rename)]` and `fe` stops parsing `/api/params` outright, which is a
   blank page rather than one `undefined` field.
 - **`fe` takes it `default-features = false`**, switching off the `typescript`
-  feature so `ts-rs` never reaches the wasm bundle. Verify with `cargo tree
-  --target wasm32-unknown-unknown -i ts-rs` — it should find nothing.
+  feature so `ts-rs` never reaches the wasm bundle. Verify from `fe/`, not the
+  repo root: `cargo tree --target wasm32-unknown-unknown -i ts-rs` should answer
+  `did not match any packages`. From the root the same command prints `ts-rs →
+  shared → fe` and reads as a violation, but that path is the workspace's —
+  `shared` is a member there too, built with its own default features on, and
+  the reverse-dependency tree says nothing about what `fe` actually compiles.
 - **`fe` cannot `impl` a shared type** (orphan rule). Behaviour hanging off a
   wire type is a free function or extension trait in `fe` — see `api/history.rs`,
   and `trigger_label` and `runtime_key` in `pages/monitor_jobs.rs` and
