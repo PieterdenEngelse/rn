@@ -1818,7 +1818,7 @@ fn JobOptions(jobs: Vec<String>, catalogue: Vec<CatalogueJob>, selected: String)
 
                             // Only when it is set. The flag is a narrow claim —
                             // every request a GET, the cursor the only write —
-                            // and not a safety rating: `demo` writes nothing at
+                            // and not a verdict on safety: `demo` writes nothing at
                             // all and does not declare it, having no cursor for
                             // it to mean anything about. An `else` branch here
                             // said "makes changes outside rn", which would have
