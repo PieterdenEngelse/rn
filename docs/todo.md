@@ -25,9 +25,13 @@ it. The decisions below are a different list and are still waiting.
 
 ---
 
-# Decisions waiting on the user
+# Decisions already taken
 
-## Three stale pins, as of 2026-09-04
+Nothing on this list is waiting on anyone. It is here so the next person does
+not re-decide it, and so a report that keeps naming these does not read as
+neglect.
+
+## Two stale pins, as of 2026-09-04 — both deliberate
 
 The standing output of `watch-upstreams`. Deliberately not maintained as a list
 here — the list is what the job is for, and a copy in a document is a copy that
@@ -38,18 +42,19 @@ the last one, which on most days is nothing at all.
 What it reported on the day this line was written, as resolved versions rather
 than manifest ranges:
 
-| upstream | on | latest | what to do |
+| upstream | on | latest | why it stays |
 |---|---|---|---|
-| `typescript` | 5.9.3 | 7.0.2 | a major — read about it first |
-| `@types/node` | 24.13.3 | 26.4.1 | **never on its own** — see below |
-| `gloo-timers` | 0.3.0 | 0.4.0 | **not yet** — see below |
+| `@types/node` | 24.13.3 | 26.4.1 | it is `be/.nvmrc` spelled twice — see below |
+| `gloo-timers` | 0.3.0 | 0.4.0 | duplicates a crate `dioxus-web` holds — see below |
 
-Two of the three are decisions rather than work nobody got to, which leaves
-`typescript` as the only open one — and it is a reading task before it is an
-upgrade. 5.9.3 is the top of a line with 24 stable releases behind it; 7.0.2 is
-the single stable release on its own, two majors away, and `latest` points at it
-because that is what `latest` means. Newest published and ready for this
-repository are different questions.
+Both are decisions, so the job will keep reporting two upstreams forever and
+that is correct rather than stale. Neither is work nobody got to.
+
+`typescript 5.9.3 → 7.0.2` was the third and was taken in 30d54bb. The reason
+is worth one line here because it is the argument that decided it: 6.0.3
+measured 6.84s against 5.9.3's 6.81s — the same JavaScript compiler — while
+7.0.2, the native port, does the same check in 1.47s at half the peak memory.
+There was no conservative middle option, only the one we had and the new one.
 
 `daisyui 5.7.20 → 5.7.28` was taken in 306cdba. Worth one line for the method
 rather than the outcome: `^5.0.0` already permitted it, so it was `npm update`
