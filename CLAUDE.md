@@ -141,6 +141,23 @@ gives you http://localhost:8080 instead.
 never hand-edit `output.css`. Re-run `npm run css:build` after adding class
 names Tailwind hasn't seen yet, or keep `npm run css:watch` running.
 
+**Upgrading a package that contributes CSS means restarting the dev server**,
+not just `npm install`. A long-running `css:watch` accumulates and never prunes:
+swap daisyUI underneath it and its next write is the *union* of both versions —
+the new one's rules plus theme variables only the old one referenced. That file
+then matches no one-shot build, so the tree is dirty for as long as the watcher
+lives, and `rn-sync` refuses to fast-forward it. Measured on 2026-09-04: a
+watcher started 08:43 with daisyUI 5.7.20, `npm install` at 09:53 put 5.7.28
+under it, and the result carried 5.7.28's `aria-checked=mixed` rules *and*
+`--ease-out`, which nothing in `fe/` has ever referenced. `css:build` alone
+fixes the file; only a restart fixes the watcher, and `serve.sh` runs a
+synchronous `css:build` at startup for exactly that reason.
+
+It is also why a bump like this has to be installed in every tree that has a
+watcher running, in the same way a Node bump needs `scripts/install-node.sh`
+re-run in every tree that has a `be/runtime`. Landing the lockfile is not the
+end of it.
+
 **The stylesheet URL is content-hashed, so never fetch a remembered one.**
 `dx` does re-bundle a CSS change and serve it within about 20 seconds —
 measured, both for a CSS-only edit and for one made alongside a Rust change.
