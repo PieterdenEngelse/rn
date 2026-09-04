@@ -41,6 +41,25 @@ What it reported on the day this line was written: `typescript ^5.8 → 7.0.2`,
 
 `typescript` is a major and wants reading about before it is taken.
 
+`@types/node ^24 → 26.4.1` is reported and should not be taken, and this one is
+permanent rather than a matter of timing. Its majors track Node's: `26.4.1`
+describes Node 26, and `be/.nvmrc` says `v24.20.0`. Ahead of the runtime, the
+definitions describe APIs the process does not have — `npm run typecheck`
+passes, nothing links, nothing warns, and the failure arrives at runtime. Being
+types-only is what makes it dangerous rather than cheap: there is no build step
+left to catch the disagreement.
+
+There is also nothing on offer. `^24.0.0` already floats to `24.13.3`, the
+newest of 66 releases on that line and the one installed. The only thing the
+report names is the major jump.
+
+So **`@types/node` moves when `be/.nvmrc` moves**, and not before — it is a
+second spelling of the runtime version, not an independent pin. The job will go
+on reporting it for as long as the runtime is not on the newest Node major,
+because it asks npm for the `latest` tag and that is the newest major by
+definition. That is the job being right about the registry and wrong about this
+repository, and it is not a bug to fix in the parser.
+
 `gloo-timers 0.3 → 0.4` was taken on 2026-09-04 and dropped again before it
 landed, which is a decision against and so belongs here rather than in a commit
 nobody will find. The whole release note is "MSRV updated to 1.82": no API
