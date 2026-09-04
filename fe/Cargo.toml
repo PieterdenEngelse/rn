@@ -9,9 +9,9 @@ edition = "2021"
 # `typescript` feature so ts-rs never reaches the wasm bundle — this crate is
 # compiled to wasm and anything pulled in here ships to the browser.
 shared = { path = "../shared", default-features = false }
-dioxus = { version = "=0.7.9", features = ["web"] }
+dioxus = { version = "=0.7.10", features = ["web"] }
 manganis = "0.7"
-dioxus-router = { version = "=0.7.9" }
+dioxus-router = { version = "=0.7.10" }
 web-sys = { version = "0.3", features = ["Window", "Document", "Element", "DomTokenList", "Navigator", "Clipboard", "RequestMode", "Location"] }
 wasm-bindgen = "0.2"
 # Already in the tree via web-sys; named directly for Date::now() on the Jobs page.
