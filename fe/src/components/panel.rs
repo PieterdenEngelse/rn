@@ -8,9 +8,15 @@ pub fn Panel(
     /// Optional control rendered beside the title — an InfoButton explaining
     /// what the whole panel is about, as opposed to any one row inside it.
     #[props(default = None)] info: Option<Element>,
-    /// Controls belonging to the panel as a whole — placed on the title line,
-    /// to the right of the title and subtitle, rather than as a strip beneath
-    /// it that costs a row of vertical space.
+    /// Controls belonging to the panel as a whole — placed on the title line
+    /// rather than as a strip beneath it that costs a row of vertical space.
+    ///
+    /// At the row's **far right**, outside the `header_class` box, because that
+    /// box is sometimes sized to align its info button with a column of buttons
+    /// further down the panel. A control added inside it steals the width the
+    /// title and subtitle were fitted to, and the subtitle wraps — which is
+    /// exactly what putting the dry-run switch on Config's Runtime tile did to
+    /// "which runtime runs the app".
     #[props(default = None)] actions: Option<Element>,
     /// Extra classes for the title row. Lets a page size that row so its info
     /// button lines up with a column of them further down the panel; without
@@ -40,9 +46,9 @@ pub fn Panel(
                         if let Some(info) = info {
                             {info}
                         }
-                        if let Some(actions) = actions {
-                            {actions}
-                        }
+                    }
+                    if let Some(actions) = actions {
+                        {actions}
                     }
                 }
             }
