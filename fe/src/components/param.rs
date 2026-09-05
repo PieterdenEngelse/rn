@@ -29,6 +29,33 @@ pub const PARAM_TEXT_INPUT_CLASS: &str =
     "input input-xs input-bordered bg-gray-700 text-gray-200 w-56";
 /// No `select-bordered`: daisyUI 5 dropped the `*-bordered` modifiers and
 /// borders the control by default, so that class generates nothing.
+/// A boolean toggle. Both states are painted explicitly, because neither the
+/// browser nor daisyUI can be trusted to make them differ enough to read.
+///
+/// daisyUI's own rule hands the checked state `var(--color-base-100)`, which on
+/// this dark theme lands close to the unchecked one. Worse, the code this
+/// replaced asked for `background-color: ` with an empty value when on — an
+/// invalid declaration that browsers drop outright, so the on state had no
+/// colour of its own at all and the off state was the brighter of the two.
+///
+/// See Form Control Rules and Browser independence in CLAUDE.md: a control
+/// whose state is only legible from its native rendering is not finished.
+pub const PARAM_TOGGLE_CLASS: &str = "toggle toggle-sm !border !border-white";
+
+/// The inline style for a toggle in the given state.
+///
+/// `#1D6B9A` is the checkbox fill from CLAUDE.md's app-chrome table, so a
+/// checked toggle and a checked checkbox agree. Off takes gray-600 — the
+/// border colour inactive controls already use here — so it reads as muted
+/// against a gray-800 panel rather than brighter than on. The knob stays white
+/// against both.
+pub fn param_toggle_style(on: bool) -> String {
+    format!(
+        "border: 1px solid white; background-color: {}; --input-color: #fff;",
+        if on { "#1D6B9A" } else { "#4b5563" },
+    )
+}
+
 pub const PARAM_SELECT_CLASS: &str = "select select-xs bg-gray-700 text-gray-200 w-64";
 
 /// A board grouping related parameters, per the hardware page.

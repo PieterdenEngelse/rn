@@ -973,11 +973,8 @@ fn ParamBlock(
                     ParamType::Bool => rsx! {
                         input {
                             r#type: "checkbox",
-                            class: "toggle toggle-sm !border !border-white",
-                            style: format!(
-                                "border: 1px solid white; background-color: {}; --input-color: #fff;",
-                                if bool_value { "" } else { "#d1d5db" },
-                            ),
+                            class: PARAM_TOGGLE_CLASS,
+                            style: param_toggle_style(bool_value),
                             checked: bool_value,
                             onchange: move |evt| {
                                 let on = evt.checked();

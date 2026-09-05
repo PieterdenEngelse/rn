@@ -5,7 +5,7 @@ use crate::api::{
     Trigger, WebhookAuth, WebhookInfo, WebhookScheme,
 };
 use crate::app::Route;
-use crate::components::param::PARAM_INPUT_ROW_CLASS;
+use crate::components::param::{param_toggle_style, PARAM_INPUT_ROW_CLASS, PARAM_TOGGLE_CLASS};
 use crate::components::{InfoButton, Panel};
 use dioxus::prelude::*;
 use dioxus_router::Link;
@@ -745,13 +745,10 @@ fn InputField(
             rsx! {
                 input {
                     r#type: "checkbox",
-                    class: "toggle toggle-sm !border !border-white",
+                    class: PARAM_TOGGLE_CLASS,
                     // Never `disabled` and never dimmed by opacity — see the
                     // Form Control Rules in CLAUDE.md.
-                    style: format!(
-                        "border: 1px solid white; background-color: {}; --input-color: #fff;",
-                        if on { "" } else { "#d1d5db" },
-                    ),
+                    style: param_toggle_style(on),
                     checked: on,
                     onchange: move |evt| {
                         draft.write().insert(id.clone(), serde_json::json!(evt.checked()));
