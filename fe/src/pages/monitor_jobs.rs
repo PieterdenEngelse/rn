@@ -24,15 +24,30 @@ pub fn MonitorJobs() -> Element {
                         if j.dry_run {
                             DryRunBanner {}
                         }
-                        Panel {
-                            title: "Jobs".to_string(),
-                            subtitle: Some("automations this install can run".to_string()),
-                            Catalogue { jobs: j.clone(), on_ran: move |_| jobs.restart() }
-                        }
-                        Panel {
-                            title: "In flight".to_string(),
-                            subtitle: Some("work a restart will wait for".to_string()),
-                            RunningList { jobs: j.clone() }
+                        // Two columns, because neither of these fills a wide
+                        // window alone: the catalogue is a column of cards that
+                        // stops at its content, and In flight is one line most
+                        // of the time. Stacked, they pushed Recent runs below
+                        // the fold on a display with room for all three.
+                        //
+                        // `items-start` so In flight keeps its own height
+                        // rather than stretching to the catalogue's, which
+                        // would draw a tall empty box around one sentence.
+                        //
+                        // Recent runs is deliberately not in here: it is a
+                        // table, and a table in half a window wraps its own
+                        // columns rather than showing more of them.
+                        div { class: "grid grid-cols-1 xl:grid-cols-2 gap-4 items-start",
+                            Panel {
+                                title: "Jobs".to_string(),
+                                subtitle: Some("automations this install can run".to_string()),
+                                Catalogue { jobs: j.clone(), on_ran: move |_| jobs.restart() }
+                            }
+                            Panel {
+                                title: "In flight".to_string(),
+                                subtitle: Some("work a restart will wait for".to_string()),
+                                RunningList { jobs: j.clone() }
+                            }
                         }
                         Panel {
                             title: "Recent runs".to_string(),
