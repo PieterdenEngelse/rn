@@ -5,7 +5,8 @@
 //! `web-sys`, neither of which belongs anywhere near a shared type crate.
 
 use super::wire::{
-    ConnectionResponse, EnvResponse, HealthResponse, JobErrors, JobRunResult, JobSource, JobsResponse, NodeHistory, NodeMetrics,
+    ConnectionResponse, EnvResponse, HealthResponse, JobConfigResponse, JobErrors, JobOverride,
+    JobRunResult, JobSource, JobsResponse, NodeHistory, NodeMetrics,
     ParamsResponse, RestartOutcome, RunsResponse, SaveResponse, StateResetResponse, StatusResponse,
     CredentialSaveResponse, CredentialsResponse, StopOutcome, TestDelivery, WebhookDef,
     WebhookSaveResponse, WebhooksResponse,
@@ -79,6 +80,33 @@ pub async fn save_one_setting(id: &str, value: serde_json::Value) -> Result<(), 
             .collect::<Vec<_>>()
             .join("; "))
     }
+}
+
+/// Change what this install has overridden about one job.
+///
+/// The whole override object, not the field that moved: `{ kind: "inherit" }`
+/// is how a field goes back to what the job file says, and "send me only what
+/// changed" cannot express that — it is the same shape of gap that makes a
+/// plain optional field unable to hold both "inherit" and "none".
+pub async fn save_job_config(
+    id: &str,
+    override_: &JobOverride,
+) -> Result<JobConfigResponse, String> {
+    let body = serde_json::to_string(override_).map_err(|e| format!("{e}"))?;
+    // Interpolated like every other per-job endpoint here: ids come from the
+    // catalogue rather than from a user, and the backend decodes the segment
+    // before looking one up.
+    let resp = gloo_net::http::Request::put(&format!("{API_BASE}/api/jobs/{id}/config"))
+        .header("content-type", "application/json")
+        .body(body)
+        .map_err(|e| format!("{e}"))?
+        .send()
+        .await
+        .map_err(|e| format!("{e}"))?;
+
+    resp.json::<JobConfigResponse>()
+        .await
+        .map_err(|e| format!("{e}"))
 }
 
 pub async fn fetch_jobs() -> Result<JobsResponse, String> {

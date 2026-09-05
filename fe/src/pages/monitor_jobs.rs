@@ -1010,7 +1010,10 @@ fn RunningList(jobs: JobsResponse) -> Element {
 /// Relative rather than absolute because the question a reader has is "how long
 /// until this happens", and an absolute time makes them do the subtraction —
 /// in a zone they have to first confirm is the one the backend used.
-fn relative(epoch_ms: f64) -> String {
+/// `pub(crate)` because Config → Jobs shows a next-run time too, and a second
+/// implementation of "in 21h 27m" is how two pages come to disagree about the
+/// same instant.
+pub(crate) fn relative(epoch_ms: f64) -> String {
     let now = js_sys::Date::now();
     let mins = ((epoch_ms - now) / 60_000.0).round() as i64;
     if mins < 0 {

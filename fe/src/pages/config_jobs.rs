@@ -1,9 +1,11 @@
 use crate::api::{
-    fetch_jobs, save_one_setting, CatalogueJob, JobsConfig, JobsResponse, RetryPolicy,
+    fetch_jobs, save_job_config, save_one_setting, CatalogueJob, DeclaredConfig, HandlerOverride,
+    JobOverride, JobsConfig, JobsResponse, RetryOverride, RetryPolicy, ScheduleOverride,
     ScheduledJob, WebhookAuth, WebhookInfo, WebhookScheme,
 };
 use crate::components::param::{
-    param_toggle_style, PARAM_INPUT_ROW_CLASS, PARAM_NUMBER_INPUT_WIDE_CLASS, PARAM_TOGGLE_CLASS,
+    param_toggle_style, PARAM_INPUT_ROW_CLASS, PARAM_NUMBER_INPUT_CLASS,
+    PARAM_NUMBER_INPUT_WIDE_CLASS, PARAM_SELECT_CLASS, PARAM_TOGGLE_CLASS,
 };
 use crate::components::{InfoButton, Panel, WebhookTile};
 use crate::pages::monitor_jobs::duration;
@@ -115,7 +117,13 @@ pub fn ConfigJobs() -> Element {
                         Panel {
                             title: "Per job".to_string(),
                             subtitle: Some("what each one declares for itself".to_string()),
-                            PerJob { jobs: j.clone() }
+                            PerJob {
+                                jobs: j.clone(),
+                                // Same refetch as the board above: what a row
+                                // shows is what the backend confirmed, never
+                                // what was typed at it.
+                                on_saved: move |_| jobs.restart(),
+                            }
                         }
                     }
                 }
@@ -523,7 +531,11 @@ fn remembered(config: &JobsConfig) -> String {
 }
 
 #[component]
-fn PerJob(jobs: JobsResponse) -> Element {
+fn PerJob(jobs: JobsResponse, on_saved: EventHandler<()>) -> Element {
+    // Built once for the whole board rather than per card: every handoff
+    // control offers the same list, and it is the catalogue's list rather than
+    // one the page invents — the backend refuses an id it does not know.
+    let job_ids: Vec<String> = jobs.catalogue.iter().map(|j| j.id.clone()).collect();
     if jobs.catalogue.is_empty() {
         return rsx! {
             p { class: "text-gray-400",
@@ -544,6 +556,8 @@ fn PerJob(jobs: JobsResponse) -> Element {
                     job: job.clone(),
                     default_timeout_ms: jobs.config.default_timeout_ms,
                     scheduled: jobs.scheduled.iter().find(|s| s.id == job.id).cloned(),
+                    job_ids: job_ids.clone(),
+                    on_saved,
                 }
             }
         }
@@ -567,16 +581,188 @@ const CARD_ROW_CLASS: &str = "text-gray-300 param-row flex items-start gap-2 w-f
 const CARD_ROW_TEXT_CLASS: &str = "flex items-center gap-2 flex-wrap min-w-0";
 
 
+/// Write one job's overrides, and tell the page to refetch.
+///
+/// A free function rather than a closure in the card: the card needs to call it
+/// from nine handlers, and a closure capturing the job id is not `Copy`, so
+/// each handler would need its own clone of the same three lines.
+fn commit(
+    id: String,
+    next: JobOverride,
+    mut busy: Signal<bool>,
+    mut error: Signal<Option<String>>,
+    on_saved: EventHandler<()>,
+) {
+    busy.set(true);
+    error.set(None);
+    spawn(async move {
+        match save_job_config(&id, &next).await {
+            Ok(r) if r.ok => on_saved.call(()),
+            // Refused rather than clamped on the backend, so there is always
+            // something specific to say — "Timeout must be between 1000 and
+            // 86400000" beats a row that silently kept its old value.
+            Ok(r) => error.set(Some(
+                r.errors
+                    .iter()
+                    .map(|e| e.message.clone())
+                    .collect::<Vec<_>>()
+                    .join("; "),
+            )),
+            Err(e) => error.set(Some(e)),
+        }
+        busy.set(false);
+    });
+}
+
+/// Which option a schedule override selects.
+fn schedule_choice(o: &ScheduleOverride) -> &'static str {
+    match o {
+        ScheduleOverride::Inherit => "inherit",
+        ScheduleOverride::Manual => "manual",
+        ScheduleOverride::EveryMinutes { .. } => "every",
+        ScheduleOverride::DailyAt { .. } => "daily",
+    }
+}
+
+fn retry_choice(o: &RetryOverride) -> &'static str {
+    match o {
+        RetryOverride::Inherit => "inherit",
+        RetryOverride::Off => "off",
+        RetryOverride::Policy { .. } => "policy",
+    }
+}
+
+/// What the job file says its schedule is, in words.
+fn declared_schedule(d: &DeclaredConfig) -> String {
+    match d.schedule.as_ref() {
+        Some(crate::api::Schedule::EveryMinutes { minutes }) if *minutes == 1 => {
+            "every minute".to_string()
+        }
+        Some(crate::api::Schedule::EveryMinutes { minutes }) => format!("every {minutes} minutes"),
+        Some(crate::api::Schedule::DailyAt { hour, minute }) => {
+            format!("daily at {hour:02}:{minute:02}")
+        }
+        None => "no schedule".to_string(),
+    }
+}
+
+/// What the job file says its ceiling is — or that it names none.
+fn declared_timeout(d: &DeclaredConfig, default_ms: f64) -> String {
+    match d.timeout_ms {
+        Some(ms) => duration(ms),
+        None => format!("none of its own, so the default {}", duration(default_ms)),
+    }
+}
+
+/// The "this is not what the file says" note, shown only when it is true.
+///
+/// Without it an overridden row is indistinguishable from a job that always
+/// said that — which is the whole reason `declared` is on the wire.
+fn declared_note(declared: String, o: &ScheduleOverride) -> Element {
+    let declared = declared;
+    if matches!(o, ScheduleOverride::Inherit) {
+        return rsx! {};
+    }
+    rsx! {
+        span { class: "text-gray-400", "— set here; the job declares {declared}" }
+    }
+}
+
+/// A next-run time, or nothing when the scheduler has not placed one yet.
+fn relative_or_blank(next_run_at: f64) -> String {
+    crate::pages::monitor_jobs::relative(next_run_at)
+}
+
+/// Where a job hands off, as a control.
+///
+/// One component for `onFailure` and `onChange` because they take the same
+/// shape and the same three answers — inherit, nothing, or another job — and
+/// two copies would drift on the day one of them grew a fourth.
+#[component]
+fn HandlerSelect(
+    value: HandlerOverride,
+    effective: Option<String>,
+    declared: Option<String>,
+    self_id: String,
+    job_ids: Vec<String>,
+    nothing_words: String,
+    on_pick: EventHandler<HandlerOverride>,
+) -> Element {
+    let selected = match &value {
+        HandlerOverride::Inherit => "inherit".to_string(),
+        HandlerOverride::Nothing => "nothing".to_string(),
+        HandlerOverride::Job { id } => id.clone(),
+    };
+    rsx! {
+        select {
+            class: PARAM_SELECT_CLASS,
+            value: "{selected}",
+            onchange: move |evt| {
+                let v = evt.value();
+                on_pick.call(match v.as_str() {
+                    "inherit" => HandlerOverride::Inherit,
+                    "nothing" => HandlerOverride::Nothing,
+                    other => HandlerOverride::Job { id: other.to_string() },
+                });
+            },
+            option { value: "inherit", "as the job declares" }
+            option { value: "nothing", "nothing" }
+            // Never itself: the runner refuses to recurse anyway, and the
+            // backend refuses the save, but an option nobody can choose is
+            // better than an error nobody expected.
+            for other in job_ids.iter().filter(|j| **j != self_id) {
+                option { value: "{other}", "→ {other}" }
+            }
+        }
+        match effective.as_ref() {
+            Some(h) => rsx! { span { class: "text-gray-300", "— runs {h}" } },
+            None => rsx! { span { class: "text-gray-400", "— {nothing_words}" } },
+        }
+        if !matches!(value, HandlerOverride::Inherit) {
+            span { class: "text-gray-400",
+                "— set here; the job declares {declared.clone().unwrap_or_else(|| \"nothing\".to_string())}"
+            }
+        }
+    }
+}
+
+/// "Reset to declared", in the cyan the colour rules give a secondary action.
+#[component]
+fn ResetLink(on_click: EventHandler<()>) -> Element {
+    rsx! {
+        button {
+            class: "cursor-pointer text-xs bg-transparent border-0 p-0",
+            style: "color: #22d3ee;",
+            onclick: move |_| on_click.call(()),
+            "reset to declared"
+        }
+    }
+}
+
 #[component]
 fn JobConfigRow(
     job: CatalogueJob,
     default_timeout_ms: f64,
     scheduled: Option<ScheduledJob>,
+    /// Every job id, so a handoff can name one without the page inventing the
+    /// list — the backend refuses an id it does not know, and offering one
+    /// would be building a refusal into the control.
+    job_ids: Vec<String>,
+    on_saved: EventHandler<()>,
 ) -> Element {
     // Whether the ceiling is the job's own or inherited is the whole question
     // on this row, and it is only answerable because the default is on the
     // wire — see JobsConfig in shared/src/jobs.rs.
     let inherited = job.timeout_ms == default_timeout_ms;
+    let busy = use_signal(|| false);
+    let mut error = use_signal(|| Option::<String>::None);
+    // Memos rather than clones, because every one of the nine handlers below
+    // needs both and a `String` moved into the first closure is gone from the
+    // second. A `Memo` is `Copy`, so each handler captures a handle and reads
+    // the value when it fires — which also means it reads what the *last save*
+    // confirmed rather than what this render happened to start with.
+    let id = use_memo(use_reactive!(|job| job.id.clone()));
+    let over = use_memo(use_reactive!(|job| job.overridden.clone()));
 
     rsx! {
         div { class: "rounded border border-gray-600 bg-gray-800 p-4",
@@ -596,76 +782,233 @@ fn JobConfigRow(
             dl { class: "mt-3 grid gap-x-6 gap-y-1 text-xs",
                 style: "grid-template-columns: max-content 1fr;",
                 dt { class: "text-gray-400", "Schedule" }
-                dd { class: "text-gray-300",
-                    match scheduled.as_ref() {
-                        Some(s) => rsx! { "{s.schedule}" },
-                        None => rsx! {
-                            span { class: "text-gray-400",
-                                "none — runs only when asked, from Monitor → Jobs or POST /api/jobs/{job.id}"
-                            }
-                        },
+                dd { class: CARD_ROW_CLASS,
+                    div { class: CARD_ROW_TEXT_CLASS,
+                        select {
+                            class: PARAM_SELECT_CLASS,
+                            value: schedule_choice(&job.overridden.schedule),
+                            onchange: move |evt| {
+                                let next = match evt.value().as_str() {
+                                    "manual" => ScheduleOverride::Manual,
+                                    "every" => ScheduleOverride::EveryMinutes { minutes: 60 },
+                                    "daily" => ScheduleOverride::DailyAt { hour: 3, minute: 0 },
+                                    _ => ScheduleOverride::Inherit,
+                                };
+                                commit(id(), JobOverride { schedule: next, ..over() },
+                                    busy, error, on_saved);
+                            },
+                            option { value: "inherit", "as the job declares" }
+                            option { value: "manual", "manual only" }
+                            option { value: "every", "every N minutes" }
+                            option { value: "daily", "daily at" }
+                        }
+                        // The fields belonging to the chosen form. Rendered from
+                        // the override rather than from the effective schedule:
+                        // typing into a box that is showing an inherited value
+                        // would silently turn an inheritance into an override.
+                        match &job.overridden.schedule {
+                            ScheduleOverride::EveryMinutes { minutes } => rsx! {
+                                input {
+                                    r#type: "number", class: PARAM_NUMBER_INPUT_CLASS,
+                                    min: "1", max: "1440", value: "{minutes}",
+                                    onchange: move |evt| {
+                                        if let Ok(m) = evt.value().trim().parse::<u32>() {
+                                            commit(id(), JobOverride {
+                                                schedule: ScheduleOverride::EveryMinutes { minutes: m },
+                                                ..over()
+                                            }, busy, error, on_saved);
+                                        }
+                                    },
+                                }
+                                span { class: "text-gray-400", "minutes" }
+                            },
+                            ScheduleOverride::DailyAt { hour, minute } => {
+                                let (h0, m0) = (*hour, *minute);
+                                rsx! {
+                                input {
+                                    r#type: "number", class: PARAM_NUMBER_INPUT_CLASS,
+                                    min: "0", max: "23", value: "{hour}",
+                                    onchange: move |evt| {
+                                        if let Ok(h) = evt.value().trim().parse::<u32>() {
+                                            commit(id(), JobOverride {
+                                                schedule: ScheduleOverride::DailyAt { hour: h, minute: m0 },
+                                                ..over()
+                                            }, busy, error, on_saved);
+                                        }
+                                    },
+                                }
+                                span { class: "text-gray-400", ":" }
+                                input {
+                                    r#type: "number", class: PARAM_NUMBER_INPUT_CLASS,
+                                    min: "0", max: "59", value: "{minute}",
+                                    onchange: move |evt| {
+                                        if let Ok(m) = evt.value().trim().parse::<u32>() {
+                                            commit(id(), JobOverride {
+                                                schedule: ScheduleOverride::DailyAt { hour: h0, minute: m },
+                                                ..over()
+                                            }, busy, error, on_saved);
+                                        }
+                                    },
+                                }
+                                }
+                            },
+                            _ => rsx! {},
+                        }
+                        // What is actually in force, and when it next fires —
+                        // the reading this row used to be, kept beside the
+                        // control that sets it.
+                        match scheduled.as_ref() {
+                            Some(s) => rsx! { span { class: "text-gray-300", "— {s.schedule}, next {relative_or_blank(s.next_run_at)}" } },
+                            None => rsx! {
+                                span { class: "text-gray-400",
+                                    "— runs only when asked, from Monitor → Jobs or POST /api/jobs/{job.id}"
+                                }
+                            },
+                        }
+                        {declared_note(declared_schedule(&job.declared), &job.overridden.schedule)}
                     }
                 }
 
                 dt { class: "text-gray-400", "Timeout" }
-                dd { class: "text-gray-300",
-                    "{duration(job.timeout_ms)}"
-                    if inherited {
-                        span { class: "text-gray-400", " — inherited, this job names none" }
-                    } else {
-                        span { class: "text-gray-400", " — its own, not the default" }
+                dd { class: CARD_ROW_CLASS,
+                    div { class: CARD_ROW_TEXT_CLASS,
+                        input {
+                            r#type: "number",
+                            class: PARAM_NUMBER_INPUT_WIDE_CLASS,
+                            min: "1000", max: "86400000",
+                            value: "{job.timeout_ms}",
+                            onchange: move |evt| {
+                                let raw = evt.value();
+                                match raw.trim().parse::<f64>() {
+                                    Ok(ms) => commit(id(), JobOverride {
+                                        timeout_ms: Some(ms), ..over()
+                                    }, busy, error, on_saved),
+                                    Err(_) => error.set(Some(format!("{raw:?} is not a number"))),
+                                }
+                            },
+                        }
+                        span { class: "text-gray-400", "ms — {duration(job.timeout_ms)}" }
+                        if job.overridden.timeout_ms.is_some() {
+                            span { class: "text-gray-400",
+                                "— set here; the job declares {declared_timeout(&job.declared, default_timeout_ms)}"
+                            }
+                            ResetLink {
+                                on_click: move |_| commit(id(), JobOverride {
+                                    timeout_ms: None, ..over()
+                                }, busy, error, on_saved),
+                            }
+                        } else if inherited {
+                            span { class: "text-gray-400", "— inherited, this job names none" }
+                        } else {
+                            span { class: "text-gray-400", "— its own, not the default" }
+                        }
                     }
                 }
 
                 dt { class: "text-gray-400", "On failure" }
-                dd { class: "text-gray-300",
-                    match job.on_failure.as_ref() {
-                        Some(h) => rsx! { "→ {h}" },
-                        None => rsx! {
-                            span { class: "text-gray-400",
-                                "nothing — a failure is recorded and stops there"
-                            }
-                        },
+                dd { class: CARD_ROW_CLASS,
+                    div { class: CARD_ROW_TEXT_CLASS,
+                        HandlerSelect {
+                            value: job.overridden.on_failure.clone(),
+                            effective: job.on_failure.clone(),
+                            declared: job.declared.on_failure.clone(),
+                            self_id: job.id.clone(),
+                            job_ids: job_ids.clone(),
+                            nothing_words: "nothing — a failure is recorded and stops there".to_string(),
+                            on_pick: move |next: HandlerOverride| commit(id(), JobOverride {
+                                on_failure: next, ..over()
+                            }, busy, error, on_saved),
+                        }
                     }
                 }
 
                 dt { class: "text-gray-400", "On change" }
-                dd { class: "text-gray-300",
-                    match job.on_change.as_ref() {
-                        Some(h) => rsx! { "→ {h}" },
-                        None => rsx! {
-                            span { class: "text-gray-400",
-                                "nothing — what this job notices stays on this page"
-                            }
-                        },
+                dd { class: CARD_ROW_CLASS,
+                    div { class: CARD_ROW_TEXT_CLASS,
+                        HandlerSelect {
+                            value: job.overridden.on_change.clone(),
+                            effective: job.on_change.clone(),
+                            declared: job.declared.on_change.clone(),
+                            self_id: job.id.clone(),
+                            job_ids: job_ids.clone(),
+                            nothing_words: "nothing — what this job notices stays on this page".to_string(),
+                            on_pick: move |next: HandlerOverride| commit(id(), JobOverride {
+                                on_change: next, ..over()
+                            }, busy, error, on_saved),
+                        }
                     }
                 }
 
                 dt { class: "text-gray-400", "Retry" }
                 dd { class: CARD_ROW_CLASS,
                     div { class: CARD_ROW_TEXT_CLASS,
-                    match job.retry.as_ref() {
-                        Some(r) => rsx! {
-                            span {
-                                "{r.attempts} attempts, {wait(r.backoff_ms)} between"
-                            }
-                            // The number nobody works out for themselves, and
-                            // the reason the ceiling above is not the answer to
-                            // "how long can this job hold the runner".
-                            span { class: "text-gray-400",
-                                "— up to {duration(worst_case(job.timeout_ms, r))} in all"
-                            }
-                        },
-                        None => rsx! {
-                            span { class: "text-gray-400",
-                                "none — one attempt, and a failure is recorded and stops there"
-                            }
-                        },
+                        select {
+                            class: PARAM_SELECT_CLASS,
+                            value: retry_choice(&job.overridden.retry),
+                            onchange: move |evt| {
+                                let next = match evt.value().as_str() {
+                                    "off" => RetryOverride::Off,
+                                    "policy" => RetryOverride::Policy { attempts: 3, backoff_ms: 30_000.0 },
+                                    _ => RetryOverride::Inherit,
+                                };
+                                commit(id(), JobOverride { retry: next, ..over() },
+                                    busy, error, on_saved);
+                            },
+                            option { value: "inherit", "as the job declares" }
+                            option { value: "off", "no retry" }
+                            option { value: "policy", "retry" }
+                        }
+                        match &job.overridden.retry {
+                            RetryOverride::Policy { attempts, backoff_ms } => {
+                                let (a0, b0) = (*attempts, *backoff_ms);
+                                rsx! {
+                                input {
+                                    r#type: "number", class: PARAM_NUMBER_INPUT_CLASS,
+                                    min: "1", max: "10", value: "{attempts}",
+                                    onchange: move |evt| {
+                                        if let Ok(a) = evt.value().trim().parse::<u32>() {
+                                            commit(id(), JobOverride {
+                                                retry: RetryOverride::Policy { attempts: a, backoff_ms: b0 },
+                                                ..over()
+                                            }, busy, error, on_saved);
+                                        }
+                                    },
+                                }
+                                span { class: "text-gray-400", "attempts," }
+                                input {
+                                    r#type: "number", class: PARAM_NUMBER_INPUT_WIDE_CLASS,
+                                    min: "0", max: "3600000", value: "{backoff_ms}",
+                                    onchange: move |evt| {
+                                        if let Ok(b) = evt.value().trim().parse::<f64>() {
+                                            commit(id(), JobOverride {
+                                                retry: RetryOverride::Policy { attempts: a0, backoff_ms: b },
+                                                ..over()
+                                            }, busy, error, on_saved);
+                                        }
+                                    },
+                                }
+                                span { class: "text-gray-400", "ms between" }
+                                }
+                            },
+                            _ => rsx! {},
+                        }
+                        // The worst case, which is the number nobody works out
+                        // for themselves and the reason the ceiling above is
+                        // not the answer to "how long can this job hold the
+                        // runner".
+                        match job.retry.as_ref() {
+                            Some(r) => rsx! {
+                                span { class: "text-gray-300",
+                                    "— {r.attempts} attempts, {wait(r.backoff_ms)} between, up to {duration(worst_case(job.timeout_ms, r))} in all"
+                                }
+                            },
+                            None => rsx! {
+                                span { class: "text-gray-400",
+                                    "— one attempt, and a failure is recorded and stops there"
+                                }
+                            },
+                        }
                     }
-                    }
-                    // Inline beside its subject: this row has a gotcha its
-                    // siblings do not, and the card's own button explains the
-                    // job rather than the policy.
                     InfoButton {
                         title: "Retry".to_string(),
                         what: RETRY_WHAT.to_string(),
@@ -771,6 +1114,15 @@ fn JobConfigRow(
 
                 dt { class: "text-gray-400", "Declared in" }
                 dd { class: "text-gray-300", code { "{job.source}" } }
+            }
+            // One line for the whole card rather than one per control: a save
+            // is refused as a whole, the message names the field, and nine
+            // error slots would be nine places to look for one sentence.
+            if busy() {
+                p { class: "text-gray-400 text-xs mt-2", "saving…" }
+            }
+            if let Some(message) = error() {
+                p { class: "text-red-400 text-xs mt-2", "Not saved — {message}" }
             }
         }
     }
