@@ -21,52 +21,44 @@ pub fn MonitorJobs() -> Element {
                 Some(Ok(j)) => {
                     let j = j.clone();
                     rsx! {
-                        if j.dry_run {
-                            DryRunBanner {}
-                        }
-                        // Two columns, because neither of these fills a wide
-                        // window alone: the catalogue is a column of cards that
-                        // stops at its content, and In flight is one line most
-                        // of the time. Stacked, they pushed Recent runs below
-                        // the fold on a display with room for all three.
+                        // In flight rides on the banner's row rather than
+                        // beside the catalogue. Both are short — the banner is
+                        // three lines, In flight is one sentence whenever
+                        // nothing is running — so together they fill a row that
+                        // either alone would leave two thirds empty, and the
+                        // catalogue below gets the whole width back. That is
+                        // what the cards wanted: two columns of ~760px rather
+                        // than of ~500px.
                         //
-                        // Two *thirds* to the catalogue, not half, and that
-                        // split is measured rather than chosen. At half of a
-                        // 1600px window every card wrapped; at two thirds
-                        // (~1030px) the three plain jobs — `prune-profiles`,
-                        // `notify`, `demo` — are single-line again.
+                        // `items-start` so neither stretches to the other's
+                        // height, which would draw a tall empty box around one
+                        // sentence. Below `xl` the row stacks, as the page
+                        // always did.
                         //
-                        // The two carrying memory controls still wrap, and no
-                        // split of this window fixes them: `watch-upstreams` and
-                        // `watch-feeds` put nine items in one row, "remembers 3
-                        // cursors" and a Forget memory button among them, and
-                        // they wrapped at 1100px too. What is fixed is *how*
-                        // they wrap — see the `whitespace-nowrap` on the groups
-                        // in JobRow, which breaks the row between items instead
-                        // of through the middle of `View source`.
-                        //
-                        // In flight needs no more than the remaining third for
-                        // one sentence.
-                        //
-                        // `items-start` so In flight keeps its own height
-                        // rather than stretching to the catalogue's, which
-                        // would draw a tall empty box around one sentence.
-                        //
-                        // Recent runs is deliberately not in here: it is a
-                        // table, and a table in a fraction of a window wraps its
-                        // own columns rather than showing more of them.
+                        // In flight spans the row outright when dry run is off
+                        // and there is no banner to sit beside: a third of a
+                        // row next to nothing is not a layout.
                         div { class: "grid grid-cols-1 xl:grid-cols-3 gap-4 items-start",
-                            Panel {
-                                title: "Jobs".to_string(),
-                                subtitle: Some("automations this install can run".to_string()),
-                                class: "xl:col-span-2".to_string(),
-                                Catalogue { jobs: j.clone(), on_ran: move |_| jobs.restart() }
+                            if j.dry_run {
+                                // A wrapper, because the span describes how the
+                                // banner sits in this row and DryRunBanner owns
+                                // its own box.
+                                div { class: "xl:col-span-2", DryRunBanner {} }
                             }
                             Panel {
                                 title: "In flight".to_string(),
                                 subtitle: Some("work a restart will wait for".to_string()),
+                                class: if j.dry_run { String::new() } else { "xl:col-span-3".to_string() },
                                 RunningList { jobs: j.clone() }
                             }
+                        }
+                        // Full width: the catalogue is the page, and its cards
+                        // go two columns of their own once the panel is wide
+                        // enough — see Catalogue.
+                        Panel {
+                            title: "Jobs".to_string(),
+                            subtitle: Some("automations this install can run".to_string()),
+                            Catalogue { jobs: j.clone(), on_ran: move |_| jobs.restart() }
                         }
                         Panel {
                             title: "Recent runs".to_string(),
