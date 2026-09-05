@@ -274,6 +274,23 @@ fn PerJob(jobs: JobsResponse) -> Element {
     }
 }
 
+/// A card row whose info button belongs in the board's column rather than
+/// trailing the end of its own text.
+///
+/// `param-row` gives the last child `margin-left: auto`, the same rule the
+/// parameter boards use — see the alignment note in CLAUDE.md. What it needs
+/// alongside it is somewhere for the text to wrap that is not the row itself:
+/// as a plain flex row the button is just another item, so a long value either
+/// shoves it out of the column or, once the row wraps, drops it onto a line of
+/// its own. Observed on Watch upstream releases, whose "While disarmed" row is
+/// long enough to do exactly that.
+const CARD_ROW_CLASS: &str = "text-gray-300 param-row flex items-start gap-2 w-full";
+
+/// The text half of a card row. `min-w-0` is what lets it shrink and wrap
+/// inside the row instead of pushing the button along.
+const CARD_ROW_TEXT_CLASS: &str = "flex items-center gap-2 flex-wrap min-w-0";
+
+
 #[component]
 fn JobConfigRow(
     job: CatalogueJob,
@@ -349,7 +366,8 @@ fn JobConfigRow(
                 }
 
                 dt { class: "text-gray-400", "Retry" }
-                dd { class: "text-gray-300 flex items-center gap-2",
+                dd { class: CARD_ROW_CLASS,
+                    div { class: CARD_ROW_TEXT_CLASS,
                     match job.retry.as_ref() {
                         Some(r) => rsx! {
                             span {
@@ -368,6 +386,7 @@ fn JobConfigRow(
                             }
                         },
                     }
+                    }
                     // Inline beside its subject: this row has a gotcha its
                     // siblings do not, and the card's own button explains the
                     // job rather than the policy.
@@ -380,7 +399,8 @@ fn JobConfigRow(
                 }
 
                 dt { class: "text-gray-400", "While disarmed" }
-                dd { class: "text-gray-300 flex items-center gap-2 flex-wrap",
+                dd { class: CARD_ROW_CLASS,
+                    div { class: CARD_ROW_TEXT_CLASS,
                     if job.effect_free {
                         span { "remembers what it saw — the report stays incremental" }
                         span { class: "text-gray-400",
@@ -390,6 +410,7 @@ fn JobConfigRow(
                         span { class: "text-gray-400",
                             "remembers nothing — every run reports what the last one did"
                         }
+                    }
                     }
                     // Inline, like Retry: this row explains the interaction
                     // between two settings rather than the job above it, and
@@ -408,7 +429,8 @@ fn JobConfigRow(
                 // a webhook is a thing every job might have and mostly has not.
                 if let Some(w) = job.webhook.clone() {
                     dt { class: "text-gray-400", "Webhook" }
-                    dd { class: "text-gray-300 flex items-center gap-2 flex-wrap",
+                    dd { class: CARD_ROW_CLASS,
+                        div { class: CARD_ROW_TEXT_CLASS,
                         span { "POST /api/hooks/" code { "{job.id}" } }
                         span { class: "text-gray-400", "— {webhook_proof(&w)}" }
                         // The state, and where to act on it — not a second
@@ -426,6 +448,7 @@ fn JobConfigRow(
                             }
                         }
                         code { class: "text-gray-400 text-xs", "{w.env_var}" }
+                        }
                         InfoButton {
                             title: "Where a webhook secret comes from".to_string(),
                             what: WEBHOOK_SECRET_WHAT.to_string(),
@@ -436,7 +459,8 @@ fn JobConfigRow(
                 }
 
                 dt { class: "text-gray-400", "Credentials" }
-                dd { class: "text-gray-300 flex items-center gap-2 flex-wrap",
+                dd { class: CARD_ROW_CLASS,
+                    div { class: CARD_ROW_TEXT_CLASS,
                     if job.credentials.is_empty() {
                         // "nothing" is only true when there is no webhook row
                         // above saying otherwise. A card that named a signing
@@ -459,6 +483,7 @@ fn JobConfigRow(
                                 if c.set { "set" } else { "not set, put it in {c.env_var}" }
                             }
                         }
+                    }
                     }
                     InfoButton {
                         title: "Credentials".to_string(),
