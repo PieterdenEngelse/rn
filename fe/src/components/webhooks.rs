@@ -220,6 +220,224 @@ fn kind_summary(k: &WebhookKind) -> &'static str {
     }
 }
 
+/// The panel title for one kind.
+fn kind_title(k: &WebhookKind) -> &'static str {
+    match k {
+        WebhookKind::Notification => "Notification webhook",
+        WebhookKind::DataPayload => "Data payload webhook",
+        WebhookKind::Command => "Command / action webhook",
+    }
+}
+
+fn kind_what(k: &WebhookKind) -> &'static str {
+    match k {
+        WebhookKind::Notification => NOTIFICATION_WHAT,
+        WebhookKind::DataPayload => DATA_PAYLOAD_WHAT,
+        WebhookKind::Command => COMMAND_WHAT,
+    }
+}
+
+fn kind_why(k: &WebhookKind) -> &'static str {
+    match k {
+        WebhookKind::Notification => NOTIFICATION_WHY,
+        WebhookKind::DataPayload => DATA_PAYLOAD_WHY,
+        WebhookKind::Command => COMMAND_WHY,
+    }
+}
+
+fn kind_if_wrong(k: &WebhookKind) -> &'static str {
+    match k {
+        WebhookKind::Notification => NOTIFICATION_IF_WRONG,
+        WebhookKind::DataPayload => DATA_PAYLOAD_IF_WRONG,
+        WebhookKind::Command => COMMAND_IF_WRONG,
+    }
+}
+
+/// Where this kind sits against the other two, as a table rather than a
+/// paragraph. The reader is choosing between three things, and prose saying
+/// "unlike the others" makes them hold the others in their head while they
+/// read it.
+///
+/// Colour carries two facts and no decoration. The current kind's column is
+/// filled in the same #7C2A02 as its selected button, so the panel and the
+/// control agree about which one is being read about. The single red cell is
+/// the only real hazard on this tile: a command hook lets the delivery choose
+/// which job runs, which is a different blast radius rather than a different
+/// shape, and it is the one difference worth seeing before reading a word.
+fn kind_compare(k: &WebhookKind) -> Option<Element> {
+    let col = match k {
+        WebhookKind::Notification => 0usize,
+        WebhookKind::DataPayload => 1,
+        WebhookKind::Command => 2,
+    };
+    let heads = ["Notification", "Data payload", "Command"];
+    // (row label, the three answers, which column is the hazard)
+    let rows: [(&str, [&str; 3], Option<usize>); 5] = [
+        (
+            "The body says",
+            [
+                "something happened, here is its id",
+                "something happened, here is all of it",
+                "do this",
+            ],
+            None,
+        ),
+        (
+            "Second call to the provider",
+            ["yes - rn fetches the record", "no", "no"],
+            None,
+        ),
+        ("Credential of its own", ["usually", "no", "no"], None),
+        (
+            "Which job runs",
+            [
+                "the one bound to this hook",
+                "the one bound to this hook",
+                "whichever the payload names",
+            ],
+            Some(2),
+        ),
+        (
+            "The job receives",
+            [
+                "{ id, notification, detail }",
+                "the body, unchanged",
+                "the body, unchanged",
+            ],
+            None,
+        ),
+    ];
+    Some(rsx! {
+        div { class: "overflow-x-auto",
+            table { class: "text-xs border-collapse",
+                thead {
+                    tr {
+                        th { class: "text-left p-2" }
+                        for (i , h) in heads.iter().enumerate() {
+                            th {
+                                key: "{i}",
+                                class: "text-left p-2 font-semibold",
+                                style: if i == col {
+                                    "background-color: #7C2A02; color: white;"
+                                } else {
+                                    "color: #d1d5db;"
+                                },
+                                "{h}"
+                            }
+                        }
+                    }
+                }
+                tbody {
+                    for (label , cells , hazard) in rows.iter() {
+                        tr { key: "{label}", class: "border-t border-gray-700",
+                            td { class: "p-2 text-gray-400 whitespace-nowrap", "{label}" }
+                            for (i , c) in cells.iter().enumerate() {
+                                td {
+                                    key: "{i}",
+                                    class: if *hazard == Some(i) { "p-2 text-red-400" } else { "p-2 text-gray-200" },
+                                    style: if i == col { "background-color: rgba(124, 42, 2, 0.25);" } else { "" },
+                                    "{c}"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    })
+}
+
+const NOTIFICATION_WHAT: &str =
+    "\"Something happened, here is its id.\" The delivery is a doorbell. Zendesk sends \
+     {\"ticket_id\": 999} and nothing else, so the subject, the requester and the body are all \
+     still on Zendesk's server.\n\nThis is the only kind that makes a second call, and the \
+     mechanism is worth knowing because you configure it here. You give the listener two \
+     things: the dotted path the id sits at - ticket_id, or data.object.id for a Stripe event, \
+     because providers nest - and a URL with {id} where that value goes. When a delivery lands \
+     and its [[signature]] checks out, the listener does the fetch itself, before any job \
+     starts.\n\nThe job is then handed three fields rather than a raw body: { id, notification, \
+     detail } - the value read out of the delivery, the delivery exactly as it arrived, and \
+     whatever the lookup returned. The delivery is kept because the doorbell usually carries \
+     context the fetched record does not: which event fired, and which of your hooks it came in \
+     on.";
+
+const NOTIFICATION_WHY: &str =
+    "Choose it when the provider will not tell you more than an identifier, which is most \
+     ticketing, billing and CRM systems - they assume you will call the API you already have \
+     credentials for.\n\nThe benefit that survives the extra call is freshness: you get the \
+     state of the thing now, not its state at the instant the event fired. For a ticket a human \
+     is still editing, those differ, and now is the more useful answer.\n\nAgainst the other \
+     two, the difference is the outbound leg. This is the only kind that reaches back out to \
+     the provider, so it is the only kind that normally needs an API [[credential]] of its own. \
+     A [[data payload webhook]] needs none. A [[command webhook]] needs none. This one does, \
+     and that fetch is a second thing that can fail after the delivery already succeeded.";
+
+const NOTIFICATION_IF_WRONG: &str =
+    "A failed lookup leaves the delivery accepted and no job started: 202 to the sender, \
+     hook-lookup-failed in the log. That is deliberate - the signature was valid, so the sender \
+     did nothing wrong, and refusing would make it retry a fault on this side. The cost is that \
+     an expired token or a moved URL is invisible from the provider's dashboard, which shows a \
+     clean 202. The log is the only place it appears.\n\nThe id path is the other common \
+     mistake. Point it at a field that is not in the body and every delivery resolves to \
+     nothing, quietly, at the same 202.\n\nAnd choosing this kind for a body that already holds \
+     everything buys a call you did not need plus a token to keep alive - \
+     see [[data payload webhook]].";
+
+const DATA_PAYLOAD_WHAT: &str =
+    "\"Something happened, here is all of it.\" A Typeform submission arrives with the name, the \
+     email and every answer already in the body; there is nothing left on the sender's server \
+     worth going back for.\n\nMechanically it is the simplest of the three, and the mechanism is \
+     that there isn't one. Nothing is fetched, nothing is looked up, no table is consulted. The \
+     body reaches the job as ctx.payload exactly as it arrived, and the automation finishes in \
+     one pass.";
+
+const DATA_PAYLOAD_WHY: &str =
+    "Prefer it wherever the provider offers a choice - many will send either a summary or the \
+     full record, and the full record is the better trade nearly every time. No credential, no \
+     rate limit, no second point of failure, and no window in which the record changed between \
+     the event firing and rn asking about it.\n\nAgainst the other two: this is the only kind \
+     that needs nothing beyond the signing secret, and the only one whose job sees the \
+     provider's body unaltered. A [[notification webhook]] wraps three fields around the \
+     delivery; a [[command webhook]] may not even run the job you expected.\n\nThe trade is \
+     real. You hold what was sent, not what is true now. For a form submission those are the \
+     same thing. For a ticket somebody is still typing into, they are not.";
+
+const DATA_PAYLOAD_IF_WRONG: &str =
+    "Choosing it when the body is only an identifier gives the job a number and no way to \
+     resolve it. The run succeeds, having done nothing useful, which is worse than failing - \
+     nothing goes red and the next run repeats it.\n\nLook at a real delivery before deciding \
+     rather than at the provider's documentation. Recent deliveries shows the body rn actually \
+     received, and the field count in the run record answers it outright: three keys is a \
+     doorbell, thirty is the record.";
+
+const COMMAND_WHAT: &str =
+    "\"Do this.\" A smart-home hub sending {\"action\": \"turn_on_lights\"} is not reporting an \
+     event - nothing has happened yet. The delivery is a remote control, and the payload names \
+     the button.\n\nThis is the only kind where the body chooses the job. rn reads the action \
+     out of the delivery and looks it up in a routing table you fill in here: turn_on_lights to \
+     one job, turn_off_lights to another. An action with no entry is accepted and does nothing, \
+     on purpose - refusing it would put the sender into a retry loop over a routing table only \
+     this machine can see.";
+
+const COMMAND_WHY: &str =
+    "Choose it when the sender is issuing instructions rather than describing events, which \
+     usually means something you control: a hub, a bot, a script, a button on your own \
+     phone.\n\nAgainst the other two, the difference is worth stating precisely, because it is \
+     not about the shape of the body. A [[notification webhook]] and a [[data payload webhook]] \
+     are each bound to one job: the endpoint decides what runs, and the body only supplies the \
+     details. A command hook hands that decision to the payload.\n\nSo its blast radius is every \
+     job in its table, and the [[signature]] is the only thing deciding who may press the \
+     buttons. That is why the routing table is worth keeping short, and worth reading as a list \
+     of things a stranger with the secret could cause to happen.";
+
+const COMMAND_IF_WRONG: &str =
+    "An action with no entry in the table is accepted and runs nothing. That is the designed \
+     behaviour, not a fault, but it means a typo in the table looks exactly like a working hook \
+     from the sender's side - 202, every time. The log line is the difference.\n\nThe more \
+     expensive mistake is reaching for this kind when a provider is merely reporting something. \
+     A report routed through an action table gains nothing and loses the binding between the \
+     endpoint and the job, which is the thing that made the other two safe to expose.";
+
 /// The three terms the panels on this tile link to.
 ///
 /// Written once and shared by every `InfoButton` here, so "what is a
@@ -737,22 +955,35 @@ fn Form(
                     label { class: FIELD_LABEL, "What kind of webhook is this?" }
                     div { class: "flex gap-2 flex-wrap",
                         for k in [WebhookKind::Notification, WebhookKind::DataPayload, WebhookKind::Command] {
-                            button {
-                                key: "{kind_label(&k)}",
-                                class: "px-3 py-1 rounded text-xs cursor-pointer border",
-                                style: if draft.kind == k {
-                                    "background-color: #7C2A02; border-color: #7C2A02; color: white;"
-                                } else {
-                                    "background-color: transparent; border-color: #4b5563; color: #d1d5db;"
-                                },
-                                onclick: {
-                                    let k = k.clone();
-                                    move |_| {
+                            // Each kind carries its own panel, beside its own
+                            // button. The row-level button below still answers
+                            // "what is this control"; these answer "what is
+                            // this one, and why not one of the others".
+                            div { key: "{kind_label(&k)}", class: "flex items-center gap-1",
+                                button {
+                                    class: "px-3 py-1 rounded text-xs cursor-pointer border",
+                                    style: if draft.kind == k {
+                                        "background-color: #7C2A02; border-color: #7C2A02; color: white;"
+                                    } else {
+                                        "background-color: transparent; border-color: #4b5563; color: #d1d5db;"
+                                    },
+                                    onclick: {
                                         let k = k.clone();
-                                        edit(&move |d| d.kind = k.clone());
-                                    }
-                                },
-                                "{kind_label(&k)}"
+                                        move |_| {
+                                            let k = k.clone();
+                                            edit(&move |d| d.kind = k.clone());
+                                        }
+                                    },
+                                    "{kind_label(&k)}"
+                                }
+                                InfoButton {
+                                    title: kind_title(&k).to_string(),
+                                    what: kind_what(&k).to_string(),
+                                    why: kind_why(&k).to_string(),
+                                    if_wrong: kind_if_wrong(&k).to_string(),
+                                    glossary: glossary(),
+                                    extra: kind_compare(&k),
+                                }
                             }
                         }
                     }
