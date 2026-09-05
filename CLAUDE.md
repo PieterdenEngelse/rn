@@ -146,9 +146,13 @@ not just `npm install`. A long-running `css:watch` accumulates and never prunes:
 swap daisyUI underneath it and its next write is the *union* of both versions —
 the new one's rules plus theme variables only the old one referenced. That file
 then matches no one-shot build, so the tree is dirty for as long as the watcher
-lives, and `rn-sync` refuses to fast-forward it. Measured on 2026-09-04: a
-watcher started 08:43 with daisyUI 5.7.20, `npm install` at 09:53 put 5.7.28
-under it, and the result carried 5.7.28's `aria-checked=mixed` rules *and*
+lives. `rn-sync` repairs that one case rather than stopping on it: when the
+stylesheet is the only thing dirty it runs `css:build` and looks again,
+proceeding if the result now matches `HEAD` and stopping as before if it does
+not. Nothing is discarded — the rebuild is a function of committed source, not
+a `git checkout` of the file — and any other uncommitted work still stops it
+outright. Measured on 2026-09-04: a watcher started 08:43 with daisyUI 5.7.20,
+`npm install` at 09:53 put 5.7.28 under it, and the result carried 5.7.28's `aria-checked=mixed` rules *and*
 `--ease-out`, which nothing in `fe/` has ever referenced. `css:build` alone
 fixes the file; only a restart fixes the watcher, and `serve.sh` runs a
 synchronous `css:build` at startup for exactly that reason.
