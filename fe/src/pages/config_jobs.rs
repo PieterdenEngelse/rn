@@ -1,8 +1,10 @@
 use crate::api::{
-    fetch_jobs, CatalogueJob, JobsConfig, JobsResponse, RetryPolicy, ScheduledJob, WebhookAuth,
-    WebhookInfo, WebhookScheme,
+    fetch_jobs, save_one_setting, CatalogueJob, JobsConfig, JobsResponse, RetryPolicy,
+    ScheduledJob, WebhookAuth, WebhookInfo, WebhookScheme,
 };
-use crate::components::param::PARAM_INPUT_ROW_CLASS;
+use crate::components::param::{
+    param_toggle_style, PARAM_INPUT_ROW_CLASS, PARAM_NUMBER_INPUT_WIDE_CLASS, PARAM_TOGGLE_CLASS,
+};
 use crate::components::{InfoButton, Panel, WebhookTile};
 use crate::pages::monitor_jobs::duration;
 use dioxus::prelude::*;
@@ -49,7 +51,7 @@ use dioxus::prelude::*;
 /// than about 90 characters is hard to read whatever the window is doing.
 #[component]
 pub fn ConfigJobs() -> Element {
-    let jobs = use_resource(fetch_jobs);
+    let mut jobs = use_resource(fetch_jobs);
 
     rsx! {
         div { class: "p-6 w-full space-y-4",
@@ -78,7 +80,16 @@ pub fn ConfigJobs() -> Element {
                             Panel {
                                 title: "Every run".to_string(),
                                 subtitle: Some("applies whichever job it is".to_string()),
-                                GlobalRows { dry_run: j.dry_run, config: j.config.clone() }
+                                GlobalRows {
+                                    dry_run: j.dry_run,
+                                    config: j.config.clone(),
+                                    // Refetch rather than patch the value in
+                                    // place: the backend is what decides what a
+                                    // setting became, and a row that shows what
+                                    // was typed rather than what took is the
+                                    // failure this page exists to prevent.
+                                    on_saved: move |_| jobs.restart(),
+                                }
                             }
 
                             Panel {
@@ -144,21 +155,165 @@ fn SettingRow(label: String, value: String, note: Option<String>, info: Element)
     }
 }
 
+/// A row whose value is a registry setting, edited here and saved on the spot.
+///
+/// The read-only `SettingRow` above stays for values that genuinely are code —
+/// a count of what jobs remember is not a setting and must not grow a box that
+/// implies it is. This one is for the numbers that were always settings and
+/// were merely being reported here with directions to another page.
+///
+/// Saved on `change` rather than on `input`: a number typed digit by digit
+/// would otherwise write 1, then 18, then 180 to a live backend, and 1 is
+/// outside every one of these ranges.
 #[component]
-fn GlobalRows(dry_run: bool, config: JobsConfig) -> Element {
-    let armed = if dry_run {
-        "on — nothing writes"
-    } else {
-        "off — runs are armed"
-    };
+fn LiveNumberRow(
+    label: String,
+    setting: String,
+    value: f64,
+    unit: String,
+    min: f64,
+    max: f64,
+    human: String,
+    note: Option<String>,
+    info: Element,
+    on_saved: EventHandler<()>,
+) -> Element {
+    let mut busy = use_signal(|| false);
+    let mut error = use_signal(|| Option::<String>::None);
+
+    rsx! {
+        div { class: "border-b border-gray-700 pb-2",
+            div { class: PARAM_INPUT_ROW_CLASS,
+                div { class: "flex items-baseline gap-3 flex-wrap whitespace-nowrap",
+                    span { class: "text-gray-200 font-medium", "{label}" }
+                    input {
+                        r#type: "number",
+                        class: PARAM_NUMBER_INPUT_WIDE_CLASS,
+                        value: "{value}",
+                        min: "{min}",
+                        max: "{max}",
+                        onchange: move |evt| {
+                            let raw = evt.value();
+                            let Ok(n) = raw.trim().parse::<f64>() else {
+                                error.set(Some(format!("{raw:?} is not a number")));
+                                return;
+                            };
+                            if n < min || n > max {
+                                error.set(Some(format!("Out of range — {min} to {max}")));
+                                return;
+                            }
+                            busy.set(true);
+                            error.set(None);
+                            let setting = setting.clone();
+                            spawn(async move {
+                                match save_one_setting(&setting, serde_json::json!(n)).await {
+                                    Ok(()) => on_saved.call(()),
+                                    Err(e) => error.set(Some(e)),
+                                }
+                                busy.set(false);
+                            });
+                        },
+                    }
+                    span { class: "text-gray-400", "{unit}" }
+                    // The human form of the number in the box, so "1800000" is
+                    // legible without arithmetic — the box has to hold what the
+                    // setting actually is. Omitted where the raw number already
+                    // reads as itself: "200 runs" needs no translation.
+                    if !human.is_empty() {
+                        span { class: "text-gray-300", "— {human}" }
+                    }
+                    if busy() {
+                        span { class: "text-gray-400", "saving…" }
+                    }
+                    if let Some(note) = note {
+                        span { class: "text-gray-400 text-xs", "{note}" }
+                    }
+                }
+                {info}
+            }
+            if let Some(message) = error() {
+                p { class: "text-red-400 text-xs mt-1", "Not saved — {message}" }
+            }
+        }
+    }
+}
+
+/// The same, for the one boolean among them.
+#[component]
+fn LiveBoolRow(
+    label: String,
+    setting: String,
+    value: bool,
+    on_words: String,
+    off_words: String,
+    note: Option<String>,
+    info: Element,
+    on_saved: EventHandler<()>,
+) -> Element {
+    let mut busy = use_signal(|| false);
+    let mut error = use_signal(|| Option::<String>::None);
+
+    rsx! {
+        div { class: "border-b border-gray-700 pb-2",
+            div { class: PARAM_INPUT_ROW_CLASS,
+                div { class: "flex items-center gap-3 flex-wrap whitespace-nowrap",
+                    span { class: "text-gray-200 font-medium", "{label}" }
+                    input {
+                        r#type: "checkbox",
+                        class: PARAM_TOGGLE_CLASS,
+                        style: param_toggle_style(value),
+                        checked: value,
+                        onchange: move |evt| {
+                            let next = evt.checked();
+                            if busy() {
+                                return;
+                            }
+                            busy.set(true);
+                            error.set(None);
+                            let setting = setting.clone();
+                            spawn(async move {
+                                match save_one_setting(&setting, serde_json::json!(next)).await {
+                                    Ok(()) => on_saved.call(()),
+                                    Err(e) => error.set(Some(e)),
+                                }
+                                busy.set(false);
+                            });
+                        },
+                    }
+                    span {
+                        class: if value { "text-gray-300" } else { "text-amber-400" },
+                        if value { "{on_words}" } else { "{off_words}" }
+                    }
+                    if busy() {
+                        span { class: "text-gray-400", "saving…" }
+                    }
+                    if let Some(note) = note {
+                        span { class: "text-gray-400 text-xs", "{note}" }
+                    }
+                }
+                {info}
+            }
+            if let Some(message) = error() {
+                p { class: "text-red-400 text-xs mt-1", "Not saved — {message}" }
+            }
+        }
+    }
+}
+
+#[component]
+fn GlobalRows(dry_run: bool, config: JobsConfig, on_saved: EventHandler<()>) -> Element {
     let tick_secs = (config.scheduler_tick_ms / 1000.0).round() as i64;
 
     rsx! {
         div { class: "space-y-2",
-            SettingRow {
+            LiveBoolRow {
                 label: "Dry run".to_string(),
-                value: armed.to_string(),
-                note: Some("a runtime setting on Config → Runtime; DRY_RUN in be/.env is the baseline".to_string()),
+                setting: "dryRun".to_string(),
+                value: dry_run,
+                on_words: "on — nothing writes".to_string(),
+                off_words: "off — runs are armed".to_string(),
+                note: Some("the same setting as Config → Runtime; DRY_RUN in be/.env is the baseline".to_string()),
+                on_saved,
                 info: rsx! {
                     InfoButton {
                         title: "Dry run".to_string(),
@@ -168,10 +323,16 @@ fn GlobalRows(dry_run: bool, config: JobsConfig) -> Element {
                     }
                 },
             }
-            SettingRow {
+            LiveNumberRow {
                 label: "Default timeout".to_string(),
-                value: duration(config.default_timeout_ms),
+                setting: "defaultTimeoutMs".to_string(),
+                value: config.default_timeout_ms,
+                unit: "ms".to_string(),
+                min: 1000.0,
+                max: 86_400_000.0,
+                human: duration(config.default_timeout_ms),
                 note: Some("for a job that names none of its own".to_string()),
+                on_saved,
                 info: rsx! {
                     InfoButton {
                         title: "Default timeout".to_string(),
@@ -181,10 +342,16 @@ fn GlobalRows(dry_run: bool, config: JobsConfig) -> Element {
                     }
                 },
             }
-            SettingRow {
+            LiveNumberRow {
                 label: "Scheduler tick".to_string(),
-                value: format!("every {tick_secs}s"),
+                setting: "schedulerTickMs".to_string(),
+                value: config.scheduler_tick_ms,
+                unit: "ms".to_string(),
+                min: 1000.0,
+                max: 300_000.0,
+                human: format!("every {tick_secs}s"),
                 note: Some("how often it looks, not how often jobs run".to_string()),
+                on_saved,
                 info: rsx! {
                     InfoButton {
                         title: "Scheduler tick".to_string(),
@@ -194,13 +361,40 @@ fn GlobalRows(dry_run: bool, config: JobsConfig) -> Element {
                     }
                 },
             }
-            SettingRow {
+            LiveNumberRow {
                 label: "Runs kept".to_string(),
-                value: format!("{} runs", config.history_capacity),
-                note: Some(format!("plus {} failures in their own list", config.failure_capacity)),
+                setting: "historyCapacity".to_string(),
+                value: f64::from(config.history_capacity),
+                unit: "runs".to_string(),
+                min: 10.0,
+                max: 5000.0,
+                human: String::new(),
+                note: Some("the newest are kept; the oldest fall off the end".to_string()),
+                on_saved,
                 info: rsx! {
                     InfoButton {
                         title: "Runs kept".to_string(),
+                        what: HISTORY_WHAT.to_string(),
+                        why: HISTORY_WHY.to_string(),
+                        if_wrong: HISTORY_IF_WRONG.to_string(),
+                    }
+                },
+            }
+            // Its own row now that it is editable. It was a note on Runs kept,
+            // which is where a second number goes when nobody can change it.
+            LiveNumberRow {
+                label: "Failures kept".to_string(),
+                setting: "failureCapacity".to_string(),
+                value: f64::from(config.failure_capacity),
+                unit: "failures".to_string(),
+                min: 5.0,
+                max: 1000.0,
+                human: String::new(),
+                note: Some("a separate list, so a burst of runs cannot push a failure out of sight".to_string()),
+                on_saved,
+                info: rsx! {
+                    InfoButton {
+                        title: "Failures kept".to_string(),
                         what: HISTORY_WHAT.to_string(),
                         why: HISTORY_WHY.to_string(),
                         if_wrong: HISTORY_IF_WRONG.to_string(),

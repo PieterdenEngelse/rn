@@ -49,6 +49,38 @@ pub async fn save_settings(settings: serde_json::Value) -> Result<SaveResponse, 
     resp.json::<SaveResponse>().await.map_err(|e| format!("{e}"))
 }
 
+/// Change one runtime setting and leave every other one alone.
+///
+/// `PUT /api/settings` saves the body **as the whole file**, so posting one
+/// field deletes the rest — Config → Runtime avoids that by sending a draft
+/// seeded from the server, but a control that saves on the spot has no draft to
+/// send. So this reads the saved settings back first, changes the one field,
+/// and writes them all.
+///
+/// Shared rather than copied: the dry-run switch on Monitor → Jobs and every
+/// editable row on Config → Jobs need the same three steps, and the failure
+/// they prevent is silent — the settings that vanish are the ones nobody was
+/// looking at.
+pub async fn save_one_setting(id: &str, value: serde_json::Value) -> Result<(), String> {
+    let saved = fetch_params().await?.settings;
+    let mut map = saved
+        .as_object()
+        .cloned()
+        .unwrap_or_else(serde_json::Map::new);
+    map.insert(id.to_string(), value);
+    let resp = save_settings(serde_json::Value::Object(map)).await?;
+    if resp.ok {
+        Ok(())
+    } else {
+        Err(resp
+            .errors
+            .iter()
+            .map(|e| e.message.clone())
+            .collect::<Vec<_>>()
+            .join("; "))
+    }
+}
+
 pub async fn fetch_jobs() -> Result<JobsResponse, String> {
     let resp = gloo_net::http::Request::get(&format!("{API_BASE}/api/jobs"))
         .send()

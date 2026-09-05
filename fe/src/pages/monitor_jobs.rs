@@ -1,8 +1,8 @@
 use crate::api::{
-    fetch_job_errors, fetch_job_source, fetch_jobs, fetch_params, fetch_runs, reset_job_state,
-    run_job, save_settings, send_test_delivery, CatalogueJob, JobErrors, JobRun, JobInput,
-    JobInputType, JobRunResult, JobSource, JobStep, JobsResponse, Outcome, ScheduledJob,
-    StateResetResponse, TestDelivery, Trigger, WebhookAuth, WebhookInfo, WebhookScheme,
+    fetch_job_errors, fetch_job_source, fetch_jobs, fetch_runs, reset_job_state, run_job,
+    save_one_setting, send_test_delivery, CatalogueJob, JobErrors, JobRun, JobInput, JobInputType,
+    JobRunResult, JobSource, JobStep, JobsResponse, Outcome, ScheduledJob, StateResetResponse,
+    TestDelivery, Trigger, WebhookAuth, WebhookInfo, WebhookScheme,
 };
 use crate::app::Route;
 use crate::components::param::{param_toggle_style, PARAM_INPUT_ROW_CLASS, PARAM_TOGGLE_CLASS};
@@ -262,29 +262,11 @@ fn DryRunBanner(dry_run: bool, on_changed: EventHandler<()>) -> Element {
         busy.set(true);
         error.set(None);
         spawn(async move {
-            // Read, modify, write. `PUT /api/settings` saves the body as the
-            // whole file, so posting `{ dryRun }` on its own would delete every
-            // other saved setting — the page-wide Save on Config → Runtime
-            // sends a draft seeded from the server for exactly this reason.
-            let saved = match fetch_params().await {
-                Ok(p) => p.settings,
-                Err(e) => {
-                    error.set(Some(format!("Could not read the current settings: {e}")));
-                    busy.set(false);
-                    return;
-                }
-            };
-            let mut map = saved.as_object().cloned().unwrap_or_default();
-            map.insert("dryRun".to_string(), serde_json::Value::Bool(next));
-            match save_settings(serde_json::Value::Object(map)).await {
-                Ok(r) if r.ok => on_changed.call(()),
-                Ok(r) => error.set(Some(
-                    r.errors
-                        .iter()
-                        .map(|e| e.message.clone())
-                        .collect::<Vec<_>>()
-                        .join("; "),
-                )),
+            // Read, modify, write — `save_one_setting` does all three, because
+            // `PUT /api/settings` saves the body as the whole file and posting
+            // `{ dryRun }` alone would delete every other saved setting.
+            match save_one_setting("dryRun", serde_json::Value::Bool(next)).await {
+                Ok(()) => on_changed.call(()),
                 Err(e) => error.set(Some(e)),
             }
             busy.set(false);
