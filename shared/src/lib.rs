@@ -60,6 +60,12 @@ pub fn export_all(cfg: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     JobsResponse::export_all(cfg)?;
     JobRunResult::export_all(cfg)?;
     JobErrors::export_all(cfg)?;
+    ScheduleOverride::export_all(cfg)?;
+    HandlerOverride::export_all(cfg)?;
+    RetryOverride::export_all(cfg)?;
+    JobOverride::export_all(cfg)?;
+    DeclaredConfig::export_all(cfg)?;
+    JobConfigResponse::export_all(cfg)?;
 
     HeapSpace::export_all(cfg)?;
     NodeMemory::export_all(cfg)?;

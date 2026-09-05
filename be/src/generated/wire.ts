@@ -148,7 +148,25 @@ webhook?: WebhookInfo | null,
  * something to forget. A control that is always present on a job with
  * no memory reads as though the job has one.
  */
-remembered: Remembered, };
+remembered: Remembered, 
+/**
+ * The schedule in force, structured rather than rendered.
+ *
+ * `ScheduledJob` already sends a phrase and the next fire time, and
+ * that stays: it is what a *reader* needs. A control needs the fields,
+ * and deriving them back out of "daily at 03:00" would be a parser
+ * written to undo a formatter.
+ */
+schedule?: Schedule | null, 
+/**
+ * What this job's own file declares, before any override.
+ */
+declared: DeclaredConfig, 
+/**
+ * What has been changed about it from a page. All `Inherit` when
+ * nothing has.
+ */
+overridden: JobOverride, };
 
 /**
  * The board a parameter is filed under on Config → Runtime.
@@ -341,6 +359,20 @@ exists: boolean,
 permissionWarning?: string | null, };
 
 /**
+ * What a job's own file declares, sent beside the effective values so a
+ * page can say what it would go back to.
+ *
+ * Without it "Reset to declared" is a button whose result nobody can see
+ * in advance, and an overridden row cannot say what it is overriding.
+ */
+export type DeclaredConfig = { schedule?: Schedule | null, 
+/**
+ * `None` means the job names no ceiling of its own and takes the
+ * global default.
+ */
+timeoutMs?: number | null, onFailure?: string | null, onChange?: string | null, retry?: RetryPolicy | null, };
+
+/**
  * Which webhook delivery started a run, described in two headers.
  *
  * Both optional because both are the provider's choice. GitHub sends
@@ -470,6 +502,15 @@ detail: string,
 fd: number | null, };
 
 /**
+ * Where a job hands off — `onFailure` and `onChange` take the same shape.
+ *
+ * `Nothing` is spelled out for the same reason `Manual` is above: unwiring
+ * a handler the file declares is a decision, and an absent field already
+ * means the opposite.
+ */
+export type HandlerOverride = { "kind": "inherit" } | { "kind": "nothing" } | { "kind": "job", id: string, };
+
+/**
  * `GET /api/health`. Liveness, plus the state of the listener that cannot
  * answer for itself: the hooks port has one route by design, so its health
  * is reported from here instead of from a GET of its own.
@@ -548,6 +589,20 @@ export type HooksHealth = { listening: boolean, port: number,
 error: string | null, };
 
 /**
+ * `PUT /api/jobs/:id/config`: whether it took, and what is refused.
+ *
+ * Shaped like the settings save rather than differently, because the two
+ * are the same act from a user's point of view and a page should not need
+ * two error shapes.
+ */
+export type JobConfigResponse = { ok: boolean, errors: Array<SaveError>, 
+/**
+ * The job as it now is, so the page can render what took rather than
+ * what was sent.
+ */
+job?: CatalogueJob | null, };
+
+/**
  * GET /api/jobs/:id/errors.
  */
 export type JobErrors = { id: string, 
@@ -623,6 +678,22 @@ default?: JsonValue | null, };
  * might want — a job needing more than this wants a file, not a field.
  */
 export type JobInputType = "text" | "number" | "bool";
+
+/**
+ * What a user has changed about one job, against what its file declares.
+ *
+ * Only the fields a page can safely decide. A job's id, its label, its
+ * info panels, its inputs, its webhook and whether it is effect-free are
+ * all statements *about the code* — a page that let someone flip
+ * `effectFree` would be editing a claim about what the code does, not a
+ * setting, and the job would go on doing whatever it does.
+ */
+export type JobOverride = { 
+/**
+ * `None` inherits the job's own ceiling, or the global default when it
+ * names none. There is no "no timeout": the default always applies.
+ */
+timeoutMs?: number | null, schedule: ScheduleOverride, onFailure: HandlerOverride, onChange: HandlerOverride, retry: RetryOverride, };
 
 /**
  * What a job hands back.
@@ -1104,6 +1175,11 @@ running?: Array<RunningJob>,
 aborted?: Array<RunningJob>, };
 
 /**
+ * Whether a failed run is tried again, and how.
+ */
+export type RetryOverride = { "kind": "inherit" } | { "kind": "off" } | { "kind": "policy", attempts: number, backoffMs: number, };
+
+/**
  * How many times a failing job is tried again, and how long between.
  *
  * A fixed wait rather than a growing one. Exponential backoff earns its
@@ -1234,6 +1310,18 @@ applied?: Array<string>, restartRequired?: Array<string>, errors?: Array<SaveErr
  * state something a reader has to trust.
  */
 export type Schedule = { "kind": "everyMinutes", minutes: number, } | { "kind": "dailyAt", hour: number, minute: number, };
+
+/**
+ * A job's schedule, as a user's decision rather than as the file's.
+ *
+ * `Inherit` is the absence of an override and the default, so a stored
+ * object that omits the field means "whatever the job declares" — the same
+ * reading as no entry at all. `Manual` is the other thing a user might
+ * want and cannot say by omission: *no* schedule, overriding a file that
+ * declares one. Those two are different states and a single optional
+ * field cannot hold both.
+ */
+export type ScheduleOverride = { "kind": "inherit" } | { "kind": "manual" } | { "kind": "everyMinutes", minutes: number, } | { "kind": "dailyAt", hour: number, minute: number, };
 
 /**
  * One scheduled job and when it next fires.

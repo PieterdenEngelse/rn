@@ -5,6 +5,7 @@
 //! and neither end writes a per-field rename. Before this crate existed both
 //! ends did, by hand, and they agreed only because someone was careful.
 
+use crate::params::SaveError;
 use crate::wire;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -199,6 +200,21 @@ wire! {
         /// no memory reads as though the job has one.
         #[serde(default)]
         pub remembered: Remembered,
+        /// The schedule in force, structured rather than rendered.
+        ///
+        /// `ScheduledJob` already sends a phrase and the next fire time, and
+        /// that stays: it is what a *reader* needs. A control needs the fields,
+        /// and deriving them back out of "daily at 03:00" would be a parser
+        /// written to undo a formatter.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub schedule: Option<Schedule>,
+        /// What this job's own file declares, before any override.
+        #[serde(default)]
+        pub declared: DeclaredConfig,
+        /// What has been changed about it from a page. All `Inherit` when
+        /// nothing has.
+        #[serde(default)]
+        pub overridden: JobOverride,
     }
 }
 
@@ -730,4 +746,133 @@ wire! {
 /// serde default for [`JobRun::attempts`]: a run that reports nothing ran once.
 fn one_attempt() -> u32 {
     1
+}
+
+wire! {
+    /// A job's schedule, as a user's decision rather than as the file's.
+    ///
+    /// `Inherit` is the absence of an override and the default, so a stored
+    /// object that omits the field means "whatever the job declares" — the same
+    /// reading as no entry at all. `Manual` is the other thing a user might
+    /// want and cannot say by omission: *no* schedule, overriding a file that
+    /// declares one. Those two are different states and a single optional
+    /// field cannot hold both.
+    #[derive(Default)]
+    #[serde(tag = "kind", rename_all = "camelCase")]
+    pub enum ScheduleOverride {
+        #[default]
+        Inherit,
+        Manual,
+        EveryMinutes {
+            minutes: u32,
+        },
+        DailyAt {
+            hour: u32,
+            minute: u32,
+        },
+    }
+}
+
+wire! {
+    /// Where a job hands off — `onFailure` and `onChange` take the same shape.
+    ///
+    /// `Nothing` is spelled out for the same reason `Manual` is above: unwiring
+    /// a handler the file declares is a decision, and an absent field already
+    /// means the opposite.
+    #[derive(Default)]
+    #[serde(tag = "kind", rename_all = "camelCase")]
+    pub enum HandlerOverride {
+        #[default]
+        Inherit,
+        Nothing,
+        Job {
+            id: String,
+        },
+    }
+}
+
+wire! {
+    /// Whether a failed run is tried again, and how.
+    #[derive(Default)]
+    // `rename_all` renames the variants; the fields inside a variant need
+    // saying separately, and `backoff_ms` reaching TypeScript as `backoff_ms`
+    // is a field the other end silently reads as undefined.
+    #[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
+    pub enum RetryOverride {
+        #[default]
+        Inherit,
+        Off,
+        Policy {
+            attempts: u32,
+            backoff_ms: f64,
+        },
+    }
+}
+
+wire! {
+    /// What a user has changed about one job, against what its file declares.
+    ///
+    /// Only the fields a page can safely decide. A job's id, its label, its
+    /// info panels, its inputs, its webhook and whether it is effect-free are
+    /// all statements *about the code* — a page that let someone flip
+    /// `effectFree` would be editing a claim about what the code does, not a
+    /// setting, and the job would go on doing whatever it does.
+    #[derive(Default)]
+    #[serde(rename_all = "camelCase")]
+    pub struct JobOverride {
+        /// `None` inherits the job's own ceiling, or the global default when it
+        /// names none. There is no "no timeout": the default always applies.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub timeout_ms: Option<f64>,
+        #[serde(default)]
+        pub schedule: ScheduleOverride,
+        #[serde(default)]
+        pub on_failure: HandlerOverride,
+        #[serde(default)]
+        pub on_change: HandlerOverride,
+        #[serde(default)]
+        pub retry: RetryOverride,
+    }
+}
+
+wire! {
+    /// What a job's own file declares, sent beside the effective values so a
+    /// page can say what it would go back to.
+    ///
+    /// Without it "Reset to declared" is a button whose result nobody can see
+    /// in advance, and an overridden row cannot say what it is overriding.
+    #[derive(Default)]
+    #[serde(rename_all = "camelCase")]
+    pub struct DeclaredConfig {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub schedule: Option<Schedule>,
+        /// `None` means the job names no ceiling of its own and takes the
+        /// global default.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub timeout_ms: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub on_failure: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub on_change: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub retry: Option<RetryPolicy>,
+    }
+}
+
+wire! {
+    /// `PUT /api/jobs/:id/config`: whether it took, and what is refused.
+    ///
+    /// Shaped like the settings save rather than differently, because the two
+    /// are the same act from a user's point of view and a page should not need
+    /// two error shapes.
+    #[serde(rename_all = "camelCase")]
+    pub struct JobConfigResponse {
+        pub ok: bool,
+        #[serde(default)]
+        pub errors: Vec<SaveError>,
+        /// The job as it now is, so the page can render what took rather than
+        /// what was sent.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub job: Option<CatalogueJob>,
+    }
 }

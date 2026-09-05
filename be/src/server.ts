@@ -28,8 +28,11 @@ import { RUNTIME_PARAMS, WITHHELD } from "./runtime-params.ts";
 // below is what makes a field renamed there a build failure here rather than an
 // `undefined` in whichever panel reads it first.
 import type {
+    CatalogueJob,
     CredentialSaveResponse,
     CredentialsResponse,
+    JobConfigResponse,
+    JobOverride,
     WebhookDef,
     WebhookSaveResponse,
     WebhooksResponse,
@@ -88,6 +91,8 @@ import {
     state as jobState,
     defaultTimeoutMs,
 } from "./jobs/index.ts";
+import * as overrides from "./jobs/overrides.ts";
+import type { Job } from "./jobs/types.ts";
 import { collect as collectNodeMetrics, lifetimeDelay } from "./node_metrics.ts";
 import { withDistribution } from "./node_history.ts";
 
@@ -189,6 +194,126 @@ function doRestart(): void {
     closeListeners(server);
     // Let the HTTP response flush first.
     setTimeout(() => process.exit(EXIT_RESTART), 100);
+}
+
+/**
+ * One catalogue entry: the job **as it will actually run** — its file with
+ * this install's overrides applied.
+ *
+ * Every value here is read as a statement about the next run, so the
+ * effective one is the honest thing to send. `declared` and `overridden`
+ * ride alongside so a page can say what the file wanted and offer to go back
+ * to it; without the pair, an edited row is indistinguishable from a job that
+ * always said that.
+ *
+ * A function rather than an inline map because `PUT /api/jobs/:id/config`
+ * answers with the entry it just changed, and a second copy of this shape is
+ * how the two would come to disagree.
+ */
+function catalogueEntry(declared: Job): CatalogueJob {
+    const j = overrides.effective(declared);
+    return {
+        id: j.id,
+        label: j.label,
+        info: j.info,
+        // Display form only — the reader needs to know which file
+        // they are about to open. The absolute path is never sent,
+        // and never accepted back.
+        source: displayPath(j.source),
+        // Surfaced because a ceiling nobody can see is a surprise
+        // when it fires. Resolved here rather than sent as
+        // "undefined means the default", so the page never has to
+        // know what the default is.
+        timeoutMs: j.timeoutMs ?? defaultTimeoutMs(),
+        // Same argument as the schedule above: a failure path
+        // nobody can see is indistinguishable from no failure
+        // path, and the user only finds out which they had when
+        // the job fails.
+        ...(j.onFailure === undefined ? {} : { onFailure: j.onFailure }),
+        // And the path that carries the news. Worth surfacing more
+        // than the failure one, not less: an unwired failure path
+        // is invisible and harmless, while a job whose whole point
+        // is to tell you something, wired to nothing, still looks
+        // like a job that is working.
+        ...(j.onChange === undefined ? {} : { onChange: j.onChange }),
+        // Always sent, never conditional: "this job remembers even
+        // while disarmed" is the answer to why one report is
+        // incremental and the next one repeats, and a field that
+        // vanishes when false makes the page infer that from an
+        // absence.
+        effectFree: j.effectFree === true,
+        // Whether a hook is configured and whether its secret is
+        // there — never the secret, and never the URL. A tunnel
+        // address is a bearer capability: anyone holding it can
+        // reach the listener, so it is not a thing to put on a
+        // page or in a payload. See WebhookInfo in
+        // shared/src/jobs.rs.
+        ...(j.webhook === undefined
+            ? {}
+            : {
+                  webhook: {
+                      header: (
+                          j.webhook.auth?.header ??
+                          j.webhook.header ??
+                          "x-hub-signature-256"
+                      ).toLowerCase(),
+                      credential: j.webhook.credential,
+                      // The variable to set, named here rather than
+                      // spelled out by the page: the camel-case
+                      // split lives in secrets.ts and a second copy
+                      // of it would be wrong first on the names
+                      // nobody can guess.
+                      envVar: secrets.envVarFor(j.webhook.credential),
+                      secretSet: secrets.isSet(j.webhook.credential),
+                      // Which of the two kinds of proof, and — for
+                      // a signature — which construction. Sent
+                      // because "webhook configured" is not one
+                      // security position but two, and a page that
+                      // spells them the same way hides the weaker.
+                      auth: j.webhook.auth?.kind === "token" ? "token" : "signature",
+                      ...(j.webhook.auth?.kind === "token"
+                          ? {}
+                          : { scheme: j.webhook.scheme ?? "hmac-body" }),
+                      ...(j.webhook.respond === undefined
+                          ? {}
+                          : { respondDeadlineMs: j.webhook.respond.deadlineMs }),
+                  },
+              }),
+        // And for the same reason again: three attempts of a
+        // five-minute job is a fifteen-minute worst case, which
+        // nobody can work out from a page that does not say the
+        // job retries at all.
+        ...(j.retry === undefined ? {} : { retry: j.retry }),
+        // The form the Jobs page renders. Sent even though the
+        // backend is the one that validates: a field the user
+        // cannot see is one they cannot supply, and a required
+        // input they do not know about is a 400 with no way to fix
+        // it from the page.
+        inputs: j.inputs ?? [],
+        // Names, variables and whether each is set — never a value,
+        // and never a prefix or a length of one. A job that will
+        // fail at 03:00 for want of a token otherwise looks exactly
+        // like one that will work.
+        credentials: (j.credentials ?? []).map((name) => secrets.describe(name)),
+        // Structured, unlike the phrase in `scheduled` below: that
+        // one is for reading and this one is for a control, and
+        // deriving fields back out of "daily at 03:00" would be a
+        // parser written to undo a formatter.
+        ...(j.schedule === undefined ? {} : { schedule: j.schedule }),
+        declared: overrides.declared(jobById(j.id) ?? j),
+        overridden: overrides.forJob(j.id),
+        // How much this job is holding between runs. Counts only,
+        // for the reason state.stats() gives: a cursor is whatever
+        // a source uses as an identifier, and reporting that
+        // something is remembered is a different act from showing
+        // what.
+        //
+        // Per job rather than as an aggregate, because the row uses
+        // it to decide whether it has anything to offer at all —
+        // "forget this job's memory" on a job with no memory reads
+        // as though it has one.
+        remembered: jobState.statsFor(j.id),
+    };
 }
 
 export function createApp() {
@@ -383,104 +508,8 @@ export function createApp() {
             send(res, 200, {
                 running: running.list(),
                 restartPending: restartWhenIdle,
-                // The catalogue, so the Jobs page can list what exists rather
-                // than only what happens to be running at the moment it loads.
-                // Carries each job's info-panel prose; see be/src/jobs/types.ts.
-                catalogue: JOBS.map((j) => ({
-                    id: j.id,
-                    label: j.label,
-                    info: j.info,
-                    // Display form only — the reader needs to know which file
-                    // they are about to open. The absolute path is never sent,
-                    // and never accepted back.
-                    source: displayPath(j.source),
-                    // Surfaced because a ceiling nobody can see is a surprise
-                    // when it fires. Resolved here rather than sent as
-                    // "undefined means the default", so the page never has to
-                    // know what the default is.
-                    timeoutMs: j.timeoutMs ?? defaultTimeoutMs(),
-                    // Same argument as the schedule above: a failure path
-                    // nobody can see is indistinguishable from no failure
-                    // path, and the user only finds out which they had when
-                    // the job fails.
-                    ...(j.onFailure === undefined ? {} : { onFailure: j.onFailure }),
-                    // And the path that carries the news. Worth surfacing more
-                    // than the failure one, not less: an unwired failure path
-                    // is invisible and harmless, while a job whose whole point
-                    // is to tell you something, wired to nothing, still looks
-                    // like a job that is working.
-                    ...(j.onChange === undefined ? {} : { onChange: j.onChange }),
-                    // Always sent, never conditional: "this job remembers even
-                    // while disarmed" is the answer to why one report is
-                    // incremental and the next one repeats, and a field that
-                    // vanishes when false makes the page infer that from an
-                    // absence.
-                    effectFree: j.effectFree === true,
-                    // Whether a hook is configured and whether its secret is
-                    // there — never the secret, and never the URL. A tunnel
-                    // address is a bearer capability: anyone holding it can
-                    // reach the listener, so it is not a thing to put on a
-                    // page or in a payload. See WebhookInfo in
-                    // shared/src/jobs.rs.
-                    ...(j.webhook === undefined
-                        ? {}
-                        : {
-                              webhook: {
-                                  header: (
-                                      j.webhook.auth?.header ??
-                                      j.webhook.header ??
-                                      "x-hub-signature-256"
-                                  ).toLowerCase(),
-                                  credential: j.webhook.credential,
-                                  // The variable to set, named here rather than
-                                  // spelled out by the page: the camel-case
-                                  // split lives in secrets.ts and a second copy
-                                  // of it would be wrong first on the names
-                                  // nobody can guess.
-                                  envVar: secrets.envVarFor(j.webhook.credential),
-                                  secretSet: secrets.isSet(j.webhook.credential),
-                                  // Which of the two kinds of proof, and — for
-                                  // a signature — which construction. Sent
-                                  // because "webhook configured" is not one
-                                  // security position but two, and a page that
-                                  // spells them the same way hides the weaker.
-                                  auth: j.webhook.auth?.kind === "token" ? "token" : "signature",
-                                  ...(j.webhook.auth?.kind === "token"
-                                      ? {}
-                                      : { scheme: j.webhook.scheme ?? "hmac-body" }),
-                                  ...(j.webhook.respond === undefined
-                                      ? {}
-                                      : { respondDeadlineMs: j.webhook.respond.deadlineMs }),
-                              },
-                          }),
-                    // And for the same reason again: three attempts of a
-                    // five-minute job is a fifteen-minute worst case, which
-                    // nobody can work out from a page that does not say the
-                    // job retries at all.
-                    ...(j.retry === undefined ? {} : { retry: j.retry }),
-                    // The form the Jobs page renders. Sent even though the
-                    // backend is the one that validates: a field the user
-                    // cannot see is one they cannot supply, and a required
-                    // input they do not know about is a 400 with no way to fix
-                    // it from the page.
-                    inputs: j.inputs ?? [],
-                    // Names, variables and whether each is set — never a value,
-                    // and never a prefix or a length of one. A job that will
-                    // fail at 03:00 for want of a token otherwise looks exactly
-                    // like one that will work.
-                    credentials: (j.credentials ?? []).map((name) => secrets.describe(name)),
-                    // How much this job is holding between runs. Counts only,
-                    // for the reason state.stats() gives: a cursor is whatever
-                    // a source uses as an identifier, and reporting that
-                    // something is remembered is a different act from showing
-                    // what.
-                    //
-                    // Per job rather than as an aggregate, because the row uses
-                    // it to decide whether it has anything to offer at all —
-                    // "forget this job's memory" on a job with no memory reads
-                    // as though it has one.
-                    remembered: jobState.statsFor(j.id),
-                })),
+
+                catalogue: JOBS.map(catalogueEntry),
                 dryRun: dryRun(),
                 // The knobs every run is subject to, whichever job it is.
                 // Resolved here for the same reason `timeoutMs` above is: they
@@ -645,6 +674,77 @@ export function createApp() {
         // payload that says it is a test. A job that acts on what it receives
         // will act on this one, which is why the panel beside the button says
         // so rather than only the docs.
+        // What this install has changed about one job, against its file.
+        //
+        // PUT rather than PATCH, and the whole override object rather than the
+        // fields that moved: one job's overrides are small, a page holds all of
+        // them anyway, and "send me only what changed" is the shape that cannot
+        // express clearing a field. `{ kind: "inherit" }` is how a field is
+        // cleared here, which is a thing a caller can say out loud.
+        if (url.pathname.startsWith("/api/jobs/") && url.pathname.endsWith("/config")
+            && req.method === "PUT") {
+            const id = decodeURIComponent(
+                url.pathname.slice("/api/jobs/".length, -"/config".length),
+            );
+            const declared = jobById(id);
+            if (!declared) {
+                send(res, 404, { message: `No job with id "${id}".` });
+                return done(404);
+            }
+            void (async () => {
+                try {
+                    const body = (await readJson(req)) as Partial<JobOverride>;
+                    // Absent fields mean "inherit", which is also what the
+                    // store writes for an untouched job — so a caller may send
+                    // only what it wants set, and a caller that sends the whole
+                    // object gets the same answer.
+                    const override: JobOverride = {
+                        ...(body.timeoutMs === undefined || body.timeoutMs === null
+                            ? {}
+                            : { timeoutMs: body.timeoutMs }),
+                        schedule: body.schedule ?? { kind: "inherit" },
+                        onFailure: body.onFailure ?? { kind: "inherit" },
+                        onChange: body.onChange ?? { kind: "inherit" },
+                        retry: body.retry ?? { kind: "inherit" },
+                    };
+                    const errors = overrides.validate(
+                        id,
+                        override,
+                        JOBS.map((j) => j.id),
+                    );
+                    if (errors.length > 0) {
+                        send(res, 400, { ok: false, errors } satisfies JobConfigResponse);
+                        return done(400);
+                    }
+
+                    // Whether the schedule moved, decided before the write.
+                    // Rebuilding the scheduler moves *every* job's next run —
+                    // it recomputes from now — so it happens only when this
+                    // job's schedule actually changed, rather than on every
+                    // save of a timeout.
+                    const before = JSON.stringify(overrides.forJob(id).schedule);
+                    overrides.set(id, override);
+                    if (JSON.stringify(override.schedule) !== before) {
+                        scheduler.start();
+                    }
+
+                    send(res, 200, {
+                        ok: true,
+                        errors: [],
+                        job: catalogueEntry(declared),
+                    } satisfies JobConfigResponse);
+                    done(200);
+                } catch (err) {
+                    send(res, 400, {
+                        ok: false,
+                        errors: [{ id, message: String(err) }],
+                    } satisfies JobConfigResponse);
+                    done(400);
+                }
+            })();
+            return;
+        }
+
         if (url.pathname.startsWith("/api/jobs/") && url.pathname.endsWith("/test-delivery")
             && req.method === "POST") {
             const id = decodeURIComponent(

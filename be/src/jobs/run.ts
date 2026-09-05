@@ -63,6 +63,7 @@ export interface WebhookRun {
     respond?: (value: JsonValue) => void;
 }
 import type { Job, JobContext, JobResult } from "./types.ts";
+import * as overrides from "./overrides.ts";
 
 /**
  * The ceiling a job gets when it does not name its own.
@@ -346,12 +347,19 @@ async function runChangeHandler(job: Job, changed: JobRun, isHandler: boolean): 
 }
 
 export async function runJob(
-    job: Job,
+    declaredJob: Job,
     trigger: Trigger = "manual",
     cause?: JobRun,
     rawInput: unknown = {},
     webhook?: WebhookRun,
 ): Promise<JobResult> {
+    // Overrides applied once, here, rather than at each of the four places
+    // below that read a field a user can change — the ceiling, the retry
+    // policy, and the two handoffs. Every trigger comes through this function,
+    // so this is the one door where "what the file says" becomes "what this
+    // install runs", and a caller that assembled the job itself cannot end up
+    // with a different answer than the scheduler got.
+    const job = overrides.effective(declaredJob);
     // Before track(), before the record, before anything: a job that starts and
     // then fails on bad input has already made its first side effect. The HTTP
     // endpoint checks too, so it can answer 400 rather than 500 — this is the

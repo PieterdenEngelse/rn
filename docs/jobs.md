@@ -182,18 +182,55 @@ backend, beside the settings every run is subject to whatever the job:
 `DEFAULT_TIMEOUT_MS` from `run.ts`, `TICK_MS` from `scheduler.ts`, the two
 history capacities from `history.ts`, and the `DRY_RUN` switch.
 
-It is deliberately a page of readings rather than inputs. A schedule that lives
-in TypeScript shows up in a diff and can be asserted on by a test; the same
-schedule in `settings.json` is a value somebody changed at some point, with no
-record of who or why. Config → Runtime edits settings because those are
-properties of the process; this page reports, because these are properties of
-the code.
-
 The numbers reach it over `GET /api/jobs` as `JobsConfig` and `CatalogueJob`,
 both defined in `shared/src/jobs.rs` — so a constant renamed in `be/src/jobs/`
 breaks a build rather than leaving the page quietly claiming the old value.
 That is also why the constants are exported: a page that repeated them would go
 on being wrong for as long as nobody checked.
+
+### The page edits now, and what that cost
+
+This section used to say the page was deliberately readings rather than inputs:
+a schedule in TypeScript shows up in a diff and can be asserted on by a test,
+while the same schedule in a settings file is a value somebody changed at some
+point with no record of who or why. That argument is still true. It was
+answering the wrong question.
+
+The person running an install is the one who knows this feed wants polling
+twice an hour rather than once, and that a two-minute ceiling is not enough on
+their machine. Before, saying so meant editing the job — a code change to state
+an operational preference, on a page that already displayed the value it would
+not let you touch.
+
+So five fields are editable per job: **schedule, timeout, on failure, on change,
+retry**. They are kept in `~/.config/rn/job-overrides.json`
+(`config.jobOverridesPath`), and three properties keep the old argument's force:
+
+- **The file holds differences, not jobs.** A job nobody has touched has no
+  entry. Delete the file and every job is exactly what its code declares —
+  which is what makes the whole thing safe to offer.
+- **`declared` is still sent.** `CatalogueJob` carries the effective values, the
+  job file's own values as `declared`, and what was changed as `overridden`. A
+  page can therefore say what it is overriding and offer to go back, and an
+  edited row is never mistakable for a job that always said that.
+- **Nothing overridable is a claim about the code.** A job's id, label, info
+  panels, inputs, credentials and webhook stay code. So does `effectFree`, the
+  declaration that a job writes nothing outside rn: flipping that from a page
+  would change what rn *believes* while the job went on doing whatever it does,
+  which is the one kind of setting that can quietly make a safety rule wrong.
+
+`be/src/jobs/overrides.ts` owns the store and the merge. `effective(job)` is
+applied in exactly three places — `runJob`, `scheduler.start`, and the
+catalogue — and returns a new object rather than mutating the registry entry,
+because an override written into `JOBS` would become indistinguishable from
+what the file declares, `declared` included.
+
+Saving goes through `PUT /api/jobs/:id/config`, which validates before it
+writes: a ceiling under a second, a handler naming a job that does not exist, a
+job pointed at itself, an hour of 25. Refused rather than clamped — a number
+quietly moved into range is a setting that reports one thing and does another.
+Changing a *schedule* rebuilds the scheduler, which recomputes every job's next
+run; changing anything else does not, which is why the endpoint checks.
 
 ## 5a. Webhooks, and the two places one can be declared
 

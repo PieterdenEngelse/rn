@@ -31,6 +31,7 @@ import * as running from "../running.ts";
 import { JOBS } from "./index.ts";
 import { runJob } from "./run.ts";
 import type { Job, Schedule } from "./types.ts";
+import * as overrides from "./overrides.ts";
 
 /**
  * How often to ask whether anything is due, when nobody has said otherwise.
@@ -184,7 +185,12 @@ export async function tick(now = new Date()): Promise<void> {
 
 export function start(jobs: readonly Job[] = JOBS, now = new Date()): void {
     stop();
+    // Overrides first, then the filter: a job the file schedules can be set to
+    // manual from a page, and one the file leaves manual can be given a
+    // schedule — so "does this job have a schedule" is a question only the
+    // resolved job can answer.
     entries = jobs
+        .map((j) => overrides.effective(j))
         .filter((j) => j.schedule !== undefined)
         .map((job) => ({ job, nextRunAt: nextRun(job.schedule!, now).getTime() }));
 

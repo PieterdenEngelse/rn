@@ -127,6 +127,20 @@ export const config = {
         `${process.env.HOME ?? "."}/.config/rn/credentials`,
 
     /**
+     * Per-job settings changed from Config → Jobs, keyed by job id.
+     *
+     * Its own file rather than a section of settings.json, for the reason
+     * webhooks.json is its own: nothing in it is a registry parameter, nothing
+     * in it has a default that would be right if the file vanished, and the
+     * keys are job ids the registry knows nothing about. Deleting it puts every
+     * job back to exactly what its code declares, which is what makes editing
+     * one safe to offer at all.
+     */
+    jobOverridesPath:
+        process.env.RN_JOB_OVERRIDES_PATH ??
+        `${process.env.HOME ?? "."}/.config/rn/job-overrides.json`,
+
+    /**
      * Where V8 drops its profiling artifacts, and how long they are kept.
      *
      * `--cpu-prof`, `--heap-prof` and `--prof` write into the *current working
