@@ -33,6 +33,11 @@ Step "cargo clippy"           { cargo clippy --workspace --all-targets --quiet }
 Step "be: npm test"           { npm --prefix be test }
 Step "be: typecheck"          { npm --prefix be run typecheck }
 
+# Generated files — see the note in check.sh. One implementation in
+# fe/scripts/css-check.mjs, called from both twins, so this pair cannot drift
+# the way three copies of the target-directory rule did.
+Step "fe: stylesheet"         { npm --prefix fe run --silent css:check }
+
 Write-Host ""
 if ($failed.Count -eq 0) {
     Write-Host "All checks passed." -ForegroundColor Green

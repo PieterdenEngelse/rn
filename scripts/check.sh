@@ -71,6 +71,13 @@ step "cargo clippy"             cargo clippy --workspace --all-targets --quiet
 step "be: npm test"             npm --prefix be test
 step "be: typecheck"            npm --prefix be run typecheck
 
+# Generated files. wire.ts has had a staleness guard since it existed
+# (be/test/generated.test.ts); the stylesheet is generated the same way, is
+# committed the same way, and had none — so a class Tailwind had not seen could
+# be committed without its rule, and the page stayed correct only in worktrees
+# running a CSS watcher. See fe/scripts/css-check.mjs for the whole failure.
+step "fe: stylesheet"           npm --prefix fe run --silent css:check
+
 printf '\n'
 if [ ${#failed[@]} -eq 0 ]; then
     printf '\033[32mAll checks passed.\033[0m\n'
