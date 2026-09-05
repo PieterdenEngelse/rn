@@ -30,17 +30,28 @@ pub fn MonitorJobs() -> Element {
                         // of the time. Stacked, they pushed Recent runs below
                         // the fold on a display with room for all three.
                         //
+                        // Two *thirds* to the catalogue, not half, and that
+                        // split is measured rather than chosen: at half of a
+                        // 1600px window every job card carrying memory controls
+                        // wrapped its header onto three lines — the title, then
+                        // `View source`, `Error log`, `Forget memory` and `Run
+                        // now` each broken in two. The same rows are single-line
+                        // from about 1000px, which is what a third of the window
+                        // leaves once In flight has taken its share, and In
+                        // flight needs no more than that for one sentence.
+                        //
                         // `items-start` so In flight keeps its own height
                         // rather than stretching to the catalogue's, which
                         // would draw a tall empty box around one sentence.
                         //
                         // Recent runs is deliberately not in here: it is a
-                        // table, and a table in half a window wraps its own
-                        // columns rather than showing more of them.
-                        div { class: "grid grid-cols-1 xl:grid-cols-2 gap-4 items-start",
+                        // table, and a table in a fraction of a window wraps its
+                        // own columns rather than showing more of them.
+                        div { class: "grid grid-cols-1 xl:grid-cols-3 gap-4 items-start",
                             Panel {
                                 title: "Jobs".to_string(),
                                 subtitle: Some("automations this install can run".to_string()),
+                                class: "xl:col-span-2".to_string(),
                                 Catalogue { jobs: j.clone(), on_ran: move |_| jobs.restart() }
                             }
                             Panel {
