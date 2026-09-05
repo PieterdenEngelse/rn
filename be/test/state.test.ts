@@ -187,7 +187,7 @@ test("asking twice in one run is asking twice, not seeing twice", () => {
 
 test("the window evicts, and an evicted id reads as new again", () => {
     const s = state.open("feed");
-    for (let i = 0; i <= state.SEEN_CAPACITY; i += 1) s.seen(`item-${i}`);
+    for (let i = 0; i <= state.seenCapacity(); i += 1) s.seen(`item-${i}`);
     s.commit();
 
     const next = state.open("feed");
@@ -196,7 +196,7 @@ test("the window evicts, and an evicted id reads as new again", () => {
     // window between two runs needs a timestamp cursor instead, and this is the
     // test that says so out loud.
     assert.equal(next.seen("item-0"), false, "the oldest fell off");
-    assert.equal(next.seen(`item-${state.SEEN_CAPACITY}`), true, "the newest did not");
+    assert.equal(next.seen(`item-${state.seenCapacity()}`), true, "the newest did not");
 });
 
 // ---- the caps ------------------------------------------------------------
@@ -212,7 +212,7 @@ test("a value too large to be a cursor is refused", () => {
 
 test("a key built from the data being processed hits the key cap", () => {
     const s = state.open("poller");
-    for (let i = 0; i < state.MAX_CURSORS; i += 1) s.set(`key${i}`, i);
+    for (let i = 0; i < state.maxCursors(); i += 1) s.set(`key${i}`, i);
     // The failure this is aimed at: set(`seen:${item.id}`, true) works on the
     // first run and turns the file into a log of every item that ever arrived.
     assert.throws(() => s.set("one-too-many", 1), /is the limit/);
@@ -220,7 +220,7 @@ test("a key built from the data being processed hits the key cap", () => {
 
 test("the key cap counts what is committed as well as what is staged", () => {
     const first = state.open("poller");
-    for (let i = 0; i < state.MAX_CURSORS; i += 1) first.set(`key${i}`, i);
+    for (let i = 0; i < state.maxCursors(); i += 1) first.set(`key${i}`, i);
     first.commit();
     // Otherwise a job stages its way past the cap and finds out on success.
     assert.throws(() => state.open("poller").set("one-more", 1), /is the limit/);
@@ -228,7 +228,7 @@ test("the key cap counts what is committed as well as what is staged", () => {
 
 test("overwriting an existing key is not a new key", () => {
     const s = state.open("poller");
-    for (let i = 0; i < state.MAX_CURSORS; i += 1) s.set(`key${i}`, i);
+    for (let i = 0; i < state.maxCursors(); i += 1) s.set(`key${i}`, i);
     assert.doesNotThrow(() => s.set("key0", "moved"));
 });
 

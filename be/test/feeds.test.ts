@@ -542,7 +542,7 @@ test("a configuration too big for the window says so before it misbehaves", asyn
     // itself. It works for months and then repeats after an outage, which is
     // the failure nobody connects to a cap.
     assert.notEqual(warned, undefined, "the window arithmetic must be on the record");
-    assert.equal(warned?.detail?.capacity, jobState.SEEN_CAPACITY);
+    assert.equal(warned?.detail?.capacity, jobState.seenCapacity());
 });
 
 test("a dry run remembers what it saw, and says what it still withholds", async () => {

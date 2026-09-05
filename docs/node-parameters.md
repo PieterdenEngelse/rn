@@ -33,6 +33,8 @@ scales with installed RAM, so expect a different number elsewhere.
 | **Dry run** | `dryRun` (settings.json) | on | — | immediately |
 | **Log level** | `logLevel` (settings.json) | info | — | immediately |
 | **Default job timeout** | `defaultTimeoutMs` (settings.json) | 1800000 ms | 1000 … 86400000 ms | immediately |
+| **Cursors per job** | `stateCursorsPerJob` (settings.json) | 32 cursors | 4 … 512 cursors | immediately |
+| **Remembered ids per job** | `stateSeenPerJob` (settings.json) | 1000 ids | 50 … 20000 ids | immediately |
 | **Runs kept** | `historyCapacity` (settings.json) | 200 runs | 10 … 5000 runs | immediately |
 | **Failures kept** | `failureCapacity` (settings.json) | 50 failures | 5 … 1000 failures | immediately |
 | **Heap snapshot signal** | `--heapsnapshot-signal` (NODE_OPTIONS) | unset (system default) | — | on restart |
@@ -279,6 +281,38 @@ It takes effect on the next line, with no restart, and a change announces itself
 Set to debug on a machine that has been running a while and the useful lines are buried under request chatter.
 
 Default: info · Takes effect: immediately · Settings key: `logLevel`
+
+### Cursors per job — `stateCursorsPerJob`
+
+**What it does.** How many named marks one job may keep in ~/.config/rn/job-state.json. A cursor is how a job remembers where it got to — the id of the last item it handled, a timestamp, a hash — so the next run can start from there instead of from the beginning.
+
+The cap is checked when a job writes a key it has not used before. Raising it applies at once; lowering it never deletes marks a job already wrote, because a cursor removed behind a job's back is that job reprocessing everything it had already handled. What a lower number does is refuse the next new key, and the job is told so as an error.
+
+**Why you would change it.** It is the bound that keeps a memory a memory. The failure it is aimed at is a key built from data — set(`seen:${item.id}`, true) looks reasonable, works on the first run, and turns the state file into an unbounded log of every item that has ever arrived. seen() is the supported way to say that and is bounded separately.
+
+Raise it for a job that legitimately tracks many sources — one mark per feed, per repository, per queue — and hits the ceiling for a good reason rather than a careless one.
+
+**If it's wrong.** Too low and a job stops being able to record where it got to. The run does not fail quietly: set() throws and the run is recorded as a failure naming the key it could not add, which is the one moment anybody is looking.
+
+Too high and the guard stops guarding. The state file is read whole at startup and written after every run, so a job accumulating a key per item makes every later run slower, and nothing reports it until the file is large enough to notice.
+
+Default: 32 cursors · Takes effect: immediately · Settings key: `stateCursorsPerJob`
+
+### Remembered ids per job — `stateSeenPerJob`
+
+**What it does.** How many recently-seen item ids one job keeps, so seen() can answer whether an item has been handled before. Newest last; the oldest falls off when the next one arrives.
+
+This is a window, not a memory: an id that has aged out reads as new again. Lowering it trims what is already held on the next commit rather than describing a future the file does not match — which does mean the trimmed ids are new again, and a job can re-report entries it had already seen.
+
+**Why you would change it.** It decides whether a job's dedupe survives its own run. The arithmetic is small: watch-feeds examines feeds x entries ids in one pass, so three feeds at twenty is sixty, and a window of a thousand holds months of steady state because only genuinely new entries consume any of it.
+
+Raise it when a job handles more items per run than the window holds — at that point a single run pushes out ids it recorded itself, and entries start being reported twice. The runner warns when it sees that happen.
+
+**If it's wrong.** Too small and items are announced again after they age out — the classic shape is an automation that reports the same three releases every morning, with nothing to say the window is the cause.
+
+Too large and the state file grows: it is read whole at startup and rewritten after every run, so twenty thousand ids per job across several jobs is a file every run pays for.
+
+Default: 1000 ids · Takes effect: immediately · Settings key: `stateSeenPerJob`
 
 ### Runs kept — `historyCapacity`
 

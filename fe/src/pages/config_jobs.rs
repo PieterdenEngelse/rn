@@ -404,10 +404,10 @@ fn GlobalRows(dry_run: bool, config: JobsConfig, on_saved: EventHandler<()>) -> 
             SettingRow {
                 label: "What jobs remember".to_string(),
                 value: remembered(&config),
-                note: Some(format!(
-                    "up to {} cursors and {} recent item ids per job",
-                    config.state_cursors_per_job, config.state_seen_per_job,
-                )),
+                // No note naming the caps any more: they are the two rows
+                // below, and a number repeated beside the thing that sets it is
+                // the copy that goes stale.
+                note: Some("held in ~/.config/rn/job-state.json".to_string()),
                 info: rsx! {
                     InfoButton {
                         title: "What jobs remember".to_string(),
@@ -417,9 +417,91 @@ fn GlobalRows(dry_run: bool, config: JobsConfig, on_saved: EventHandler<()>) -> 
                     }
                 },
             }
+            // The count above is a fact about the file; these two are the
+            // ceilings it is kept under, and they were code constants until
+            // they became registry parameters for this page to edit.
+            LiveNumberRow {
+                label: "Cursors per job".to_string(),
+                setting: "stateCursorsPerJob".to_string(),
+                value: f64::from(config.state_cursors_per_job),
+                unit: "cursors".to_string(),
+                min: 4.0,
+                max: 512.0,
+                human: String::new(),
+                note: Some("a lower number refuses the next new key; it never deletes one".to_string()),
+                on_saved,
+                info: rsx! {
+                    InfoButton {
+                        title: "Cursors per job".to_string(),
+                        what: CURSOR_CAP_WHAT.to_string(),
+                        why: CURSOR_CAP_WHY.to_string(),
+                        if_wrong: CURSOR_CAP_IF_WRONG.to_string(),
+                    }
+                },
+            }
+            LiveNumberRow {
+                label: "Remembered ids per job".to_string(),
+                setting: "stateSeenPerJob".to_string(),
+                value: f64::from(config.state_seen_per_job),
+                unit: "ids".to_string(),
+                min: 50.0,
+                max: 20_000.0,
+                human: String::new(),
+                note: Some("lowering this trims on the next commit — trimmed ids are new again".to_string()),
+                on_saved,
+                info: rsx! {
+                    InfoButton {
+                        title: "Remembered ids per job".to_string(),
+                        what: SEEN_CAP_WHAT.to_string(),
+                        why: SEEN_CAP_WHY.to_string(),
+                        if_wrong: SEEN_CAP_IF_WRONG.to_string(),
+                    }
+                },
+            }
         }
     }
 }
+
+const CURSOR_CAP_WHAT: &str =
+    "How many named marks one job may keep in job-state.json. A cursor is how a job remembers \
+     where it got to — the id of the last item handled, a timestamp, a hash — so the next run \
+     starts from there instead of from the beginning.\n\nChecked when a job writes a key it has \
+     not used before. Raising it applies at once. Lowering it never deletes a mark a job already \
+     wrote: a cursor removed behind a job's back is that job reprocessing everything it had \
+     handled. A lower number refuses the next new key, and the job is told so as an error.";
+
+const CURSOR_CAP_WHY: &str =
+    "It is the bound that keeps a memory a memory. The failure it exists to catch is a key built \
+     from data — one per item — which works on the first run and turns the state file into an \
+     unbounded log of everything that has ever arrived. Raise it for a job that legitimately \
+     tracks many sources: one mark per feed, per repository, per queue.";
+
+const CURSOR_CAP_IF_WRONG: &str =
+    "Too low and a job cannot record where it got to — set() throws and the run is recorded as a \
+     failure naming the key it could not add, which is the one moment anybody is looking.\n\nToo \
+     high and the guard stops guarding: the file is read whole at startup and rewritten after \
+     every run, so a job accumulating a key per item makes every later run slower with nothing \
+     to report it.";
+
+const SEEN_CAP_WHAT: &str =
+    "How many recently-seen item ids one job keeps, so a job can ask whether it has handled an \
+     item before. Newest last; the oldest falls off as new ones arrive.\n\nA window, not a \
+     memory: an id that has aged out reads as new again. Lowering it trims what is already held \
+     on the next commit rather than describing a file it does not match — so the trimmed ids are \
+     new again, and a job can re-report entries it had already seen.";
+
+const SEEN_CAP_WHY: &str =
+    "It decides whether a job's dedupe survives its own run. The arithmetic is small: a feed job \
+     examines feeds × entries ids in one pass, so three feeds at twenty is sixty, and a window of \
+     a thousand holds months of steady state because only genuinely new entries consume any of \
+     it. Raise it when a job handles more items per run than the window holds — past that point a \
+     single run pushes out ids it recorded itself.";
+
+const SEEN_CAP_IF_WRONG: &str =
+    "Too small and items are announced again once they age out: the same three releases every \
+     morning, with nothing on the page to say the window caused it. The runner does warn when a \
+     run examines more ids than the window holds.\n\nToo large and the state file grows — read \
+     whole at startup, rewritten after every run.";
 
 /// How much is stored, in words rather than a bare pair of numbers.
 ///

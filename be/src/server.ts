@@ -491,8 +491,8 @@ export function createApp() {
                     schedulerTickMs: scheduler.tickMs(),
                     historyCapacity: jobHistory.capacities().runs,
                     failureCapacity: jobHistory.capacities().failures,
-                    stateCursorsPerJob: jobState.MAX_CURSORS,
-                    stateSeenPerJob: jobState.SEEN_CAPACITY,
+                    stateCursorsPerJob: jobState.maxCursors(),
+                    stateSeenPerJob: jobState.seenCapacity(),
                     // Counts, never values. What a job remembers is whatever
                     // its source hands out as an identifier, and a page that
                     // showed one would be broadcasting it — see

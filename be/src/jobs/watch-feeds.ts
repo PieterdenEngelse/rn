@@ -31,7 +31,7 @@
  *
  * ## What the window costs, since this is the job that finds out
  *
- * `seen()` is bounded — SEEN_CAPACITY ids per job, oldest falling off — so it
+ * `seen()` is bounded — `seenCapacity()` ids per job, oldest falling off — so it
  * is a window, not a memory. An id that has aged out reads as new and is
  * reported a second time. That is fine for feeds and it is not free, and the
  * arithmetic is worth having in front of you rather than discovering after an
@@ -74,7 +74,7 @@
 import { createHash } from "node:crypto";
 import { netPermissionHint } from "./net-permission.ts";
 import { PermanentFailure } from "./permanent.ts";
-import { MAX_VALUE_BYTES, SEEN_CAPACITY } from "./state.ts";
+import { DEFAULT_SEEN_CAPACITY, MAX_VALUE_BYTES, seenCapacity } from "./state.ts";
 import type { Job, JobContext, JobResult } from "./types.ts";
 
 /** Sent on every request. Some feed hosts refuse an anonymous one. */
@@ -490,7 +490,8 @@ export const watchFeeds: Job = {
                 why:
                     "This is the number that decides whether the memory can do its job, and " +
                     "the arithmetic is small enough to do here. seen() remembers " +
-                    `${SEEN_CAPACITY} item ids per job and the oldest falls off the end, so ` +
+                    `${DEFAULT_SEEN_CAPACITY} item ids per job by default — Config → Jobs moves it — ` +
+                    "and the oldest falls off the end, so " +
                     "feeds x entries has to stay under that — otherwise a single run can push " +
                     "out ids that same run recorded, and entries start being reported twice. " +
                     "Three feeds at twenty is sixty, which leaves the window holding months of " +
@@ -541,7 +542,7 @@ export const watchFeeds: Job = {
             "rather than by comparing dates. It reads and reports; it writes nothing " +
             "anywhere, follows no links, and downloads at most " +
             `${MAX_FEED_BYTES / (1024 * 1024)} MB of any one feed.\n\nWhat it remembers is a ` +
-            `window of the last ${SEEN_CAPACITY} entry ids it has handled, plus one mark per ` +
+            `window of the last ${DEFAULT_SEEN_CAPACITY} entry ids by default, plus one mark per ` +
             "feed saying that feed has been looked at — the second is what makes a newly added " +
             "feed record its front page instead of announcing it. Both live in " +
             "~/.config/rn/job-state.json and are committed only when a run finishes.",
@@ -559,7 +560,7 @@ export const watchFeeds: Job = {
             "what ctx.state.seen() is for: asking about an id is what records it, so there is " +
             "no second call to forget.",
         ifWrong:
-            `The memory is a window, not a permanent record: the ${SEEN_CAPACITY}th-oldest id ` +
+            `The memory is a window, not a permanent record: the ${DEFAULT_SEEN_CAPACITY}th-oldest id ` +
             "falls off when a newer one arrives, and an entry whose id has aged out reads as " +
             "new and is reported again. Keep feeds x entries-per-feed well under that and it " +
             "never comes up; go over it and the job works correctly for months and then " +
@@ -619,12 +620,12 @@ export const watchFeeds: Job = {
         // The window arithmetic, checked before any work rather than after the
         // symptom. See the header: this is the bound that fails silently.
         const examined = usable.length * perFeed;
-        if (examined > SEEN_CAPACITY) {
+        if (examined > seenCapacity()) {
             ctx.step("window-too-small", {
                 feeds: usable.length,
                 perFeed,
                 examined,
-                capacity: SEEN_CAPACITY,
+                capacity: seenCapacity(),
                 effect: "one run can push its own ids out of the window, so entries repeat",
             });
         }
@@ -754,7 +755,7 @@ export const watchFeeds: Job = {
             examined: looked,
             recorded,
             reported: news.length,
-            window: SEEN_CAPACITY,
+            window: seenCapacity(),
             ...(failed.length === 0 ? {} : { feedsFailed: failed.length }),
             ...(unidentified === 0 ? {} : { unidentified }),
             ...(firstLook.length === 0 ? {} : { firstLook: firstLook.length }),

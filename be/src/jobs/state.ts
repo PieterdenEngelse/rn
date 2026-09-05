@@ -78,7 +78,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { config } from "../config.ts";
-import { warn } from "../log.ts";
+import { step, warn } from "../log.ts";
 import * as secrets from "../secrets.ts";
 import type { JsonValue } from "../generated/serde_json/JsonValue.ts";
 
@@ -93,7 +93,30 @@ import type { JsonValue } from "../generated/serde_json/JsonValue.ts";
  * item that has ever arrived. `seen()` is the supported way to say that, and it
  * is bounded.
  */
-export const MAX_CURSORS = 32;
+export const DEFAULT_MAX_CURSORS = 32;
+
+/**
+ * The ceiling in force, which a registry parameter moves — see
+ * `stateCursorsPerJob` in runtime-params.ts.
+ *
+ * Read at the moment a key is added rather than captured, so a change applies
+ * to the next `set()` and never retroactively: lowering it cannot delete
+ * cursors a job already wrote, and must not, because a cursor deleted behind a
+ * job's back is that job reprocessing everything it had already handled. What
+ * lowering does is refuse the *next* new key, which is a message the job
+ * receives as an error it can act on.
+ */
+let maxCursorsInForce = DEFAULT_MAX_CURSORS;
+
+export function maxCursors(): number {
+    return maxCursorsInForce;
+}
+
+export function setMaxCursors(n: number): void {
+    if (n === maxCursorsInForce) return;
+    step("state-cursor-cap-changed", { cursors: n });
+    maxCursorsInForce = n;
+}
 
 /**
  * How large one cursor value may be, in bytes of JSON.
@@ -120,7 +143,30 @@ export const MAX_VALUE_BYTES = 4096;
  * the kind of thing that works for months and then reprocesses a backlog after
  * one outage, at which point nobody suspects the cap.
  */
-export const SEEN_CAPACITY = 1000;
+export const DEFAULT_SEEN_CAPACITY = 1000;
+
+/**
+ * The window in force, which a registry parameter moves — see
+ * `stateSeenPerJob` in runtime-params.ts.
+ *
+ * Unlike the cursor cap, lowering this one *does* apply to what is already
+ * held: the list is trimmed to the newest ids on the next commit. That is the
+ * honest reading of a window — a setting that says "the last 200" while 1000
+ * sat in the file would be describing a future that never arrives. The cost is
+ * stated plainly on the parameter: ids trimmed away are new again, so a lower
+ * window can make a job re-report entries it had already seen.
+ */
+let seenInForce = DEFAULT_SEEN_CAPACITY;
+
+export function seenCapacity(): number {
+    return seenInForce;
+}
+
+export function setSeenCapacity(n: number): void {
+    if (n === seenInForce) return;
+    step("state-seen-cap-changed", { seen: n });
+    seenInForce = n;
+}
 
 /** How long an id may be. Bounds the file when a source hands out URLs as ids. */
 export const MAX_ID_LENGTH = 256;
@@ -134,7 +180,7 @@ interface Cursor {
 /** Everything one job remembers. */
 interface JobEntry {
     cursors: Record<string, Cursor>;
-    /** Newest last, capped at SEEN_CAPACITY. */
+    /** Newest last, capped at `seenCapacity()`. */
     seen: string[];
 }
 
@@ -178,7 +224,7 @@ export interface JobState {
      * Stage a value. It is written when the run finishes, and discarded if the
      * run fails or the install is in dry run.
      *
-     * Throws on a key or value the store will not keep — see MAX_CURSORS and
+     * Throws on a key or value the store will not keep — see `maxCursors()` and
      * MAX_VALUE_BYTES. Throwing rather than refusing quietly: a cursor that was
      * never written is a job that reprocesses everything forever, and the run
      * that introduced it is the only moment anyone is looking.
@@ -207,7 +253,7 @@ export interface JobState {
      * process has still consumed it. Ask when you are about to handle the item,
      * not while filtering a list.
      *
-     * Bounded — see SEEN_CAPACITY. An id that has aged out reads as new.
+     * Bounded — see `seenCapacity()`. An id that has aged out reads as new.
      */
     seen(id: string): boolean;
 }
@@ -263,7 +309,7 @@ function load(): void {
             }
             const seen = (Array.isArray(value?.seen) ? value.seen : [])
                 .filter((id): id is string => typeof id === "string")
-                .slice(-SEEN_CAPACITY);
+                .slice(-seenCapacity());
             store[jobId] = { cursors, seen };
         }
     } catch {
@@ -341,9 +387,9 @@ export function open(jobId: string): StateHandle {
         // stage its way past the cap and discover it only when it succeeds.
         const existing = new Set(Object.keys(store[jobId]?.cursors ?? {}));
         for (const k of staged.keys()) existing.add(k);
-        if (!existing.has(key) && existing.size >= MAX_CURSORS) {
+        if (!existing.has(key) && existing.size >= maxCursors()) {
             throw new Error(
-                `${jobId}: ${MAX_CURSORS} state keys is the limit and "${key}" would be another — ` +
+                `${jobId}: ${maxCursors()} state keys is the limit and "${key}" would be another — ` +
                     `a key built from the data being processed is the usual cause; see seen()`,
             );
         }
@@ -405,8 +451,8 @@ export function open(jobId: string): StateHandle {
             for (const [key, value] of staged) target.cursors[key] = { value, at };
             if (stagedIds.length > 0) {
                 target.seen.push(...stagedIds);
-                if (target.seen.length > SEEN_CAPACITY) {
-                    target.seen = target.seen.slice(-SEEN_CAPACITY);
+                if (target.seen.length > seenCapacity()) {
+                    target.seen = target.seen.slice(-seenCapacity());
                 }
             }
             staged = new Map();

@@ -20,6 +20,7 @@ import { oldSpaceMaxMB } from "./node_metrics.ts";
 // jobs/run.ts already carries a deferred import for exactly that hazard.
 import * as scheduler from "./jobs/scheduler.ts";
 import * as history from "./jobs/history.ts";
+import * as jobState from "./jobs/state.ts";
 import { setDefaultTimeoutMs, DEFAULT_TIMEOUT_MS } from "./jobs/run.ts";
 import * as log from "./log.ts";
 import * as dry from "./dry-run.ts";
@@ -136,6 +137,12 @@ const RUNTIME_APPLIERS: Record<string, (value: SettingValue | undefined) => void
     },
     defaultTimeoutMs: (v) => {
         setDefaultTimeoutMs(typeof v === "number" ? v : DEFAULT_TIMEOUT_MS);
+    },
+    stateCursorsPerJob: (v) => {
+        jobState.setMaxCursors(typeof v === "number" ? v : jobState.DEFAULT_MAX_CURSORS);
+    },
+    stateSeenPerJob: (v) => {
+        jobState.setSeenCapacity(typeof v === "number" ? v : jobState.DEFAULT_SEEN_CAPACITY);
     },
     historyCapacity: (v) => {
         history.setCapacity(typeof v === "number" ? v : history.DEFAULT_CAPACITY);
