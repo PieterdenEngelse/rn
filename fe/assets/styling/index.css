@@ -1,8 +1,19 @@
-@import "tailwindcss";
+/* source(none) turns OFF Tailwind's automatic source detection, so the @source
+ * lines below are the whole content scope rather than an addition to it.
+ *
+ * Without it the scan sweeps the worktree, and the generated sheet stops being
+ * a function of the committed source: ~/rn has a fe/target holding dx's own
+ * build output, including previously generated stylesheets, and those were
+ * being read back in as sources. Same commit, same Tailwind, same daisyUI,
+ * same package-lock — 100086 bytes there against 100008 here, the difference
+ * being --ease-out and --ease-in-out picked up out of a build artifact.
+ *
+ * The comment this replaces already promised the scope was "tight" so it would
+ * "never walk target/ or node_modules". @source only ever added to the
+ * automatic scan; it could not narrow it, so the promise was never kept. */
+@import "tailwindcss" source(none);
 @plugin "daisyui";
 
-/* Explicit content scope — Tailwind v4 scans these for class names.
- * Keep it tight so it never walks target/ or node_modules. */
 @source "../../src";
 @source "../../index.html";
 
