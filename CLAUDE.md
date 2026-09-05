@@ -2,7 +2,9 @@
 
 `be/` is the Node backend, `fe/` the Dioxus web frontend, `shared/` the Rust
 crate holding the wire types both ends agree on. The frontend was seeded from
-the RERAG frontend (https://github.com/PieterdenEngelse/RERAG, `frontend/fro`).
+the RERAG frontend (https://github.com/PieterdenEngelse/RERAG, `frontend/fro`)
+— a **private** repo, so that URL answers 404 to anyone not signed in as its
+owner, which is GitHub declining to confirm it exists rather than a dead link.
 The styling rules below apply here without exception.
 
 Commands live in `docs/dev.md`; the rest of `docs/` is indexed at the end of
