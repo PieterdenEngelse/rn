@@ -1,8 +1,8 @@
 use crate::api::{
-    fetch_job_errors, fetch_job_source, fetch_jobs, fetch_runs, reset_job_state, run_job,
-    send_test_delivery, CatalogueJob, JobErrors, JobRun, JobInput, JobInputType, JobRunResult,
-    JobSource, JobStep, JobsResponse, Outcome, ScheduledJob, StateResetResponse, TestDelivery,
-    Trigger, WebhookAuth, WebhookInfo, WebhookScheme,
+    fetch_job_errors, fetch_job_source, fetch_jobs, fetch_params, fetch_runs, reset_job_state,
+    run_job, save_settings, send_test_delivery, CatalogueJob, JobErrors, JobRun, JobInput,
+    JobInputType, JobRunResult, JobSource, JobStep, JobsResponse, Outcome, ScheduledJob,
+    StateResetResponse, TestDelivery, Trigger, WebhookAuth, WebhookInfo, WebhookScheme,
 };
 use crate::app::Route;
 use crate::components::param::{param_toggle_style, PARAM_INPUT_ROW_CLASS, PARAM_TOGGLE_CLASS};
@@ -39,16 +39,18 @@ pub fn MonitorJobs() -> Element {
                         // and there is no banner to sit beside: a third of a
                         // row next to nothing is not a layout.
                         div { class: "grid grid-cols-1 xl:grid-cols-3 gap-4 items-start",
-                            if j.dry_run {
-                                // A wrapper, because the span describes how the
-                                // banner sits in this row and DryRunBanner owns
-                                // its own box.
-                                div { class: "xl:col-span-2", DryRunBanner {} }
+                            // A wrapper, because the span describes how the
+                            // banner sits in this row and DryRunBanner owns its
+                            // own box.
+                            div { class: "xl:col-span-2",
+                                DryRunBanner {
+                                    dry_run: j.dry_run,
+                                    on_changed: move |_| jobs.restart(),
+                                }
                             }
                             Panel {
                                 title: "In flight".to_string(),
                                 subtitle: Some("work a restart will wait for".to_string()),
-                                class: if j.dry_run { String::new() } else { "xl:col-span-3".to_string() },
                                 RunningList { jobs: j.clone() }
                             }
                         }
@@ -219,9 +221,13 @@ const DRY_RUN_WHAT: &str =
     "A global safety switch. The backend hands its value to every job, and a job honours it by \
      doing all of its work except the part that writes — the scan, the comparison and the \
      decision all still happen, so what it reports is what an armed run would actually \
-     do.\n\nIt is a runtime setting, changed on Config → Runtime and applied to the next job \
-     to start rather than at a restart. DRY_RUN in be/.env is the baseline the process boots \
-     with, which is what \"no setting saved\" means.";
+     do.\n\nThe switch on this board is the same setting as the one on Config → Runtime — \
+     both write dryRun to settings.json — and it applies to the next job to start rather than \
+     at a restart, so a run already going finishes under the value it began with. DRY_RUN in \
+     be/.env is the baseline the process boots with, which is what \"no setting saved\" \
+     means.\n\nFlipping it here rewrites the whole settings file with one field changed, \
+     which is why the switch reads the saved settings back before it writes: sending dryRun on \
+     its own would delete every other setting in that file.";
 
 const DRY_RUN_WHY: &str =
     "This is an automation tool: the failure mode is doing something irreversible to a user's \
@@ -235,40 +241,129 @@ const DRY_RUN_IF_WRONG: &str =
      deleted.";
 
 /// Says why every run is reporting "changed nothing" before the user decides
-/// the job is broken.
+/// the job is broken — and carries the switch that decides it.
+///
+/// Rendered in both states, unlike the notice it grew out of. A control you can
+/// only reach while it is on is one that turns itself off and disappears, and
+/// the armed state is the one that most deserves saying out loud anyway.
 #[component]
-fn DryRunBanner() -> Element {
+fn DryRunBanner(dry_run: bool, on_changed: EventHandler<()>) -> Element {
+    let mut busy = use_signal(|| false);
+    let mut error = use_signal(|| Option::<String>::None);
+
+    let flip = move |_| {
+        // No `disabled` attribute and no dimming — the Form Control Rules in
+        // CLAUDE.md — so a second click during the save is refused here
+        // instead.
+        if busy() {
+            return;
+        }
+        let next = !dry_run;
+        busy.set(true);
+        error.set(None);
+        spawn(async move {
+            // Read, modify, write. `PUT /api/settings` saves the body as the
+            // whole file, so posting `{ dryRun }` on its own would delete every
+            // other saved setting — the page-wide Save on Config → Runtime
+            // sends a draft seeded from the server for exactly this reason.
+            let saved = match fetch_params().await {
+                Ok(p) => p.settings,
+                Err(e) => {
+                    error.set(Some(format!("Could not read the current settings: {e}")));
+                    busy.set(false);
+                    return;
+                }
+            };
+            let mut map = saved.as_object().cloned().unwrap_or_default();
+            map.insert("dryRun".to_string(), serde_json::Value::Bool(next));
+            match save_settings(serde_json::Value::Object(map)).await {
+                Ok(r) if r.ok => on_changed.call(()),
+                Ok(r) => error.set(Some(
+                    r.errors
+                        .iter()
+                        .map(|e| e.message.clone())
+                        .collect::<Vec<_>>()
+                        .join("; "),
+                )),
+                Err(e) => error.set(Some(e)),
+            }
+            busy.set(false);
+        });
+    };
+
     rsx! {
         // Sized to match Panel, which puts text-xs on its children — this
         // banner sits outside one, so it has to say so itself or it renders at
         // the browser default and towers over every panel on the page.
         div { class: "rounded border border-gray-600 bg-gray-800 p-4 text-xs",
             div { class: "flex items-center gap-2",
-                h3 { class: "text-sm font-semibold text-gray-200", "Dry run is on" }
+                // Amber when armed: the heading is the only thing on the page
+                // that says whether jobs can change anything, and "off" is the
+                // state a reader must not skim past.
+                h3 {
+                    class: if dry_run {
+                        "text-sm font-semibold text-gray-200"
+                    } else {
+                        "text-sm font-semibold text-amber-400"
+                    },
+                    if dry_run { "Dry run is on" } else { "Dry run is off" }
+                }
                 InfoButton {
                     title: "Dry run".to_string(),
                     what: DRY_RUN_WHAT.to_string(),
                     why: DRY_RUN_WHY.to_string(),
                     if_wrong: DRY_RUN_IF_WRONG.to_string(),
                 }
+                // Inline beside its subject rather than in the info column —
+                // the exception CLAUDE.md names for a control that belongs to a
+                // heading rather than to a row.
+                input {
+                    r#type: "checkbox",
+                    class: PARAM_TOGGLE_CLASS,
+                    style: param_toggle_style(dry_run),
+                    checked: dry_run,
+                    onchange: flip,
+                }
+                if busy() {
+                    span { class: "text-gray-400", "saving…" }
+                }
             }
             div {
-                p { class: "text-gray-300 mt-1 max-w-3xl",
-                    "Jobs will do all of their reading and deciding, report exactly what they "
-                    "would change, and change nothing. This is the default. Turn it off on "
-                    // A link rather than a name: this banner's whole purpose is
-                    // to send somebody to that switch, and naming a page you
-                    // then have to find yourself is an instruction, not a route.
-                    Link {
-                        to: Route::Config {},
-                        class: "text-blue-400 hover:text-blue-300",
-                        code { "Config → Runtime" }
+                if dry_run {
+                    p { class: "text-gray-300 mt-1 max-w-3xl",
+                        "Jobs will do all of their reading and deciding, report exactly what "
+                        "they would change, and change nothing. This is the default. The "
+                        "switch above arms them, and so does "
+                        // A link rather than a name: naming a page you then have
+                        // to find yourself is an instruction, not a route.
+                        Link {
+                            to: Route::Config {},
+                            class: "text-blue-400 hover:text-blue-300",
+                            code { "Config → Runtime" }
+                        }
+                        " — the same setting either way. It takes effect on the next job to "
+                        "start, so nothing already running changes under it. "
+                        code { class: "text-gray-200", "DRY_RUN" }
+                        " in "
+                        code { class: "text-gray-200", "be/.env" }
+                        " sets only what the install starts with."
                     }
-                    ", which takes effect on the next job to start — no restart. "
-                    code { class: "text-gray-200", "DRY_RUN" }
-                    " in "
-                    code { class: "text-gray-200", "be/.env" }
-                    " sets only what the install starts with."
+                } else {
+                    p { class: "text-gray-300 mt-1 max-w-3xl",
+                        "Jobs are armed: the next one to start will delete files, post to "
+                        "webhooks and write whatever else it was going to write. Nothing "
+                        "already running is affected — each run keeps the value it began "
+                        "with. The switch above puts the safety back on, as does "
+                        Link {
+                            to: Route::Config {},
+                            class: "text-blue-400 hover:text-blue-300",
+                            code { "Config → Runtime" }
+                        }
+                        "."
+                    }
+                }
+                if let Some(message) = error() {
+                    p { class: "text-red-400 mt-2", "Not saved — {message}" }
                 }
             }
         }
