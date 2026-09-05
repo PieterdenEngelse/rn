@@ -195,6 +195,13 @@ fn ParamBoards(
         }
     }
 
+    // The safety switch, promoted out of its board and onto the first tile's
+    // header. It keeps its row in All runtimes → Security: this is a shortcut
+    // to the same draft entry, not a second setting, which is why both are
+    // committed by the page's one Save rather than one of them writing behind
+    // the other's back.
+    let dry_run_param = resp.params.iter().find(|p| p.id == "dryRun").cloned();
+
     let params = resp.params.clone();
 
     // Which runtime runs the app is a different question from how that runtime
@@ -287,6 +294,9 @@ fn ParamBoards(
                         }
                     }
                 }),
+                actions: dry_run_param
+                    .clone()
+                    .map(|param| rsx! { DryRunSwitch { param, draft } }),
 
                 // No flex-wrap here, unlike the tuning boards below: these three are
                 // one left-to-right sequence — what is running, what to run next,
@@ -743,6 +753,67 @@ fn CategoryBoard(
                         effective: effective.clone(),
                     }
                 }
+            }
+        }
+    }
+}
+
+/// The dry-run switch, on the Runtime tile's header line.
+///
+/// Its own component so that flipping it re-renders one control rather than
+/// every board on the page: reading `draft` in `ParamBoards` would make each
+/// keystroke anywhere redraw the lot.
+///
+/// It writes to `draft` like every other control here, so it is saved by the
+/// page's Save and shows the same value as its row in Security. The switch on
+/// Monitor → Jobs is deliberately different — that one saves on the spot,
+/// because a board reporting that jobs are disarmed is not a form.
+#[component]
+fn DryRunSwitch(
+    param: RuntimeParam,
+    mut draft: Signal<BTreeMap<String, serde_json::Value>>,
+) -> Element {
+    // The same resolution ParamBlock uses for a bool, so the header and the row
+    // below cannot disagree: the draft if it has one, the registry default
+    // otherwise.
+    let on = draft()
+        .get("dryRun")
+        .and_then(|v| v.as_bool())
+        .unwrap_or_else(|| param.default.as_bool().unwrap_or(true));
+    let info = param.info.clone();
+    rsx! {
+        div { class: "flex items-center gap-2",
+            // Amber when armed, matching the banner on Monitor → Jobs — the
+            // one state on this page that can destroy something.
+            span {
+                class: if on {
+                    "text-gray-300 text-xs whitespace-nowrap"
+                } else {
+                    "text-amber-400 text-xs whitespace-nowrap"
+                },
+                if on { "Dry run" } else { "Dry run off" }
+            }
+            input {
+                r#type: "checkbox",
+                class: PARAM_TOGGLE_CLASS,
+                style: param_toggle_style(on),
+                checked: on,
+                onchange: move |evt| {
+                    draft.write().insert("dryRun".to_string(), serde_json::json!(evt.checked()));
+                },
+            }
+            InfoButton {
+                title: "Dry run".to_string(),
+                what: format!(
+                    "{}\n\nThis header switch and the Dry run row in All runtimes → Security \
+                     are one setting and one draft entry — changing either moves both, and the \
+                     page's Save commits it. The switch on Monitor → Jobs writes immediately \
+                     instead, since that board exists to report the state rather than to edit a \
+                     form.",
+                    info.what,
+                ),
+                why: info.why.clone(),
+                if_wrong: info.if_wrong.clone(),
             }
         }
     }
