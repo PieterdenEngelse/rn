@@ -517,7 +517,14 @@ pub fn WebhookTile() -> Element {
                     let r: WebhooksResponse = r.clone();
                     let jobs = r.jobs.clone();
                     rsx! {
-                        p { class: "max-w-3xl text-gray-300 leading-relaxed", "{TILE_BODY}" }
+                        // Full width, deliberately, against the max-w-3xl that
+                        // CLAUDE.md gives running prose. Every other row in
+                        // this tile — the listener line, the credentials board
+                        // beside the hooks — spans it, so a paragraph stopping
+                        // two thirds of the way across read as a ragged edge
+                        // rather than as a measure. The cost is the long line
+                        // that rule exists to prevent, taken knowingly here.
+                        p { class: "text-gray-300 leading-relaxed", "{TILE_BODY}" }
 
                         Listener { listening: r.listening, port: r.port }
 

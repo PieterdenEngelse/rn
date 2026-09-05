@@ -190,7 +190,11 @@ wide display gives them rather than sitting letterboxed in the middle of it.
 
 The exception is running prose: a line longer than about 90 characters is hard
 to read, so a block of explanatory text carries its own `max-w-3xl` while panels
-of controls do not. Info panels fill the window outright — `w-full h-full`, no
+of controls do not. The exception to the exception is a paragraph inside a tile
+whose every other row spans the width — Config → Jobs' Webhooks intro, where a
+measure two thirds of the way across read as a ragged edge rather than as a
+deliberate column. Fill it there, and say in the markup that the long line is
+the price. Info panels fill the window outright — `w-full h-full`, no
 backdrop inset, no vw/vh fraction, sections stacked in reading order.
 
 ## UI Color Rules
