@@ -31,14 +31,22 @@ pub fn MonitorJobs() -> Element {
                         // the fold on a display with room for all three.
                         //
                         // Two *thirds* to the catalogue, not half, and that
-                        // split is measured rather than chosen: at half of a
-                        // 1600px window every job card carrying memory controls
-                        // wrapped its header onto three lines — the title, then
-                        // `View source`, `Error log`, `Forget memory` and `Run
-                        // now` each broken in two. The same rows are single-line
-                        // from about 1000px, which is what a third of the window
-                        // leaves once In flight has taken its share, and In
-                        // flight needs no more than that for one sentence.
+                        // split is measured rather than chosen. At half of a
+                        // 1600px window every card wrapped; at two thirds
+                        // (~1030px) the three plain jobs — `prune-profiles`,
+                        // `notify`, `demo` — are single-line again.
+                        //
+                        // The two carrying memory controls still wrap, and no
+                        // split of this window fixes them: `watch-upstreams` and
+                        // `watch-feeds` put nine items in one row, "remembers 3
+                        // cursors" and a Forget memory button among them, and
+                        // they wrapped at 1100px too. What is fixed is *how*
+                        // they wrap — see the `whitespace-nowrap` on the groups
+                        // in JobRow, which breaks the row between items instead
+                        // of through the middle of `View source`.
+                        //
+                        // In flight needs no more than the remaining third for
+                        // one sentence.
                         //
                         // `items-start` so In flight keeps its own height
                         // rather than stretching to the catalogue's, which
@@ -399,7 +407,13 @@ fn JobRow(
     rsx! {
         div { class: "rounded border border-gray-600 bg-gray-800 p-4",
             div { class: PARAM_INPUT_ROW_CLASS,
-                div { class: "flex items-center gap-3",
+                // `whitespace-nowrap` with `flex-wrap`, so a row too long for
+                // its column breaks *between* these items rather than inside
+                // one: without it "times out after 2m" and "View source" split
+                // across two lines each, which reads as damage rather than as
+                // a second line. The pair belongs on both groups — the wrap
+                // happens wherever the space runs out.
+                div { class: "flex flex-wrap items-center gap-3 whitespace-nowrap",
                     span { class: "text-gray-200 font-medium", "{job.label}" }
                     // Beside the name, because "what is this job?" is a
                     // question about the name. This panel used to sit at the
@@ -461,7 +475,7 @@ fn JobRow(
                         }
                     }
                 }
-                div { class: "flex items-center gap-3",
+                div { class: "flex flex-wrap items-center justify-end gap-3 whitespace-nowrap",
                     // Cyan rather than blue: a secondary action beside the
                     // primary one, per the colour rules in CLAUDE.md.
                     button {
