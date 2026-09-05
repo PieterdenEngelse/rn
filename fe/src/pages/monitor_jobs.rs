@@ -299,14 +299,32 @@ fn Catalogue(jobs: JobsResponse, on_ran: EventHandler<()>) -> Element {
     }
 
     rsx! {
-        div { class: "space-y-3",
-            for job in jobs.catalogue.iter() {
-                JobRow {
-                    job: job.clone(),
-                    running: jobs.running.iter().any(|r| r.name == job.id),
-                    scheduled: jobs.scheduled.iter().find(|s| s.id == job.id).cloned(),
-                    last: jobs.last_runs.iter().find(|r| r.job_id == job.id).cloned(),
-                    on_ran,
+        // Two columns of cards once there is room for two, and the width that
+        // decides it is the *panel's*, not the window's. A viewport breakpoint
+        // would be wrong here: this panel is two thirds of the page above `xl`
+        // and the whole of it below, so one window size gives the catalogue two
+        // different widths and only the container knows which one it got.
+        //
+        // `@container` marks the panel as the thing measured; `@5xl` (64rem) is
+        // where two cards still fit a parameter row — a `w-40` label, a `w-56`
+        // input and the info button pinned to the right edge — without the
+        // button wrapping onto a line of its own. Below that the cards stay in
+        // one column, which is the layout they were designed in.
+        //
+        // The cost is accepted rather than overlooked: in half a panel a card's
+        // header wraps onto two or three rows and so does the sentence under
+        // it. Whole items rather than broken phrases, because JobRow's groups
+        // carry `whitespace-nowrap`.
+        div { class: "@container",
+            div { class: "grid grid-cols-1 @5xl:grid-cols-2 gap-3 items-start",
+                for job in jobs.catalogue.iter() {
+                    JobRow {
+                        job: job.clone(),
+                        running: jobs.running.iter().any(|r| r.name == job.id),
+                        scheduled: jobs.scheduled.iter().find(|s| s.id == job.id).cloned(),
+                        last: jobs.last_runs.iter().find(|r| r.job_id == job.id).cloned(),
+                        on_ran,
+                    }
                 }
             }
         }
