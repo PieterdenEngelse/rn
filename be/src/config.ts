@@ -163,6 +163,24 @@ export const config = {
         `${process.env.HOME ?? "."}/.config/rn/link-tracking.jsonl`,
 
     /**
+     * The origin tracked links are minted against — what actually appears in
+     * the mail.
+     *
+     * Defaults to this machine's own tracker port, which is deliberately a
+     * **useless** default outside the machine: a link to 127.0.0.1 fails
+     * visibly in the recipient's browser rather than silently pointing
+     * somewhere wrong. Set it to the public origin the tunnel serves, and
+     * nothing else — `docs/link-tracking.md` §5 is about what a hostname in a
+     * link costs, and a port number in it reads as phishing to filters and to
+     * people.
+     *
+     * No trailing slash; `/<id>` is appended.
+     */
+    trackerBaseUrl:
+        process.env.RN_TRACKER_BASE_URL ??
+        `http://127.0.0.1:${Number(process.env.BACKEND_TRACKER_PORT ?? 3012)}/t`,
+
+    /**
      * How long the tracker remembers *who*, in days.
      *
      * Not how long a link lives. Links never expire: one sits in somebody's
