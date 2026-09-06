@@ -328,25 +328,47 @@ disclaimer:
 
 ---
 
-## 6. What is undecided
+## 6. What is undecided, and one thing that no longer is
 
-Four things, and they are not the same kind. **Two are decisions**: somebody has
-to choose, and the choice changes what gets built. **Two are gaps**: a number
-nobody has picked, and a set of claims nobody has measured.
+Four things, and they are not the same kind. **One was a decision and has been
+settled by running something**, and it is recorded here rather than dropped.
+**One is still a decision**: somebody has to choose, and the choice changes what
+gets built. **Two are gaps**: a number nobody has picked, and a set of claims
+nobody has measured.
 
-### Decision: a third listener, or a route on 3011
+### Settled: a third listener on its own port
 
-§3 recommends the third listener, and neither has been built. Separation costs
-§7's step 1 in full plus a second Funnel mapping. A route on 3011 costs the
-security argument in `docs/network.md` §4 and `docs/sec.md`, rewritten honestly,
-and it puts a path-parsing bug on the port GitHub delivers to.
+The open question was whether the tracker gets its own port or becomes a route
+on 3011. §3 recommends separation, and the recommendation was gated on a fact
+about the installed tunnel: Funnel serves 443, 8443 and 10000 only, so two
+mappings on 443 need `--set-path`. Without it, separation forces a port number
+into every emailed URL, which §5 says reads as phishing to filters and to
+people — and at that point a route on 3011 with three documents rewritten
+honestly is the better trade, because a security argument is recoverable in
+prose and deliverability is not.
 
-**Check `tailscale funnel --help` before deciding**, because the recommendation
-is gated on it. Funnel serves 443, 8443 and 10000; two mappings on 443 needs
-`--set-path`. Without it, separation forces a port number into the emailed URL,
-which §5 says reads as phishing to filters and to people — and at that point a
-route on 3011 with three documents rewritten is the better trade. A security
-argument is recoverable in prose. Deliverability is not.
+**Checked 2026-09-06 on tailscale 1.102.3: `--set-path` is there.**
+
+```
+FLAGS
+  --set-path value
+        Appends the specified path to the base URL for accessing the underlying service
+```
+
+So separation wins, and the fallback above stands only as the reasoning for a
+machine whose tunnel lacks the flag. What Funnel currently carries is the hooks
+port and nothing else:
+
+```
+https://laptop.tail1e7abb.ts.net (Funnel on)
+|-- / proxy http://127.0.0.1:3011
+```
+
+**One thing the check did not settle.** Whether `--set-path=/t` onto the tracker
+takes precedence over that `/` catch-all. Longest-prefix match is the expected
+behaviour and it has not been run, so it is step 8's first measurement rather
+than a property to build on — the same distinction this document draws
+everywhere else between what was reasoned and what was observed.
 
 ### Decision: per-recipient link ids, or per-send
 
@@ -405,7 +427,7 @@ bisect when the click count is wrong.
 | 5 | The send job | Per-recipient render, a real dry-run path, `PermanentFailure` classification, declared credentials, `JobInfo`; registered in `jobs/index.ts`. |
 | 6 | Wire types and the API | `shared/src/`, `npm run types:build`, read endpoints on the API port. |
 | 7 | The page | Route, nav, and the info panels that say what §5 says. |
-| 8 | Exposure and docs | The Funnel mapping, and the edits §3 promises to `docs/network.md` and `docs/sec.md`. |
+| 8 | Exposure and docs | The Funnel mapping — confirming first that `--set-path=/t` actually outranks the existing `/` catch-all, which §6 flags as unrun — and the edits §3 promises to `docs/network.md` and `docs/sec.md`. |
 | 9 | The inbound job | IMAP, `seen()` dedupe, the window arithmetic on the run record. |
 | 10 | An inbound view | Only if the links need a page rather than the run summary. Skippable. |
 
