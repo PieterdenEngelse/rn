@@ -212,30 +212,106 @@ untracked plain-text link is a click that silently never happened.
 ## 5. What the numbers will lie about
 
 The educational requirement bites hardest here, because a click count looks
-like a fact and is not one.
+like a fact and is not one. It is an inference from a request that cannot be
+attributed, and **three of the four failures below let rn report success while
+being wrong.** The fourth is a problem with being right.
 
-**Scanners click before people do.** Google's own Safe Browsing, and any
-corporate gateway on the recipient's side, fetch links on delivery. Raw counts
-are inflated, and a "click" can exist for a mail nobody opened. Mitigations,
-all partial: discard clicks within a few seconds of send, filter on
-user-agent, count unique-per-recipient rather than raw. None of them is
-reliable, which is the thing to say in the panel rather than the thing to hide
-behind a filter.
+### Scanners click before people do
 
-**Open tracking is worthless on Gmail specifically**, and worth knowing so
-nobody adds it later expecting otherwise: Gmail proxies images through
-`googleusercontent` and prefetches them, so a pixel fires on delivery. Clicks
-are the only signal in this family worth carrying.
+When mail lands, several automated systems fetch the URLs inside it before any
+human sees them: Google's own link scanning on delivery, Microsoft Defender's
+Safe Links — which detonates at delivery *and* re-checks at click time —
+Proofpoint and Mimecast URL Defense on corporate recipients, antivirus mail
+plugins on the desktop.
 
-**Rewriting costs deliverability.** Anchor text that disagrees with its `href`,
-on a hostname unrelated to the sender, is a textbook spam heuristic. Sending as
-yourself, from a `.ts.net` name, to people who know you, this is the failure
-most likely to actually cost something — and it fails as "your mail went to
-spam", which nobody attributes to a link rewriter.
+Each of those issues a GET to `/t/<id>`, and the tracker cannot tell it from a
+person. It is the same HTTP request, and detonation sandboxes increasingly run
+a real headless browser, so the user-agent says Chrome and the JavaScript
+executes.
 
-**Consent is not optional.** Recording who clicked what, and when, is personal
-data. Defensible for a newsletter with a notice; not defensible silently in
-one-to-one correspondence, and not something an info panel makes legal.
+What that does to the data is worse than "somewhat inflated":
+
+- A click exists for mail nobody opened, and it arrives **seconds after send** —
+  so it reads as the most engaged recipient on the list rather than as noise.
+- If the redirect ever does anything besides redirect — marks something read,
+  triggers a job — it fires for a robot.
+- A gateway that rewrites links itself puts its own infrastructure between the
+  send and the recipient, so the click on the record is the gateway's.
+
+Every mitigation fails somewhere specific, which is why they are partial rather
+than a solution:
+
+| Mitigation | Where it breaks |
+|---|---|
+| Discard clicks under N seconds old | Safe Links re-detonates hours later; a recipient watching their inbox is discarded as a robot |
+| User-agent filtering | The denylist rots continuously, and sandboxes forge browser UAs |
+| Unique-per-recipient rather than raw | Removes "one gateway, five hits"; does not remove "recipient X clicked", which is still false |
+| A JS interstitial before counting | Sandboxes run JS, users with JS off are dropped, and the redirect stops being instant |
+
+**The design consequence is the part to act on.** The honest presentation is not
+a filtered aggregate but the evidence: *1 click, 0.4s after delivery, UA looked
+like Chrome*. A filter that turns that into "0 clicks" has hidden the
+uncertainty rather than resolved it, and rn's own rule points the other way.
+The panel beside the number exists to say what the number cannot distinguish.
+
+### Open tracking is worthless on Gmail specifically
+
+Gmail does not let the client fetch remote images. It proxies them through
+`googleusercontent.com`, fetching server-side, caching, and serving its own
+copy. Three consequences, and they point in opposite directions — which is what
+makes the metric useless rather than merely noisy:
+
+- **The IP and user-agent are Google's.** No location, no ISP, no device, no
+  client.
+- **The fetch can happen before a human looks**, on delivery or prefetch.
+  Inflation.
+- **Once cached, later real opens generate no request at all.** Deflation. The
+  first open is overcounted and every one after it is missed.
+
+An open rate therefore measures Google's proxy behaviour from one anonymous
+address. This is written down so nobody adds a pixel in six months expecting
+otherwise; a click is at least tied to one specific link somebody deliberately
+targeted, even with the scanner problem above.
+
+### Rewriting costs deliverability, and fails silently
+
+Visible text saying one thing while the `href` points somewhere unrelated is the
+defining shape of a phishing mail, and a scored feature in essentially every
+filter. Link rewriting is that shape, on purpose. This setup aggravates it three
+ways at once:
+
+- The tracker hostname has **no sending reputation** — a cold start, appearing
+  as the target of every link in the mail.
+- `.ts.net` is a **shared suffix** across every Tailscale node, so whatever
+  reputation accrues is pooled with strangers.
+- A **personal Gmail account** whose mail suddenly routes all its links through
+  an unrelated host is precisely the signature of a compromised account sending
+  spam.
+
+**The failure mode is why this sits in a section about numbers.** Nothing
+errors. SMTP returns 250, the send job's record is green, the click store is
+written, the Jobs page is clean — and the mail is in spam, so the count is zero.
+The tracking system reports complete success while having destroyed the thing it
+was built to measure, and "your mail went to spam" is not a symptom anyone
+traces back to a link rewriter.
+
+### Consent is not optional
+
+Recording that a named person clicked a specific link at a specific time is
+personal data about an identified subject — GDPR, with ePrivacy alongside it.
+Bulk mail with a notice and a lawful basis is the ordinary commercial pattern
+and is fine. Silently rewriting the links in one-to-one correspondence to log
+what a colleague did with your mail is covert surveillance of a correspondent,
+and the social cost lands whether or not the legal question is clear here.
+
+Two things follow for the build, which is why this is a section and not a
+disclaimer:
+
+- Tracking is **per-send opt-in in the job's input**, not a default the
+  rewriter applies to everything.
+- The click store needs the **retention answer** §3 asks for. Click logs are
+  personal data with a lifetime, not application state that may accumulate
+  forever because disk is cheap.
 
 ---
 
