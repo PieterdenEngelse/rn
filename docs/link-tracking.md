@@ -213,8 +213,8 @@ untracked plain-text link is a click that silently never happened.
 
 The educational requirement bites hardest here, because a click count looks
 like a fact and is not one. It is an inference from a request that cannot be
-attributed, and **three of the four failures below let rn report success while
-being wrong.** The fourth is a problem with being right.
+attributed, and **four of the five failures below let rn report success while
+being wrong.** The fifth is a problem with being right.
 
 ### Scanners click before people do
 
@@ -253,6 +253,19 @@ a filtered aggregate but the evidence: *1 click, 0.4s after delivery, UA looked
 like Chrome*. A filter that turns that into "0 clicks" has hidden the
 uncertainty rather than resolved it, and rn's own rule points the other way.
 The panel beside the number exists to say what the number cannot distinguish.
+
+### A forwarded mail attributes the click to the wrong person
+
+Only under per-recipient link ids — see §6, where that is a live decision — and
+unfixable there. Alice forwards the mail to Bob, Bob clicks, and the record says
+Alice, because the id is the only identity in the request and it was minted for
+her.
+
+Nothing inside the system can detect it. The click is well-formed, it arrives at
+a plausible hour, and it resolves to a link genuinely sent to the person it
+names. That makes it the quietest failure in this section: a scanner's click at
+least looks wrong once the timestamp is examined, while this one looks exactly
+like the thing it is not.
 
 ### Open tracking is worthless on Gmail specifically
 
@@ -317,15 +330,62 @@ disclaimer:
 
 ## 6. What is undecided
 
-- Whether the tracker is a third listener or a route on 3011 — §3 recommends
-  the former and neither has been built.
-- Retention for the click store, which nothing else in rn has needed.
-- Whether `/t/` links carry a per-recipient id at all, or a per-send id with
-  the recipient joined server-side. The first leaks list membership to anyone
-  who collects two links; the second cannot survive a forwarded mail.
-- Everything in §5, all of which is a claim about Gmail from outside Gmail.
-  The first real send is the measurement, and this document should be edited
-  to say what it found — the way `docs/tunnel.md` was.
+Four things, and they are not the same kind. **Two are decisions**: somebody has
+to choose, and the choice changes what gets built. **Two are gaps**: a number
+nobody has picked, and a set of claims nobody has measured.
+
+### Decision: a third listener, or a route on 3011
+
+§3 recommends the third listener, and neither has been built. Separation costs
+§7's step 1 in full plus a second Funnel mapping. A route on 3011 costs the
+security argument in `docs/network.md` §4 and `docs/sec.md`, rewritten honestly,
+and it puts a path-parsing bug on the port GitHub delivers to.
+
+**Check `tailscale funnel --help` before deciding**, because the recommendation
+is gated on it. Funnel serves 443, 8443 and 10000; two mappings on 443 needs
+`--set-path`. Without it, separation forces a port number into the emailed URL,
+which §5 says reads as phishing to filters and to people — and at that point a
+route on 3011 with three documents rewritten is the better trade. A security
+argument is recoverable in prose. Deliverability is not.
+
+### Decision: per-recipient link ids, or per-send
+
+**Per-recipient** — a distinct `/t/<id>` for every (send, recipient, url) — is
+the only design that answers *who* clicked, and it costs two things. The ids are
+the only difference between two copies of the same mail, so anyone seeing two
+copies learns that it was individually tracked and that other recipients exist.
+And a forwarded click is attributed to the wrong person, silently; §5 says why
+that one cannot be caught from inside.
+
+**Per-send** — one id per (send, url), shared by everyone — has neither problem
+and answers a smaller question. There is no recovering the recipient at click
+time: they have never visited the tracker, so there is no cookie, and an IP is
+both useless and personal data. Per-send is **aggregate only**. An earlier draft
+of this document claimed a per-send id "with the recipient joined server-side",
+and that join has nothing to join on.
+
+So the fork is **attribution against discretion**, and it follows from the
+question being answered. *Did this land at all* is per-send, and is cheaper,
+cleaner and unembarrassing. *Which of these twelve people read it* is
+per-recipient, and the panel beside the number then has to say both costs out
+loud.
+
+**The middle ground collapses this with the retention gap below.** Default to
+per-send; make identified tracking the per-send opt-in §5 already argues for;
+drop the recipient column after N days while the id keeps resolving. The leak
+becomes bounded rather than permanent.
+
+### Gap: retention for the click store
+
+Nothing else in rn grows with traffic from outside the machine, so there is no
+precedent here to copy. It needs an answer at the same time as the writer rather
+than after it.
+
+### Gap: everything in §5
+
+All of it is a claim about Gmail made from outside Gmail. The first real send is
+the measurement, and this document should be edited to say what it found — the
+way `docs/tunnel.md` was.
 
 ---
 
