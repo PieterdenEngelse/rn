@@ -326,3 +326,46 @@ disclaimer:
 - Everything in §5, all of which is a claim about Gmail from outside Gmail.
   The first real send is the measurement, and this document should be edited
   to say what it found — the way `docs/tunnel.md` was.
+
+---
+
+## 7. The order to build it
+
+Ten landable steps, where a step is one that ends with `./scripts/check.sh`
+green and the tree working. The unit is deliberate: the alternative is a branch
+that carries a listener, a store, a job and a page at once, and nothing to
+bisect when the click count is wrong.
+
+| # | Step | What it lands |
+|---|---|---|
+| 1 | Ports and config | The tracker port as `BACKEND_PORT + 2` — 3012, 3022, 3032, 3042, which the ten-apart scheme already has room for — in `scripts/dev-ports.sh`, `config.ts` and `be/.env.example`. One step or a failing test: `be/test/env-example.test.ts` holds the example equal to what `config.ts` reads, in both directions. |
+| 2 | The tracker listener | `GET /t/:id` and 404 for everything else, mirroring `hooks/server.ts:321`. Tested as a table the way `docs/tunnel.md` tests the hooks port: an unknown id, an attempt to pass a destination in the query, a non-GET. |
+| 3 | The click store | Append, look up, retain. Own module, own tests. |
+| 4 | The rewriter | A pure function — HTML in, HTML and minted rows out, plain-text alternative included. No I/O, so the cheapest thing here to get right. |
+| 5 | The send job | Per-recipient render, a real dry-run path, `PermanentFailure` classification, declared credentials, `JobInfo`; registered in `jobs/index.ts`. |
+| 6 | Wire types and the API | `shared/src/`, `npm run types:build`, read endpoints on the API port. |
+| 7 | The page | Route, nav, and the info panels that say what §5 says. |
+| 8 | Exposure and docs | The Funnel mapping, and the edits §3 promises to `docs/network.md` and `docs/sec.md`. |
+| 9 | The inbound job | IMAP, `seen()` dedupe, the window arithmetic on the run record. |
+| 10 | An inbound view | Only if the links need a page rather than the run summary. Skippable. |
+
+Three properties of that order, all of them the reason for it:
+
+**Steps 1–7 are entirely on loopback.** Nothing is publicly reachable until 8,
+so minting, rewriting, redirecting, logging and the page can all be built and
+watched against `127.0.0.1` with no exposure at all. The one irreversible
+decision goes last, after the thing has been seen working.
+
+**Step 8 is the only one git cannot undo.** Everything above it is a revert.
+Once links are in somebody's mailbox pointing at a public hostname they are out,
+and withdrawing the Funnel mapping does not un-send them — it turns them into
+dead links in mail people kept.
+
+**The risk is not spread evenly, and the count of ten flatters that.** 3 and 4
+are an afternoon each and hard to get wrong. 2, 5 and 8 carry all of it: the
+listener is the new surface, the send job is what touches real recipients, and 8
+is the security argument changing.
+
+`nodemailer` and `imapflow` are installed before 5 and 9 respectively, and
+**from `~/rn`** — an `npm install` in a worktree deletes the symlink and
+un-shares that tree for good, with one `npm warn reify` line to say so.
