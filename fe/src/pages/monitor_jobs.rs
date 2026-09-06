@@ -1,5 +1,6 @@
 use crate::api::{
     fetch_job_errors, fetch_job_source, fetch_jobs, fetch_runs, reset_job_state, run_job,
+    HandlerOverride, RetryOverride, ScheduleOverride,
     save_one_setting, send_test_delivery, CatalogueJob, JobErrors, JobRun, JobInput, JobInputType,
     JobRunResult, JobSource, JobStep, JobsResponse, Outcome, ScheduledJob, StateResetResponse,
     TestDelivery, Trigger, WebhookAuth, WebhookInfo, WebhookScheme,
@@ -523,6 +524,18 @@ fn JobRow(
                         span { class: "text-gray-300 text-xs", "running…" }
                     }
                     span { class: "text-gray-400", "times out after {duration(job.timeout_ms)}" }
+                    // Because every value on this row is the *effective* one.
+                    // Without this, a card reading "times out after 5m" beside
+                    // a job file that says 30s is two true statements and no
+                    // way to reconcile them — and this page is where somebody
+                    // looks first when a job behaves unlike its code.
+                    if !overridden_fields(&job).is_empty() {
+                        span {
+                            class: "text-amber-400 text-xs",
+                            title: "Changed on Config → Jobs; the job file says something else",
+                            "{overridden_phrase(&overridden_fields(&job))}"
+                        }
+                    }
                     match scheduled.as_ref() {
                         Some(s) => rsx! {
                             span { class: "text-gray-300 text-xs",
@@ -1286,6 +1299,18 @@ fn RunRow(run: JobRun, alt: bool) -> Element {
                 if run.attempts > 1 {
                     span { class: "text-gray-400 text-xs shrink-0", "{run.attempts} attempts" }
                 }
+                // On the row rather than behind the toggle. "This run was not
+                // subject to what the job file says" is something a reader
+                // needs while scanning a list for the odd one out — the whole
+                // failure it exists to prevent is a duration that disagrees
+                // with a ceiling and nothing on the page reconciling them.
+                if !run.overridden.is_empty() {
+                    span {
+                        class: "text-amber-400 text-xs shrink-0",
+                        title: "This run used settings changed on Config → Jobs, not what the job file declares",
+                        "{overridden_phrase(&run.overridden)}"
+                    }
+                }
                 if !run.steps.is_empty() || !run.input.is_empty() {
                     // Cyan: a secondary action, per the colour rules.
                     button {
@@ -1307,6 +1332,43 @@ fn RunRow(run: JobRun, alt: bool) -> Element {
             }
         }
     }
+}
+
+/// Which of a job's fields are not what its file declares, in the spelling the
+/// store uses.
+///
+/// Computed here rather than sent: the backend already sends `overridden` in
+/// full, and a second field carrying the same fact as a list is a second thing
+/// to keep in step. The names match the run record's, so the card and the run
+/// row say the same word for the same difference.
+fn overridden_fields(job: &CatalogueJob) -> Vec<String> {
+    let o = &job.overridden;
+    let mut fields = Vec::new();
+    if o.timeout_ms.is_some() {
+        fields.push("timeoutMs".to_string());
+    }
+    if !matches!(o.schedule, ScheduleOverride::Inherit) {
+        fields.push("schedule".to_string());
+    }
+    if !matches!(o.on_failure, HandlerOverride::Inherit) {
+        fields.push("onFailure".to_string());
+    }
+    if !matches!(o.on_change, HandlerOverride::Inherit) {
+        fields.push("onChange".to_string());
+    }
+    if !matches!(o.retry, RetryOverride::Inherit) {
+        fields.push("retry".to_string());
+    }
+    fields
+}
+
+/// "overridden: timeout", or "overridden: timeout, retry".
+///
+/// Names the fields rather than counting them: "2 overridden" sends a reader to
+/// another page to find out which, and the whole point of the marker is to
+/// answer the question on the row.
+fn overridden_phrase(fields: &[String]) -> String {
+    format!("overridden: {}", fields.join(", "))
 }
 
 /// What is behind the toggle: "12 steps", or "input" for a run that reported

@@ -163,3 +163,23 @@ test("what is refused, and why each one matters", () => {
     assert.deepEqual(check({ onChange: { kind: "nothing" } }), []);
     assert.deepEqual(check({ retry: { kind: "policy", attempts: 3, backoffMs: 30_000 } }), []);
 });
+
+test("a run records which fields were not the job's own", async () => {
+    // The property the record exists for: an override can be changed or removed
+    // afterwards, so a run has to carry what *it* was subject to rather than a
+    // pointer to whatever the store says later.
+    overrides.set("sample", { ...overrides.none(), timeoutMs: 120_000 });
+    assert.deepEqual(overrides.fieldsFor("sample"), ["timeoutMs"]);
+
+    overrides.set("sample", {
+        ...overrides.none(),
+        timeoutMs: 120_000,
+        retry: { kind: "off" },
+        schedule: { kind: "manual" },
+    });
+    assert.deepEqual(overrides.fieldsFor("sample"), ["timeoutMs", "schedule", "retry"]);
+
+    // And a job nobody has touched reports nothing, which is what keeps the
+    // marker off every row on an ordinary install.
+    assert.deepEqual(overrides.fieldsFor("watch-feeds"), []);
+});

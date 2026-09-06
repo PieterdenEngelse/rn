@@ -722,6 +722,23 @@ skipped?: string | null, };
  */
 export type JobRun = { jobId: string, startedAt: number, ms: number, trigger: Trigger, 
 /**
+ * Which of the job's fields were not what its file declares when this
+ * run started — `timeoutMs`, `schedule`, `retry`, `onFailure`,
+ * `onChange`, in the store's own spelling.
+ *
+ * Recorded rather than derivable, because an override can be changed
+ * or removed after a run and the record has to keep saying what *that
+ * run* was subject to. Without it, "why did this time out after five
+ * minutes when the file says thirty seconds" has no answer anywhere:
+ * the history reports the duration and the job file reports the
+ * ceiling, and nothing reconciles them.
+ *
+ * Empty for a job running exactly as its code says, which is every job
+ * until somebody changes one — and empty on every run recorded before
+ * overrides existed, which reads the same way and is true.
+ */
+overridden?: Array<string>, 
+/**
  * Whether the run was disarmed. A dry run is not a failed run.
  */
 dryRun: boolean, changed: boolean, skipped?: string | null, error?: string | null, summary: { [key in string]: JsonValue }, 

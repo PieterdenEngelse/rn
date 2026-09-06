@@ -475,6 +475,22 @@ wire! {
         pub started_at: f64,
         pub ms: f64,
         pub trigger: Trigger,
+        /// Which of the job's fields were not what its file declares when this
+        /// run started — `timeoutMs`, `schedule`, `retry`, `onFailure`,
+        /// `onChange`, in the store's own spelling.
+        ///
+        /// Recorded rather than derivable, because an override can be changed
+        /// or removed after a run and the record has to keep saying what *that
+        /// run* was subject to. Without it, "why did this time out after five
+        /// minutes when the file says thirty seconds" has no answer anywhere:
+        /// the history reports the duration and the job file reports the
+        /// ceiling, and nothing reconciles them.
+        ///
+        /// Empty for a job running exactly as its code says, which is every job
+        /// until somebody changes one — and empty on every run recorded before
+        /// overrides existed, which reads the same way and is true.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub overridden: Vec<String>,
         /// Whether the run was disarmed. A dry run is not a failed run.
         pub dry_run: bool,
         pub changed: bool,

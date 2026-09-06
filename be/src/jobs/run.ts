@@ -360,6 +360,11 @@ export async function runJob(
     // install runs", and a caller that assembled the job itself cannot end up
     // with a different answer than the scheduler got.
     const job = overrides.effective(declaredJob);
+    // Read once, at the start, and stamped onto every record this run writes.
+    // Read later it could describe a different override — or none, if somebody
+    // reset it while the job ran — and the record has to say what *this* run
+    // was subject to.
+    const overridden = overrides.fieldsFor(declaredJob.id);
     // Before track(), before the record, before anything: a job that starts and
     // then fails on bad input has already made its first side effect. The HTTP
     // endpoint checks too, so it can answer 400 rather than 500 — this is the
@@ -418,6 +423,7 @@ export async function runJob(
             dryRun: dryRun(),
             changed: false,
             skipped,
+            ...(overridden.length === 0 ? {} : { overridden }),
             summary: {},
             steps: [],
             attempts: 0,
@@ -705,6 +711,7 @@ export async function runJob(
                 dryRun: dryRun(),
                 changed: result.changed,
                 ...(skipped === undefined ? {} : { skipped }),
+                ...(overridden.length === 0 ? {} : { overridden }),
                 summary,
                 steps: steps.collected(),
                 attempts,
@@ -778,6 +785,7 @@ export async function runJob(
                 dryRun: dryRun(),
                 changed: false,
                 error: message,
+                ...(overridden.length === 0 ? {} : { overridden }),
                 summary: {},
                 // The steps that ran before it broke — the reason this is worth
                 // keeping at all. A failed run has no summary to explain it.

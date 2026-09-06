@@ -136,6 +136,19 @@ export function set(id: string, override: JobOverride): void {
     step("job-overrides-saved", { id, fields: describe(override) });
 }
 
+/**
+ * Which fields this job is not running as its file declares, in the store's own
+ * spelling.
+ *
+ * Exported because the runner stamps it onto every run record: an override can
+ * be changed or removed afterwards, so a record that only said "overridden"
+ * would go on being true while ceasing to be useful, and one that said nothing
+ * would leave a five-minute run under a thirty-second ceiling unexplained.
+ */
+export function fieldsFor(id: string): string[] {
+    return describe(forJob(id));
+}
+
 /** Which fields this override actually sets, for the log line. */
 function describe(o: JobOverride): string[] {
     const fields: string[] = [];
