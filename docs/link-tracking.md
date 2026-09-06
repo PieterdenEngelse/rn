@@ -160,7 +160,7 @@ it at the schema, not later.
 
 ### The send job itself
 
-An ordinary `Job` registered in `be/src/jobs/index.ts`. Three things it owes:
+An ordinary `Job` registered in `be/src/jobs/index.ts`. Four things it owes:
 
 - **A real dry run.** `DRY_RUN` defaults on, and `docs/jobs.md` §1 is explicit
   that a flag a job accepts and ignores is a decoration rather than a safety
@@ -174,6 +174,26 @@ An ordinary `Job` registered in `be/src/jobs/index.ts`. Three things it owes:
 - **`PermanentFailure` where it applies.** A rejected credential and a
   malformed address answer identically on the third attempt; a 421 from
   Gmail's SMTP is what the retries are for. `docs/jobs.md` §7 has the test.
+- **Idempotency per `(send, recipient)`.** A sent-marker committed *before* the
+  SMTP call and checked on entry, so a second attempt resumes rather than
+  repeats.
+
+**The fourth is not a refinement, and it is the one this document nearly
+missed.** `run.ts` implements retry by re-invoking the job function, and
+`be/src/jobs/overrides.ts` lets an install raise `retry.attempts` to ten from a
+page — no code change, no review. Every other job in the tree survives that by
+accident of being a poller: `watch-feeds` retrying merely re-reads a feed. A
+send job is the first thing here that is not idempotent, and the failure is
+duplicate mail to real recipients, which is the only failure in this feature
+that cannot be taken back. A crash part-way through a fifty-recipient send has
+the same shape, so the marker earns itself twice over.
+
+Whether `retry` should be overridable at all for a job like this is a question
+for that feature rather than this one. `overrides.ts` already refuses it for
+`effectFree`, on the grounds that a page must not change what rn *believes*
+about a job while the job goes on doing whatever it does — and "this work can
+safely be repeated" is the same kind of claim. The marker means link tracking
+does not have to wait for that answer.
 
 ### Rewriting
 
@@ -461,7 +481,7 @@ bisect when the click count is wrong.
 | 2 | The tracker listener | `GET /t/:id` and 404 for everything else, mirroring `hooks/server.ts:321`. Tested as a table the way `docs/tunnel.md` tests the hooks port: an unknown id, an attempt to pass a destination in the query, a non-GET. |
 | 3 | The click store | Append, look up, retain. Own module, own tests. The recipient column is nullable from the first commit — §6 says why that is the schema decision rather than a later one. |
 | 4 | The rewriter | A pure function — HTML in, HTML and minted rows out, plain-text alternative included. No I/O, so the cheapest thing here to get right. |
-| 5 | The send job | Per-recipient render, a real dry-run path, `PermanentFailure` classification, declared credentials, `JobInfo`; registered in `jobs/index.ts`. |
+| 5 | The send job | Per-recipient render, a real dry-run path, `PermanentFailure` classification, declared credentials, `JobInfo`; registered in `jobs/index.ts`. Plus the `(send, recipient)` sent-marker committed before the SMTP call — §3 says why that one is not optional. |
 | 6 | Wire types and the API | `shared/src/`, `npm run types:build`, read endpoints on the API port. |
 | 7 | The page | Route, nav, and the info panels that say what §5 says. |
 | 8 | Exposure and docs | The Funnel mapping — confirming first that `--set-path=/t` actually outranks the existing `/` catch-all, which §6 flags as unrun — and the edits §3 promises to `docs/network.md` and `docs/sec.md`. |
