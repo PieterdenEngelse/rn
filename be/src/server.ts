@@ -57,6 +57,7 @@ import {
 import { config, remoteBindRefusal } from "./config.ts";
 import { createHookApp, hooksHealth, startHooks } from "./hooks/server.ts";
 import { createTrackerApp, startTracker, trackerHealth } from "./tracker/server.ts";
+import * as trackerStore from "./tracker/store.ts";
 import { sendTestDelivery } from "./hooks/test-delivery.ts";
 import { describeEnv } from "./env-file.ts";
 import * as webhooks from "./webhooks.ts";
@@ -428,6 +429,79 @@ export function createApp() {
         // What is listening, who may talk to it, and what it may reach. One
         // request rather than three, because the three questions behind
         // "backend unreachable" are always asked together.
+        // The tracker's own store, read through the API rather than through the
+        // tracker's port. That port serves exactly one route to the public
+        // internet, and a read endpoint on it would be a second thing a
+        // stranger can reach — the property docs/link-tracking.md §3 spends a
+        // whole section keeping.
+        if (url.pathname === "/api/links" && req.method === "GET") {
+            const health = trackerHealth();
+            const sends = trackerStore.sends().map((id) => {
+                const links = trackerStore.linksFor(id);
+                const recipients = new Set(
+                    links.map((l) => l.recipient).filter((r): r is string => r !== null),
+                );
+                return {
+                    id,
+                    mintedAt: Math.max(...links.map((l) => l.mintedAt)),
+                    links: links.length,
+                    clicks: links.reduce((n, l) => n + trackerStore.clicksFor(l.id).length, 0),
+                    // A property of what the send did, not of the current
+                    // default: a page reporting the default would describe the
+                    // *next* send while claiming to describe this one.
+                    identified: recipients.size > 0,
+                    recipients: recipients.size,
+                };
+            });
+            send(res, 200, {
+                sends,
+                baseUrl: config.trackerBaseUrl,
+                // Named here rather than sniffed on the page, for the reason
+                // `loopbackOnly` is: what counts as loopback is a property of
+                // the address, and a second implementation in the frontend is a
+                // second thing to keep right.
+                baseUrlIsLoopback: /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/)/.test(
+                    config.trackerBaseUrl,
+                ),
+                retentionDays: config.trackerRetentionDays,
+                listening: health.listening,
+                port: health.port === 0 ? config.trackerPort : health.port,
+            });
+            return done(200);
+        }
+
+        if (url.pathname.startsWith("/api/links/") && req.method === "GET") {
+            const id = decodeURIComponent(url.pathname.slice("/api/links/".length));
+            const links = trackerStore.linksFor(id);
+            if (links.length === 0) {
+                send(res, 404, { error: `no send ${id}` });
+                return done(404);
+            }
+            send(res, 200, {
+                id,
+                links: links
+                    .sort((a, b) => a.mintedAt - b.mintedAt)
+                    .map((l) => ({
+                        id: l.id,
+                        sendId: l.sendId,
+                        ...(l.recipient === null ? {} : { recipient: l.recipient }),
+                        url: l.url,
+                        mintedAt: l.mintedAt,
+                        clicks: trackerStore.clicksFor(l.id).map((c) => ({
+                            at: c.at,
+                            userAgent: c.userAgent,
+                            method: c.method,
+                            // The column that makes a scanner visible without
+                            // filtering one out: an arrival a second after the
+                            // mail was sent is a machine, whatever its
+                            // user-agent claims.
+                            afterMintMs: c.at - l.mintedAt,
+                        })),
+                    })),
+            });
+            return done(200);
+        }
+
         if (url.pathname === "/api/connection" && req.method === "GET") {
             const granted = (process.env["RN_NET_ALLOWLIST"] ?? "")
                 .split(",")

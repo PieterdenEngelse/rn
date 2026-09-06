@@ -935,6 +935,56 @@ export type JsRuntime = "node" | "bun" | "deno";
 export type LargestSpace = { name: string, usedMB: number, };
 
 /**
+ * One arrival at a tracked link.
+ *
+ * The user-agent and the method are evidence rather than a filter. No
+ * browser navigates with `HEAD`, so a `HEAD` arrival is a link checker or
+ * a scanner and never a person — the strongest single signal in the store,
+ * and the reason it is kept rather than dropped at the door.
+ */
+export type LinkClick = { at: number, userAgent: string, 
+/**
+ * `GET` or `HEAD`.
+ */
+method: string, 
+/**
+ * Milliseconds between the link being minted and this arrival.
+ *
+ * Carried rather than computed in the page because it is the number
+ * that makes a scanner visible: a click a second after the mail was
+ * sent is a machine, whatever its user-agent claims. It is not a
+ * filter — the row is shown either way — it is the column that lets a
+ * person distrust the total for themselves.
+ */
+afterMintMs: number, };
+
+/**
+ * GET /api/links.
+ */
+export type LinksResponse = { 
+/**
+ * Newest first.
+ */
+sends: Array<TrackedSend>, 
+/**
+ * What actually appears in the mail. Shown because a tracker minting
+ * `http://127.0.0.1:3012/t/...` is configured but useless, and that is
+ * invisible from anywhere except the link itself.
+ */
+baseUrl: string, 
+/**
+ * True when the base URL is this machine's own loopback — the default,
+ * and a link nobody else can follow.
+ */
+baseUrlIsLoopback: boolean, retentionDays: number, 
+/**
+ * Whether the tracker is actually bound. A link in a mailbox that
+ * finds nothing listening is a recipient looking at a browser error,
+ * so this is not the same kind of "degraded" as a poller being down.
+ */
+listening: boolean, port: number, };
+
+/**
  * The secondary call a notification webhook makes, because the delivery
  * did not carry the facts.
  *
@@ -1356,6 +1406,11 @@ schedule: string,
 nextRunAt: number, };
 
 /**
+ * GET /api/links/:sendId.
+ */
+export type SendDetail = { id: string, links: Array<TrackedLink>, };
+
+/**
  * DELETE /api/jobs/:id/state — what a targeted reset removed.
  *
  * Counts, never the values removed. `docs/token-sec.md` is the argument:
@@ -1458,6 +1513,50 @@ sentAs: string,
  * operator is entitled to.
  */
 detail: string, };
+
+/**
+ * One link minted into one message.
+ */
+export type TrackedLink = { id: string, sendId: string, 
+/**
+ * Absent for a per-send link — one id shared by everyone the mail went
+ * to, which answers *did this land* and cannot answer *who*.
+ *
+ * Also absent once identity has aged out: the recipient is dropped at
+ * `retentionDays` while the link goes on resolving forever, because a
+ * link in a mailbox may be clicked years later and a 404 there is a
+ * fault rather than lost analytics.
+ */
+recipient?: string | null, 
+/**
+ * Where it actually goes. The tracker reads this from its store and
+ * never from the request — see `be/src/tracker/server.ts`.
+ */
+url: string, mintedAt: number, 
+/**
+ * Every arrival, oldest first. Not a count: see the module note.
+ */
+clicks: Array<LinkClick>, };
+
+/**
+ * One send, as the list page shows it.
+ */
+export type TrackedSend = { id: string, mintedAt: number, links: number, clicks: number, 
+/**
+ * True when any link in this send names a recipient.
+ *
+ * A property of the send rather than a setting, because it is what the
+ * send actually did: a page that showed the current default would be
+ * describing what the *next* send will do while claiming to describe
+ * this one.
+ */
+identified: boolean, 
+/**
+ * How many distinct recipients this send minted links for. Zero for a
+ * per-send send, and zero again once identity has aged out — which the
+ * page must not report as "nobody", hence `identified` beside it.
+ */
+recipients: number, };
 
 /**
  * How a run was started.
