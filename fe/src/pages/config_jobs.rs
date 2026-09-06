@@ -5,7 +5,7 @@ use crate::api::{
 };
 use crate::components::param::{
     param_toggle_style, PARAM_INPUT_ROW_CLASS, PARAM_NUMBER_INPUT_CLASS,
-    PARAM_NUMBER_INPUT_WIDE_CLASS, PARAM_SELECT_CLASS, PARAM_TOGGLE_CLASS,
+    PARAM_NUMBER_INPUT_WIDE_CLASS, PARAM_TOGGLE_CLASS,
 };
 use crate::components::{InfoButton, Panel, WebhookTile};
 use crate::pages::monitor_jobs::duration;
@@ -455,7 +455,7 @@ fn GlobalRows(dry_run: bool, config: JobsConfig, on_saved: EventHandler<()>) -> 
                 min: 50.0,
                 max: 20_000.0,
                 human: String::new(),
-                note: Some("lowering this trims on the next commit — trimmed ids are new again".to_string()),
+                note: Some("lowering it trims on the next commit".to_string()),
                 on_saved,
                 info: rsx! {
                     InfoButton {
@@ -580,6 +580,29 @@ const CARD_ROW_CLASS: &str = "text-gray-300 param-row flex items-start gap-2 w-f
 /// inside the row instead of pushing the button along.
 const CARD_ROW_TEXT_CLASS: &str = "flex items-center gap-2 flex-wrap min-w-0";
 
+/// The control half of an editable card row, at a fixed width.
+///
+/// Fixed because `.param-row` pushes a row's last child to the right edge, so a
+/// row whose control and description are one group is laid out from the *right*
+/// — and five rows with five different description lengths put their controls
+/// at five different left edges. Measured on the page: the Schedule select
+/// started 132px right of Retry's. A slot the same width on every row makes
+/// them a column.
+///
+/// 18rem holds the widest combination — a schedule select beside an hour and a
+/// minute — and anything wider wraps inside the slot rather than shifting the
+/// row.
+const CARD_CONTROL_CLASS: &str = "w-72 shrink-0 flex items-center gap-2 flex-wrap";
+
+/// The description beside it. `flex-1` is load-bearing twice over: it fills the
+/// rest of the row, and by leaving no free space it makes `.param-row`'s
+/// `margin-left: auto` a no-op for everything except the info button.
+const CARD_DESC_CLASS: &str = "flex-1 min-w-0 flex items-center gap-2 flex-wrap";
+
+/// A select inside a card row — narrower than the page-wide one, which is
+/// `w-64` and would fill the slot on its own.
+const CARD_SELECT_CLASS: &str = "select select-xs bg-gray-700 text-gray-200 w-36";
+
 
 /// Write one job's overrides, and tell the page to refetch.
 ///
@@ -694,8 +717,9 @@ fn HandlerSelect(
         HandlerOverride::Job { id } => id.clone(),
     };
     rsx! {
+        div { class: CARD_CONTROL_CLASS,
         select {
-            class: PARAM_SELECT_CLASS,
+            class: CARD_SELECT_CLASS,
             value: "{selected}",
             onchange: move |evt| {
                 let v = evt.value();
@@ -714,6 +738,8 @@ fn HandlerSelect(
                 option { value: "{other}", "→ {other}" }
             }
         }
+        }
+        div { class: CARD_DESC_CLASS,
         match effective.as_ref() {
             Some(h) => rsx! { span { class: "text-gray-300", "— runs {h}" } },
             None => rsx! { span { class: "text-gray-400", "— {nothing_words}" } },
@@ -722,6 +748,7 @@ fn HandlerSelect(
             span { class: "text-gray-400",
                 "— set here; the job declares {declared.clone().unwrap_or_else(|| \"nothing\".to_string())}"
             }
+        }
         }
     }
 }
@@ -783,9 +810,9 @@ fn JobConfigRow(
                 style: "grid-template-columns: max-content 1fr;",
                 dt { class: "text-gray-400", "Schedule" }
                 dd { class: CARD_ROW_CLASS,
-                    div { class: CARD_ROW_TEXT_CLASS,
+                    div { class: CARD_CONTROL_CLASS,
                         select {
-                            class: PARAM_SELECT_CLASS,
+                            class: CARD_SELECT_CLASS,
                             value: schedule_choice(&job.overridden.schedule),
                             onchange: move |evt| {
                                 let next = match evt.value().as_str() {
@@ -854,6 +881,8 @@ fn JobConfigRow(
                             },
                             _ => rsx! {},
                         }
+                    }
+                    div { class: CARD_DESC_CLASS,
                         // What is actually in force, and when it next fires —
                         // the reading this row used to be, kept beside the
                         // control that sets it.
@@ -871,7 +900,7 @@ fn JobConfigRow(
 
                 dt { class: "text-gray-400", "Timeout" }
                 dd { class: CARD_ROW_CLASS,
-                    div { class: CARD_ROW_TEXT_CLASS,
+                    div { class: CARD_CONTROL_CLASS,
                         input {
                             r#type: "number",
                             class: PARAM_NUMBER_INPUT_WIDE_CLASS,
@@ -887,7 +916,10 @@ fn JobConfigRow(
                                 }
                             },
                         }
-                        span { class: "text-gray-400", "ms — {duration(job.timeout_ms)}" }
+                        span { class: "text-gray-400", "ms" }
+                    }
+                    div { class: CARD_DESC_CLASS,
+                        span { class: "text-gray-300", "— {duration(job.timeout_ms)}" }
                         if job.overridden.timeout_ms.is_some() {
                             span { class: "text-gray-400",
                                 "— set here; the job declares {declared_timeout(&job.declared, default_timeout_ms)}"
@@ -907,8 +939,7 @@ fn JobConfigRow(
 
                 dt { class: "text-gray-400", "On failure" }
                 dd { class: CARD_ROW_CLASS,
-                    div { class: CARD_ROW_TEXT_CLASS,
-                        HandlerSelect {
+                    {rsx! { HandlerSelect {
                             value: job.overridden.on_failure.clone(),
                             effective: job.on_failure.clone(),
                             declared: job.declared.on_failure.clone(),
@@ -918,14 +949,12 @@ fn JobConfigRow(
                             on_pick: move |next: HandlerOverride| commit(id(), JobOverride {
                                 on_failure: next, ..over()
                             }, busy, error, on_saved),
-                        }
-                    }
+                    } }}
                 }
 
                 dt { class: "text-gray-400", "On change" }
                 dd { class: CARD_ROW_CLASS,
-                    div { class: CARD_ROW_TEXT_CLASS,
-                        HandlerSelect {
+                    {rsx! { HandlerSelect {
                             value: job.overridden.on_change.clone(),
                             effective: job.on_change.clone(),
                             declared: job.declared.on_change.clone(),
@@ -935,15 +964,14 @@ fn JobConfigRow(
                             on_pick: move |next: HandlerOverride| commit(id(), JobOverride {
                                 on_change: next, ..over()
                             }, busy, error, on_saved),
-                        }
-                    }
+                    } }}
                 }
 
                 dt { class: "text-gray-400", "Retry" }
                 dd { class: CARD_ROW_CLASS,
-                    div { class: CARD_ROW_TEXT_CLASS,
+                    div { class: CARD_CONTROL_CLASS,
                         select {
-                            class: PARAM_SELECT_CLASS,
+                            class: CARD_SELECT_CLASS,
                             value: retry_choice(&job.overridden.retry),
                             onchange: move |evt| {
                                 let next = match evt.value().as_str() {
@@ -992,6 +1020,8 @@ fn JobConfigRow(
                             },
                             _ => rsx! {},
                         }
+                    }
+                    div { class: CARD_DESC_CLASS,
                         // The worst case, which is the number nobody works out
                         // for themselves and the reason the ceiling above is
                         // not the answer to "how long can this job hold the
