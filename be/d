@@ -35,9 +35,18 @@ if [ "$worktree" != "rn" ]; then
     # And the credentials file, now that a page can write it. Without this a
     # worktree saving a test credential would rewrite the real one.
     export RN_CREDENTIALS_PATH="$state/credentials"
+    # Per-job overrides, so a ceiling raised while testing does not follow the
+    # person to the install they actually run.
+    export RN_JOB_OVERRIDES_PATH="$state/job-overrides.json"
+    # The tracker's links. Sharing this one would be the worst of the set: a
+    # link minted here resolves against whichever store the tracker on that
+    # port loaded, so a shared file means a worktree's test links answering on
+    # the real install — and, the other way, a real link 404ing because a
+    # worktree pruned it.
+    export RN_TRACKER_STORE_PATH="$state/link-tracking.jsonl"
 fi
 
-echo "backend for $worktree on http://127.0.0.1:$BACKEND_PORT (hooks :$BACKEND_HOOKS_PORT)"
+echo "backend for $worktree on http://127.0.0.1:$BACKEND_PORT (hooks :$BACKEND_HOOKS_PORT, tracker :$BACKEND_TRACKER_PORT)"
 
 # server.ts, not main.ts. `npm run dev` watches main.ts, which prints the boot
 # banner and exits — a watcher on a program that does not listen, which looks

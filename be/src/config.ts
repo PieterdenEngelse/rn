@@ -149,6 +149,38 @@ export const config = {
         `${process.env.HOME ?? "."}/.config/rn/credentials`,
 
     /**
+     * Minted tracking links and the clicks that came back — see
+     * be/src/tracker/store.ts.
+     *
+     * JSONL rather than JSON, and its own file rather than a section of any
+     * other, because it is the only store here written by a request handler
+     * from outside the machine. The others are rewritten wholly when a person
+     * presses save; a crash during one of those costs a file, and a crash
+     * during an append here costs a line.
+     */
+    trackerStorePath:
+        process.env.RN_TRACKER_STORE_PATH ??
+        `${process.env.HOME ?? "."}/.config/rn/link-tracking.jsonl`,
+
+    /**
+     * How long the tracker remembers *who*, in days.
+     *
+     * Not how long a link lives. Links never expire: one sits in somebody's
+     * mailbox and may be clicked years later, and expiring the id turns that
+     * into a 404 in mail a person kept — losing analytics is an annoyance,
+     * breaking a link somebody was sent is a fault. What expires is the
+     * recipient recorded against a link, and the clicks themselves.
+     *
+     * Ninety days because it is long enough to answer "did that campaign
+     * work" and short enough that a store nobody has looked at in a year is
+     * not still naming people. See docs/link-tracking.md §6, including what
+     * this deliberately does not fix: the distinct links are already in
+     * mailboxes, so retention bounds what rn knows and not what the mail
+     * reveals.
+     */
+    trackerRetentionDays: Number(process.env.RN_TRACKER_RETENTION_DAYS ?? 90),
+
+    /**
      * Per-job settings changed from Config → Jobs, keyed by job id.
      *
      * Its own file rather than a section of settings.json, for the reason
