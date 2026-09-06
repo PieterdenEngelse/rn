@@ -31,6 +31,29 @@ Nothing on this list is waiting on anyone. It is here so the next person does
 not re-decide it, and so a report that keeps naming these does not read as
 neglect.
 
+## `effectFree` stays code, though it sits among controls — 2026-09-06
+
+Config → Jobs now edits five fields on every job: schedule, timeout, on
+failure, on change, retry. The sixth row on that card, **While disarmed**, is
+`effectFree` in the job's own file, and it is deliberately not editable.
+
+Every other overridable field changes *what rn does*. This one changes **what
+rn believes about the job's code**. `effectFree: true` is a job declaring that
+it writes nothing outside rn — every request a GET — and what rn does with that
+declaration is let the job keep its cursors while dry run is on, so its report
+stays incremental instead of repeating. Flipping it from a page would not make
+a job read-only; it would tell the safety machinery that a job which deletes
+files is read-only, and the job would carry on deleting them.
+
+That makes it the one setting on the page whose wrong value is silent by
+construction: nothing fails, nothing is refused, and the only symptom is a
+disarmed run quietly keeping state it should have discarded.
+
+If it is ever wanted, the shape is a control with the warning in its own panel
+rather than in a comment, and the same read-modify-write as the others. It was
+not built because "let me tell rn this job is safe" is not a thing a page
+should make easy.
+
 ## Two stale pins, as of 2026-09-04 — both deliberate
 
 The standing output of `watch-upstreams`. Deliberately not maintained as a list
