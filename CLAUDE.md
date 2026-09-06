@@ -628,6 +628,9 @@ yours.
   What runs here is Tailscale Funnel onto 3011, verified with real GitHub
   deliveries; includes why Smee is refused, a relay re-serialising the body so
   every signature fails, measured rather than argued.
+- `docs/link-tracking.md` — click tracking on mail you send, and reading links
+  out of mail that arrives. Read before either: the outbound half wants a
+  public unauthenticated endpoint, which is the one thing rn has never had.
 - `docs/packaging.md` — shipping this as an installable app.
 - `docs/n8n.md` — what is worth borrowing from n8n and what is not, with steps.
 - `docs/todo.md` — open work, each item saying what goes wrong while it stays
