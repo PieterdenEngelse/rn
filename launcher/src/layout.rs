@@ -105,6 +105,20 @@ pub fn hooks_port(env_file: &Path) -> u16 {
         .unwrap_or(3011)
 }
 
+/// The click tracker's port, mirroring `trackerPort` in be/src/config.ts.
+///
+/// Same shape and same precedence as [`hooks_port`], and granted for the same
+/// non-optional reason: the tracker binds at startup, so under Deno an
+/// ungranted port is a backend that does not boot rather than a feature that
+/// quietly does nothing. See docs/link-tracking.md §3.
+pub fn tracker_port(env_file: &Path) -> u16 {
+    std::env::var("BACKEND_TRACKER_PORT")
+        .ok()
+        .or_else(|| env_file_value(env_file, "BACKEND_TRACKER_PORT"))
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(3012)
+}
+
 /// The hosts Deno may reach: the app's own listening sockets, plus whatever the
 /// `netAllowlist` setting adds for job code that calls outward.
 ///
@@ -112,14 +126,22 @@ pub fn hooks_port(env_file: &Path) -> u16 {
 /// all — so this never returns an empty list, and the broad `--allow-net`
 /// fallback in `runtime_argv` stays unreachable in practice.
 ///
-/// `hooks_port` is granted for the same reason and is not optional: the hooks
-/// listener binds it at startup, so under Deno an ungranted port is not a
-/// webhook feature that quietly does nothing, it is a backend that fails to
-/// boot.
-pub fn net_allowlist(host: &str, port: u16, hooks_port: u16, extra: &str) -> Vec<String> {
+/// The listeners beside it are granted for the same reason and are not
+/// optional: each binds at startup, so under Deno an ungranted port is not a
+/// feature that quietly does nothing, it is a backend that fails to boot.
+///
+/// They arrive as a slice rather than as one parameter each. The signature was
+/// `(host, port, hooks_port, extra)` while there was exactly one, and the next
+/// listener would have made it four positional numbers whose order nothing
+/// checks — the same argument [`hooks_port`] gives for not growing the tuple
+/// [`bind_address`] returns.
+pub fn net_allowlist(host: &str, port: u16, others: &[u16], extra: &str) -> Vec<String> {
     let mut out = vec![format!("{host}:{port}")];
-    if hooks_port != port {
-        out.push(format!("{host}:{hooks_port}"));
+    for other in others {
+        let entry = format!("{host}:{other}");
+        if !out.iter().any(|h| *h == entry) {
+            out.push(entry);
+        }
     }
     for host in extra.split(',').map(str::trim).filter(|h| !h.is_empty()) {
         if !out.iter().any(|h| h == host) {

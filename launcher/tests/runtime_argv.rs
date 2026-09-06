@@ -2,7 +2,7 @@
 //! because the failure mode is silent: spawn the right binary with the wrong
 //! argv and it dies on an unknown flag with nothing useful in the log.
 
-use rn::layout::{bind_address, hooks_port, net_allowlist, runtime_argv, RuntimeKind};
+use rn::layout::{bind_address, hooks_port, net_allowlist, runtime_argv, tracker_port, RuntimeKind};
 use std::path::Path;
 
 fn strings(kind: RuntimeKind, env_file: &Path) -> Vec<String> {
@@ -70,14 +70,14 @@ fn deno_passes_env_file_when_it_exists() {
 fn the_bind_address_is_always_granted() {
     // Without it the server cannot listen, so it can never be omitted however
     // the allowlist setting is written.
-    assert_eq!(net_allowlist("127.0.0.1", 3010, 3010, ""), vec!["127.0.0.1:3010"]);
-    assert_eq!(net_allowlist("0.0.0.0", 8080, 8080, "   "), vec!["0.0.0.0:8080"]);
+    assert_eq!(net_allowlist("127.0.0.1", 3010, &[3010], ""), vec!["127.0.0.1:3010"]);
+    assert_eq!(net_allowlist("0.0.0.0", 8080, &[8080], "   "), vec!["0.0.0.0:8080"]);
 }
 
 #[test]
 fn extra_hosts_are_split_trimmed_and_deduped() {
     assert_eq!(
-        net_allowlist("127.0.0.1", 3010, 3010, "api.example.com, 10.0.0.5:5432 ,,127.0.0.1:3010"),
+        net_allowlist("127.0.0.1", 3010, &[3010], "api.example.com, 10.0.0.5:5432 ,,127.0.0.1:3010"),
         vec!["127.0.0.1:3010", "api.example.com", "10.0.0.5:5432"]
     );
 }
@@ -175,9 +175,36 @@ fn the_hooks_port_is_granted_alongside_the_api() {
     // nothing — the listener binds at startup, so it is a backend that will not
     // boot. Both sockets have to be in the grant.
     assert_eq!(
-        net_allowlist("127.0.0.1", 3010, 3011, ""),
+        net_allowlist("127.0.0.1", 3010, &[3011], ""),
         vec!["127.0.0.1:3010", "127.0.0.1:3011"]
     );
+}
+
+#[test]
+fn every_listener_is_granted_and_none_twice() {
+    // The tracker binds at startup like the hooks listener does, so it is the
+    // same non-optional grant. The dedupe matters because the three ports
+    // collapse to one address whenever an operator points two at the same
+    // number, and a repeated entry in --allow-net is noise in the one place
+    // somebody reads to find out what was granted.
+    assert_eq!(
+        net_allowlist("127.0.0.1", 3010, &[3011, 3012], ""),
+        vec!["127.0.0.1:3010", "127.0.0.1:3011", "127.0.0.1:3012"]
+    );
+    assert_eq!(
+        net_allowlist("127.0.0.1", 3010, &[3010, 3011, 3011], ""),
+        vec!["127.0.0.1:3010", "127.0.0.1:3011"]
+    );
+}
+
+#[test]
+fn the_tracker_port_falls_back_to_the_config_ts_default() {
+    // Must match `trackerPort` in be/src/config.ts. A launcher that grants
+    // 3012 while the child binds something else is a backend that will not
+    // boot under Deno, and the mismatch is invisible under Node until a click
+    // arrives at a port nothing is listening on.
+    assert_eq!(tracker_port(missing()), 3012);
+    assert_eq!(hooks_port(missing()), 3011);
 }
 
 #[test]
@@ -185,7 +212,7 @@ fn one_port_serving_both_is_granted_once() {
     // Not a configuration to encourage — it would put the whole API behind the
     // tunnel — but a duplicate entry in a permission list is noise that makes
     // the real grant harder to read.
-    assert_eq!(net_allowlist("127.0.0.1", 3010, 3010, ""), vec!["127.0.0.1:3010"]);
+    assert_eq!(net_allowlist("127.0.0.1", 3010, &[3010], ""), vec!["127.0.0.1:3010"]);
 }
 
 #[test]

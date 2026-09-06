@@ -41,6 +41,28 @@ export const config = {
     hooksPort: Number(process.env.BACKEND_HOOKS_PORT ?? 3011),
 
     /**
+     * The click tracker's port — the second thing a tunnel points at, and the
+     * only socket in rn that answers an unauthenticated stranger on purpose.
+     *
+     * Its own port rather than a route on `hooksPort`, and the reason is the
+     * one `hooksPort` states for itself. That listener's security argument is
+     * that it serves exactly one route and has no path to anything else, which
+     * `docs/tunnel.md` proves by measuring `GET /api/settings` answering 404
+     * through the public URL. A public GET namespace on the same port spends
+     * that argument: the guarantee stops being "the route does not exist" and
+     * becomes "the routing is correct", which is a weaker claim about a bigger
+     * surface — and a path-parsing bug would then land on the port a provider
+     * delivers signed webhooks to.
+     *
+     * Separate also means separable: the tracker can be stopped, rate-limited
+     * or unpublished without touching webhook delivery, and it is the only part
+     * of rn whose traffic scales with how many people were mailed.
+     *
+     * See docs/link-tracking.md §3.
+     */
+    trackerPort: Number(process.env.BACKEND_TRACKER_PORT ?? 3012),
+
+    /**
      * Permission to bind a routable address — see `remoteBindRefusal` below.
      *
      * Read here rather than at the point of use, which is where it was and
