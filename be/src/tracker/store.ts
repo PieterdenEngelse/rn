@@ -88,6 +88,17 @@ export interface Click {
      * is evidence to show, not a filter to hide behind.
      */
     userAgent: string;
+    /**
+     * `GET` or `HEAD`.
+     *
+     * Recorded rather than filtered on, which is the same rule the user-agent
+     * follows. No browser navigates with HEAD, so a HEAD is a link checker or a
+     * scanner and never a person — but dropping it here would hide the
+     * strongest single piece of evidence §5 has, and answering 404 to it would
+     * make the link look broken to the checker. So it redirects, it is
+     * recorded, and the page can say what it was.
+     */
+    method: string;
 }
 
 type Record_ =
@@ -189,10 +200,10 @@ export function resolve(id: string): Link | undefined {
  * expired identity and an unminted id look identical from outside, because a
  * caller who could tell them apart could enumerate what has been sent.
  */
-export function click(id: string, userAgent: string): boolean {
+export function click(id: string, userAgent: string, method = "GET"): boolean {
     ensureLoaded();
     if (!links.has(id)) return false;
-    const rec: Click = { id, at: Date.now(), userAgent: userAgent.slice(0, 512) };
+    const rec: Click = { id, at: Date.now(), userAgent: userAgent.slice(0, 512), method };
     clicks.push(rec);
     append({ t: "click", ...rec });
     maybePrune();

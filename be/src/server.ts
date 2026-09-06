@@ -56,6 +56,7 @@ import {
 } from "./settings.ts";
 import { config, remoteBindRefusal } from "./config.ts";
 import { createHookApp, hooksHealth, startHooks } from "./hooks/server.ts";
+import { createTrackerApp, startTracker, trackerHealth } from "./tracker/server.ts";
 import { sendTestDelivery } from "./hooks/test-delivery.ts";
 import { describeEnv } from "./env-file.ts";
 import * as webhooks from "./webhooks.ts";
@@ -359,10 +360,16 @@ export function createApp() {
             // given a GET. Reported from here instead, in the same process,
             // from the socket's own `listening` flag.
             const hooksState = hooksHealth();
+            // The tracker cannot answer for itself either, and for a stronger
+            // reason: its one route is public, so a health endpoint on that
+            // port would be a second thing a stranger can reach.
+            const trackerState = trackerHealth();
             send(res, 200, {
-                status: hooksState.error === null ? "ok" : "degraded",
+                status:
+                    hooksState.error === null && trackerState.error === null ? "ok" : "degraded",
                 node: process.version,
                 hooks: hooksState,
+                tracker: trackerState,
             });
             return done(200);
         }
@@ -1172,6 +1179,10 @@ installSignalHandlers(server);
 // One route, its own port, and the thing a tunnel points at. See
 // be/src/hooks/server.ts for why it is not a route on the server above.
 const hooks = createHookApp();
+
+// The tracker's own server object, built here beside the hooks one so both
+// are in scope when the API's listen callback starts them.
+const tracker = createTrackerApp();
 // The second front door onto runJob. Started after listen so a slow boot
 // cannot fire a job before the API can report that it is running.
 /**
@@ -1213,6 +1224,16 @@ server.listen(config.port, config.host, () => {
             url: `http://${config.host}:${config.hooksPort}`,
             route: "POST /api/hooks/:id",
             jobs: JOBS.filter((j) => j.webhook !== undefined).length,
+        });
+    });
+    // Third listener, same host, started for the same reason as the hooks one:
+    // a tracker outliving the API would keep resolving links for a process that
+    // can no longer record what it did with them.
+    startTracker(tracker, config.trackerPort, config.host, () => {
+        step("tracker-listening", {
+            url: `http://${config.host}:${config.trackerPort}`,
+            route: "GET /t/:id",
+            retentionDays: config.trackerRetentionDays,
         });
     });
     scheduler.start();
