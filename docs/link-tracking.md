@@ -332,8 +332,8 @@ disclaimer:
 
 Four things, and they are not the same kind. **One was a decision and has been
 settled by running something**, and it is recorded here rather than dropped.
-**One is still a decision**: somebody has to choose, and the choice changes what
-gets built. **Two are gaps**: a number nobody has picked, and a set of claims
+**One is still a decision**, though a narrower one than it first looked: not a
+fork between two designs, but which sends carry identity and what that costs. **Two are gaps**: a number nobody has picked, and a set of claims
 nobody has measured.
 
 ### Settled: a third listener on its own port
@@ -370,32 +370,69 @@ behaviour and it has not been run, so it is step 8's first measurement rather
 than a property to build on — the same distinction this document draws
 everywhere else between what was reasoned and what was observed.
 
-### Decision: per-recipient link ids, or per-send
+### Decision: which sends carry identity
 
-**Per-recipient** — a distinct `/t/<id>` for every (send, recipient, url) — is
-the only design that answers *who* clicked, and it costs two things. The ids are
-the only difference between two copies of the same mail, so anyone seeing two
-copies learns that it was individually tracked and that other recipients exist.
-And a forwarded click is attributed to the wrong person, silently; §5 says why
-that one cannot be caught from inside.
+This was posed as a fork — per-recipient link ids **or** per-send — and it is
+narrower than that. **Both can live in one store.** What has to be decided is
+which sends mint which, and what an identified one costs.
 
-**Per-send** — one id per (send, url), shared by everyone — has neither problem
-and answers a smaller question. There is no recovering the recipient at click
-time: they have never visited the tracker, so there is no cookie, and an IP is
-both useless and personal data. Per-send is **aggregate only**. An earlier draft
-of this document claimed a per-send id "with the recipient joined server-side",
-and that join has nothing to join on.
+**Within a single send there is no having both**, and the reason is mechanical
+rather than a design nobody has found yet. Attribution needs the URL to differ
+per recipient, because the URL is the only channel from send time to click time:
 
-So the fork is **attribution against discretion**, and it follows from the
-question being answered. *Did this land at all* is per-send, and is cheaper,
-cleaner and unembarrassing. *Which of these twelve people read it* is
-per-recipient, and the panel beside the number then has to say both costs out
-loud.
+- a **query parameter** is still the URL, and leaks identically;
+- a **fragment** is never sent to the server — recoverable only by an
+  interstitial running JS, which is slower, breaks with JS off, and still shows
+  the identity in the visible URL;
+- a **cookie** needs a prior visit and there is none; the first click is the one
+  that matters;
+- a **referrer** is usually absent from mail clients and would not name a person
+  if it were present;
+- an **IP** identifies nobody and is personal data in its own right.
 
-**The middle ground collapses this with the retention gap below.** Default to
-per-send; make identified tracking the per-send opt-in §5 already argues for;
-drop the recipient column after N days while the id keeps resolving. The leak
-becomes bounded rather than permanent.
+So once a send is identified its hrefs differ per recipient, and the costs below
+follow from that rather than from how it was built.
+
+#### The schema carries both
+
+    links: {id, send_id, recipient: string | null, url, minted_at}
+
+`null` is a per-send id — shared by everyone, aggregate only. A value is an
+identified one, **minted for that send alone**. One store, one page, one code
+path: the rewriter takes a flag, and the page shows a recipient matrix where
+identity exists and a total where it does not.
+
+Nullable *is* the decision, which is why it belongs before §7's step 3 rather
+than after. What a later change picks is the default, not the shape.
+
+**Default to per-send**, because the direction is not symmetric. Per-send to
+identified is a clean forward move: new sends mint identified ids, old rows stay
+aggregate, nothing is undone. The reverse is not a migration at all — the links
+are already in mailboxes with identity baked into ids that keep resolving, so
+stopping affects only sends not yet made. §7 puts the irreversible step last for
+this reason; this is the same principle one level down.
+
+#### What an identified send costs, and which parts are fixable
+
+| Cost | Fixable |
+|---|---|
+| **Correlation across sends** — somebody collecting links builds a profile | **Fully.** Scope ids to one send, and never derive one from a stable recipient key. *Alice clicked in send 12* survives; *Alice clicks everything you send* stops existing. |
+| **The comparison leak** — two recipients see different hrefs behind identical anchor text | **No, but bounded.** What leaks is that the mail was individually tracked, not the recipient list — provided the id encodes nothing about the address, which per-send-scoped random ids give for free. |
+| **Forgeable identity** — a link pasted into a chat produces clicks attributed to whoever it was minted for | **Partly.** Expire ids after a window, and treat a later click from a wildly different user-agent as suspect rather than as the same person. §5 carries most of it: showing the evidence rather than a bare name degrades honestly when the evidence is strange. |
+| **Forwarding misattribution** — Bob clicks, the record says Alice | **No.** Indistinguishable in principle from Alice clicking. §5 says why. |
+
+Three of the four move independently, so the reachable position is: identity
+available per send, correlation gone, the leak reduced to *this person tracks
+their own mail*, forgery visible rather than silent, and **one irreducible error
+the info panel states instead of hiding**.
+
+#### What retention does not fix
+
+An earlier draft offered dropping the recipient column after N days as the
+answer to all of this. It bounds what rn knows and nothing else: the distinct
+hrefs are already in mailboxes, so the comparison leak and the forged click
+outlive any retention window. Retention is about the store, not the artifact —
+which is still a gap, for the reason below.
 
 ### Gap: retention for the click store
 
@@ -422,7 +459,7 @@ bisect when the click count is wrong.
 |---|---|---|
 | 1 | Ports and config | The tracker port as `BACKEND_PORT + 2` — 3012, 3022, 3032, 3042, which the ten-apart scheme already has room for — in `scripts/dev-ports.sh`, `config.ts` and `be/.env.example`. One step or a failing test: `be/test/env-example.test.ts` holds the example equal to what `config.ts` reads, in both directions. |
 | 2 | The tracker listener | `GET /t/:id` and 404 for everything else, mirroring `hooks/server.ts:321`. Tested as a table the way `docs/tunnel.md` tests the hooks port: an unknown id, an attempt to pass a destination in the query, a non-GET. |
-| 3 | The click store | Append, look up, retain. Own module, own tests. |
+| 3 | The click store | Append, look up, retain. Own module, own tests. The recipient column is nullable from the first commit — §6 says why that is the schema decision rather than a later one. |
 | 4 | The rewriter | A pure function — HTML in, HTML and minted rows out, plain-text alternative included. No I/O, so the cheapest thing here to get right. |
 | 5 | The send job | Per-recipient render, a real dry-run path, `PermanentFailure` classification, declared credentials, `JobInfo`; registered in `jobs/index.ts`. |
 | 6 | Wire types and the API | `shared/src/`, `npm run types:build`, read endpoints on the API port. |
