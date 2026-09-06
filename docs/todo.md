@@ -54,7 +54,7 @@ rather than in a comment, and the same read-modify-write as the others. It was
 not built because "let me tell rn this job is safe" is not a thing a page
 should make easy.
 
-## Two stale pins, as of 2026-09-04 — both deliberate
+## Five stale pins, as of 2026-09-06 — all deliberate
 
 The standing output of `watch-upstreams`. Deliberately not maintained as a list
 here — the list is what the job is for, and a copy in a document is a copy that
@@ -69,9 +69,43 @@ than manifest ranges:
 |---|---|---|---|
 | `@types/node` | 24.13.3 | 26.4.1 | it is `be/.nvmrc` spelled twice — see below |
 | `gloo-timers` | 0.3.0 | 0.4.0 | duplicates a crate `dioxus-web` holds — see below |
+| `wasm-bindgen` | 0.2.127 | 0.2.128 | `dx` bundles with 0.2.127 — see below |
+| `js-sys` | 0.3.104 | 0.3.105 | same upgrade as `wasm-bindgen`, not a separate one |
+| `web-sys` | 0.3.104 | 0.3.105 | same upgrade as `wasm-bindgen`, not a separate one |
 
-Both are decisions, so the job will keep reporting two upstreams forever and
-that is correct rather than stale. Neither is work nobody got to.
+All five are decisions, so the job will keep reporting five upstreams forever
+and that is correct rather than stale. None of them is work nobody got to.
+
+**The wasm-bindgen trio is one upgrade, and it is blocked by `dx` rather than
+by anything in this repository.** Taken on 2026-09-06 in c51d9d7 and reverted
+the same hour in d09837b, having broken the dev server.
+
+The three the job names cannot move separately: `web-sys 0.3.104` requires
+`js-sys = "=0.3.104"`, which requires `wasm-bindgen = "=0.2.127"`. Nor can those
+three move alone — `wasm-bindgen-futures`, `-macro`, `-macro-support` and
+`-shared` carry the same exact pins, so `cargo update` naming only the three
+reports `Locking 0 packages` and changes nothing. All seven move together or
+none do.
+
+What stops it is downstream of the lockfile. `dx` bundles the compiled wasm with
+a `wasm-bindgen` CLI whose version is fixed when `dx` itself is built, and the
+two schema versions must match exactly:
+
+    rust Wasm file schema version: 0.2.128
+       this binary schema version: 0.2.127 (a579ee62b)
+
+`dx 0.7.10 (57d6794)` is on 0.2.127, so the lock must be too. **Take it when a
+`dx` ships built against 0.2.128**, and check that first rather than the crates
+— the crates were never the constraint.
+
+Two things about how this was got wrong, because both are cheap to repeat.
+`cargo check --target wasm32-unknown-unknown` passes on the bump and proves
+nothing: the schema check happens at bundle time, so only `dx build` sees it.
+And `strings` on the `dx` binary shows `wasm-bindgen-cli@` and
+`wasm-bindgen/releases/download/`, which was read as "it fetches a CLI matching
+the lock". It fetches a CLI; the version is its own. Downloading the 0.2.128 CLI
+and running `--version` then confirmed a binary exists, which was never the
+question.
 
 `typescript 5.9.3 → 7.0.2` was the third and was taken in 30d54bb. The reason
 is worth one line here because it is the argument that decided it: 6.0.3
