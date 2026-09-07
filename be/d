@@ -44,6 +44,13 @@ if [ "$worktree" != "rn" ]; then
     # the real install — and, the other way, a real link 404ing because a
     # worktree pruned it.
     export RN_TRACKER_STORE_PATH="$state/link-tracking.jsonl"
+    # And the send job's markers, which decide whether a recipient gets mail.
+    # Sharing this one is the only entry here that could reach a person: a
+    # worktree test send would write markers under the real install, so a later
+    # genuine send to the same list would find them already attempted and mail
+    # nobody. The reverse is worse — a worktree that pruned or lost the file
+    # could mail a list the real install had already sent to.
+    export RN_TRACKER_SENT_PATH="$state/link-sends.jsonl"
 fi
 
 echo "backend for $worktree on http://127.0.0.1:$BACKEND_PORT (hooks :$BACKEND_HOOKS_PORT, tracker :$BACKEND_TRACKER_PORT)"

@@ -13,15 +13,31 @@
 //! it cannot support and hiding the evidence for it in the same move.
 
 use crate::api::{fetch_links, fetch_send, BaseUrlProblem, LinksResponse, SendDetail, TrackedLink};
-use crate::components::param::*;
 use crate::components::{Board, GlossaryEntry, InfoButton, Metric, Panel};
+use crate::app::Route;
 use dioxus::prelude::*;
+use dioxus_router::Link;
 
 #[component]
 pub fn MonitorLinks() -> Element {
+    rsx! { LinksBody { open: None } }
+}
+
+/// The same page with one send's arrivals open.
+///
+/// A route rather than a signal, so the evidence has an address. The number on
+/// this page is the thing people will argue about, and "click the third row"
+/// is not a citation.
+#[component]
+pub fn MonitorLinksSend(id: String) -> Element {
+    rsx! { LinksBody { open: Some(id) } }
+}
+
+#[component]
+fn LinksBody(open: Option<String>) -> Element {
     let mut links = use_signal(|| Option::<Result<LinksResponse, String>>::None);
     let mut detail = use_signal(|| Option::<SendDetail>::None);
-    let mut open_send = use_signal(|| Option::<String>::None);
+    let open_send = open.clone();
 
     use_future(move || async move {
         links.set(Some(fetch_links().await));
@@ -32,7 +48,7 @@ pub fn MonitorLinks() -> Element {
     // on one, and fetching both together would make opening a send re-read the
     // whole store.
     use_effect(move || {
-        if let Some(id) = open_send.read().clone() {
+        if let Some(id) = open_send.clone() {
             spawn(async move {
                 if let Ok(d) = fetch_send(&id).await {
                     detail.set(Some(d));
@@ -69,11 +85,17 @@ pub fn MonitorLinks() -> Element {
                 },
                 Some(Ok(data)) => rsx! {
                     Health { data: data.clone() }
-                    SendList {
-                        data: data.clone(),
-                        open: open_send.read().clone(),
-                        on_open: move |id: Option<String>| open_send.set(id),
+                    // Outside the board, not between two of its rows. It is a
+                    // statement about the whole tracker rather than about the
+                    // metric above it, and wedged inside it broke the column of
+                    // labels and values the board is made of.
+                    if !data.base_url_problems.is_empty() {
+                        BaseUrlProblems {
+                            problems: data.base_url_problems.clone(),
+                            accepted: data.base_url_accepted.clone(),
+                        }
                     }
+                    SendList { data: data.clone(), open: open.clone() }
                     if let Some(d) = detail.read().clone() {
                         SendLinks { detail: d }
                     }
@@ -107,12 +129,6 @@ fn Health(data: LinksResponse) -> Element {
                     why: "It is the one setting whose mistake is invisible from inside rn. Every page here works perfectly with a loopback base URL; the links are simply dead for everyone who is not sitting at this machine.".to_string(),
                     if_wrong: "Two failures, and the quiet one is worse. A 127.0.0.1 base URL means every recipient sees a connection error — obvious the first time anybody clicks. A hostname you do not own works perfectly and dies later: a *.ts.net name follows the machine, so renaming it or leaving the tailnet kills every link ever sent, in mail people kept, with nothing left to redirect. rn refuses to mint against either, and against an http origin, a bare IP, or an explicit port.".to_string(),
                 }
-                if !data.base_url_problems.is_empty() {
-                    BaseUrlProblems {
-                        problems: data.base_url_problems.clone(),
-                        accepted: data.base_url_accepted.clone(),
-                    }
-                }
                 Metric {
                     label: "Identity kept for".to_string(),
                     value: format!("{} days", data.retention_days),
@@ -126,7 +142,7 @@ fn Health(data: LinksResponse) -> Element {
 }
 
 #[component]
-fn SendList(data: LinksResponse, open: Option<String>, on_open: EventHandler<Option<String>>) -> Element {
+fn SendList(data: LinksResponse, open: Option<String>) -> Element {
     if data.sends.is_empty() {
         return rsx! {
             Panel { title: "Nothing has been sent".to_string(),
@@ -140,7 +156,10 @@ fn SendList(data: LinksResponse, open: Option<String>, on_open: EventHandler<Opt
     rsx! {
         Panel { title: "Sends".to_string(),
             div { class: "overflow-x-auto",
-                table { class: "text-sm w-full",
+                // Not `w-full`: five short columns stretched across a wide
+                // display put the row's action a hand's width from the data it
+                // acts on.
+                table { class: "text-sm",
                     thead {
                         tr { class: "text-gray-400 text-left",
                             th { class: "pr-6 pb-2 font-normal", "Send" }
@@ -169,14 +188,16 @@ fn SendList(data: LinksResponse, open: Option<String>, on_open: EventHandler<Opt
                                 }
                                 td { class: "py-2",
                                     {
-                                        let id = s.id.clone();
-                                        let is_open = open.as_deref() == Some(id.as_str());
+                                        let is_open = open.as_deref() == Some(s.id.as_str());
+                                        let to = if is_open {
+                                            Route::MonitorLinks {}
+                                        } else {
+                                            Route::MonitorLinksSend { id: s.id.clone() }
+                                        };
                                         rsx! {
-                                            button {
+                                            Link {
                                                 class: "text-cyan-400 hover:text-cyan-300",
-                                                onclick: move |_| {
-                                                    on_open.call(if is_open { None } else { Some(id.clone()) })
-                                                },
+                                                to,
                                                 if is_open { "Hide" } else { "Show arrivals" }
                                             }
                                         }
@@ -223,11 +244,14 @@ fn LinkRow(link: TrackedLink) -> Element {
 
     rsx! {
         div { class: "border-t border-gray-700 py-3",
-            div { class: PARAM_INPUT_ROW_CLASS,
-                div { class: "flex flex-col gap-1 min-w-0",
-                    span { class: "text-gray-200 font-mono text-xs break-all", "{link.url}" }
-                    span { class: "text-gray-400 text-xs", "for {recipient}" }
-                }
+            // Not PARAM_INPUT_ROW_CLASS. That class exists to push a row's last
+            // child to the right edge so info buttons line up in one column,
+            // and this row has no info button — so its only child was the last
+            // child, and the link's own URL sailed to the far side of a wide
+            // display, a screen's width from the arrivals it belongs to.
+            div { class: "flex flex-col gap-1 min-w-0",
+                span { class: "text-gray-200 font-mono text-xs break-all", "{link.url}" }
+                span { class: "text-gray-400 text-xs", "for {recipient}" }
             }
             if link.clicks.is_empty() {
                 p { class: "text-gray-400 text-xs mt-2", "No arrivals." }

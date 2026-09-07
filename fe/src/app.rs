@@ -2,7 +2,7 @@ use crate::components::header::Header;
 use crate::components::SubNav;
 use crate::pages::{
     Config, ConfigConnection, ConfigJobs, Home, MonitorConnection, MonitorJobs, MonitorLinks,
-    MonitorRuntime, PageNotFound,
+    MonitorLinksSend, MonitorRuntime, PageNotFound,
 };
 use dioxus::prelude::*;
 use dioxus_router::{Outlet, Routable, Router};
@@ -32,6 +32,12 @@ pub enum Route {
         // reports it rather than editing it.
         #[route("/monitor/links")]
         MonitorLinks {},
+        // The arrivals on one send, addressable. A page whose whole job is
+        // evidence has to be linkable: a detail that lives only in a signal
+        // cannot be reloaded, cannot be sent to the person asking about the
+        // number, and cannot be looked at without clicking a button first.
+        #[route("/monitor/links/:id")]
+        MonitorLinksSend { id: String },
         #[route("/config")]
         Config {},
         // What is listening, who may talk to it, and what it may reach. Its

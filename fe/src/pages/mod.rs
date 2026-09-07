@@ -14,7 +14,7 @@ pub use config_connection::ConfigConnection;
 pub use config_jobs::ConfigJobs;
 pub use home::Home;
 pub use monitor_connection::MonitorConnection;
-pub use links::MonitorLinks;
+pub use links::{MonitorLinks, MonitorLinksSend};
 pub use monitor_jobs::MonitorJobs;
 pub use monitor_runtime::MonitorRuntime;
 pub use not_found::PageNotFound;
