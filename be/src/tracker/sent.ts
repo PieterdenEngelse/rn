@@ -55,10 +55,23 @@ import { debug } from "../log.ts";
 
 /** One line in the file. */
 interface Record_ {
-    t: "attempt" | "sent";
+    /**
+     * `attempt` — about to be handed to the server.
+     * `sent` — the server took it.
+     * `rejected` — the server refused it permanently (SMTP 5xx). The mail was
+     *   not delivered and never will be, so the block stays: retrying spends
+     *   attempts to be told the same thing.
+     * `release` — the server refused it *transiently* (SMTP 4xx: a greylist, a
+     *   rate limit). The mail was definitely not delivered, so there is no
+     *   duplicate to prevent, and the block is withdrawn so the retry policy
+     *   can do the thing it exists for.
+     */
+    t: "attempt" | "sent" | "rejected" | "release";
     send: string;
     to: string;
     at: number;
+    /** The SMTP reply code, on `rejected` and `release`. */
+    code?: number;
 }
 
 /**
@@ -74,6 +87,7 @@ function key(sendId: string, recipient: string): string {
 
 let attempted = new Set<string>();
 let delivered = new Set<string>();
+let rejected = new Set<string>();
 let loaded = false;
 
 function path(): string {
@@ -91,6 +105,7 @@ function path(): string {
 export function load(): void {
     attempted = new Set();
     delivered = new Set();
+    rejected = new Set();
     loaded = true;
 
     let raw: string;
@@ -114,11 +129,22 @@ export function load(): void {
             dropped += 1;
             continue;
         }
-        attempted.add(key(rec.send, rec.to));
-        if (rec.t === "sent") delivered.add(key(rec.send, rec.to));
+        // Replayed in file order, so the last word about a pair wins: an
+        // `attempt` followed by a `release` ends un-blocked, and a later
+        // `attempt` blocks it again.
+        const k = key(rec.send, rec.to);
+        if (rec.t === "attempt") attempted.add(k);
+        else if (rec.t === "sent") delivered.add(k);
+        else if (rec.t === "rejected") rejected.add(k);
+        else if (rec.t === "release") attempted.delete(k);
     }
 
-    debug("sent-store-loaded", { attempts: attempted.size, sent: delivered.size, dropped });
+    debug("sent-store-loaded", {
+        attempts: attempted.size,
+        sent: delivered.size,
+        rejected: rejected.size,
+        dropped,
+    });
 }
 
 function ensureLoaded(): void {
@@ -150,6 +176,35 @@ export function markSent(sendId: string, recipient: string): void {
 }
 
 /**
+ * The server refused this recipient permanently. The block stays.
+ *
+ * Nothing was delivered, so there is no duplicate to fear — but the mailbox
+ * does not exist and will not start existing, so lifting the block would only
+ * spend the remaining attempts learning that again.
+ */
+export function markRejected(sendId: string, recipient: string, code: number): void {
+    ensureLoaded();
+    rejected.add(key(sendId, recipient));
+    append({ t: "rejected", send: sendId, to: recipient, at: Date.now(), code });
+}
+
+/**
+ * The server refused this recipient *for now*. Lift the block.
+ *
+ * The case the marker was quietly getting wrong. A 421 or a 450 is a rate
+ * limit or a greylist — the two failures a send to a real list actually hits —
+ * and the server said so before accepting any data, so nothing was delivered
+ * and there is no duplicate to prevent. Leaving the block down meant the retry
+ * policy skipped exactly the recipient it existed to serve, and reported them
+ * as an unknown outcome when the outcome was known and recoverable.
+ */
+export function releaseAttempt(sendId: string, recipient: string, code: number): void {
+    ensureLoaded();
+    attempted.delete(key(sendId, recipient));
+    append({ t: "release", send: sendId, to: recipient, at: Date.now(), code });
+}
+
+/**
  * Has this pair been attempted? The gate the job checks on entry.
  *
  * Attempted rather than delivered, which is the whole trade described above:
@@ -166,15 +221,36 @@ export function wasDelivered(sendId: string, recipient: string): boolean {
     return delivered.has(key(sendId, recipient));
 }
 
-/** Attempted with no recorded delivery — outcome genuinely unknown. */
+/** Did the server refuse it permanently? Reporting only. */
+export function wasRejected(sendId: string, recipient: string): boolean {
+    ensureLoaded();
+    return rejected.has(key(sendId, recipient));
+}
+
+/** Permanently refused, by address. */
+export function rejectedFor(sendId: string, recipients: readonly string[]): string[] {
+    ensureLoaded();
+    return recipients.filter((r) => wasRejected(sendId, r));
+}
+
+/**
+ * Attempted, not delivered, and not refused — outcome genuinely unknown.
+ *
+ * The residue after the two knowable outcomes are taken out: a process that
+ * died between the marker and the server's reply. These are the only addresses
+ * a person has to make a judgement call about.
+ */
 export function unresolved(sendId: string, recipients: readonly string[]): string[] {
     ensureLoaded();
-    return recipients.filter((r) => wasAttempted(sendId, r) && !wasDelivered(sendId, r));
+    return recipients.filter(
+        (r) => wasAttempted(sendId, r) && !wasDelivered(sendId, r) && !wasRejected(sendId, r),
+    );
 }
 
 /** Drop everything in memory. Tests only. */
 export function reset(): void {
     attempted = new Set();
     delivered = new Set();
+    rejected = new Set();
     loaded = false;
 }

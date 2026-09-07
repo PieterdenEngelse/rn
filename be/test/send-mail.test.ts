@@ -153,3 +153,40 @@ test("the derived text drops the mailto scheme a person does not need to read", 
     assert.match(text, /the team \(team@example\.com\)/);
     assert.doesNotMatch(text, /mailto:/);
 });
+
+test("a transient refusal lifts the block so the retry can serve that recipient", () => {
+    // The case the marker was quietly getting wrong. A 421 is a rate limit and
+    // the server said so before taking any data, so nothing was delivered and
+    // there is no duplicate to prevent — but the block was staying down and
+    // the retry skipped exactly the person it existed for.
+    sent.markAttempt("send-1", "bob@x.com");
+    sent.releaseAttempt("send-1", "bob@x.com", 421);
+
+    assert.equal(sent.wasAttempted("send-1", "bob@x.com"), false);
+    assert.deepEqual(sent.unresolved("send-1", ["bob@x.com"]), []);
+});
+
+test("a permanent refusal keeps the block and is reported as rejected", () => {
+    // Nothing was delivered here either, but the mailbox will not start
+    // existing, so lifting the block would only spend attempts learning that.
+    sent.markAttempt("send-1", "bob@x.com");
+    sent.markRejected("send-1", "bob@x.com", 550);
+
+    assert.equal(sent.wasAttempted("send-1", "bob@x.com"), true);
+    assert.deepEqual(sent.rejectedFor("send-1", ["bob@x.com"]), ["bob@x.com"]);
+    // Not unknown: refused is a known outcome, and only the genuinely unknown
+    // ones need a human decision.
+    assert.deepEqual(sent.unresolved("send-1", ["bob@x.com"]), []);
+});
+
+test("a release survives a reload, and a later attempt blocks again", () => {
+    sent.markAttempt("send-1", "bob@x.com");
+    sent.releaseAttempt("send-1", "bob@x.com", 421);
+    sent.reset();
+    assert.equal(sent.wasAttempted("send-1", "bob@x.com"), false);
+
+    sent.markAttempt("send-1", "bob@x.com");
+    sent.reset();
+    // Replayed in file order, so the last word wins.
+    assert.equal(sent.wasAttempted("send-1", "bob@x.com"), true);
+});

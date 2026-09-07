@@ -316,6 +316,23 @@ the unrecoverable failures and given up on the recoverable ones, which is the
 worst available combination. `isPermanentSmtp` is written out separately, and
 the reason is in a comment above it so nobody unifies them later.
 
+*A definite refusal is not an unknown outcome.* The first version blocked a
+recipient the moment it was attempted and never unblocked them, which quietly
+defeated the retry policy for the two failures a send to a real list actually
+hits: a greylist and a rate limit. The server answers 421 at `RCPT TO`, before
+taking any data — so nothing was delivered, there is no duplicate to prevent,
+and skipping that recipient on the retry served nobody. The block is now lifted
+on a transient refusal and kept on a permanent one, and "refused" is recorded
+separately from "unknown" so only the genuinely unknown outcomes need a human
+decision. Found by sending against a local SMTP sink; no unit test would have
+asked the question.
+
+*One bad address must not hold the rest of the list.* Throwing inside the loop
+left every later recipient unsent, and the only reason the third of three ever
+went out was that a retry happened to resume past the failure. Failures are
+collected and classified over the whole list at the end — retryable unless
+every one of them was permanent.
+
 *And the marker does not live in `ctx.state`*, which was the obvious home.
 State writes are staged and committed by the runner only if the run finishes
 without throwing — correct for a cursor, and exactly backwards for a marker
