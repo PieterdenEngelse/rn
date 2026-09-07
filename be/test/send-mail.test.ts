@@ -145,3 +145,11 @@ test("a torn last line is dropped and the rest of the file survives", () => {
     assert.equal(sent.wasAttempted("send-1", "b@x.com"), true);
     assert.equal(sent.wasAttempted("send-1", "c@x.com"), false);
 });
+
+test("the derived text drops the mailto scheme a person does not need to read", () => {
+    // The text part goes to an actual recipient, and "(mailto:x@y.com)" is a
+    // scheme a machine needs and a reader does not.
+    const text = plainTextFrom('<p>Reply to <a href="mailto:team@example.com">the team</a>.</p>');
+    assert.match(text, /the team \(team@example\.com\)/);
+    assert.doesNotMatch(text, /mailto:/);
+});

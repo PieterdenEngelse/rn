@@ -138,6 +138,38 @@ export function rewrite(
         return `${prefix}${quote}${track(url)}${quote}`;
     });
 
+    // The text part reuses the ids the HTML pass minted, in order, per URL.
+    //
+    // The two parts of a multipart message are *alternatives*: the recipient's
+    // client renders one of them, never both. Minting a second id for the text
+    // copy of a link therefore invents a link that does not exist — a mail with
+    // three links reported six, and a single click landed on whichever of the
+    // pair the reader's client happened to show, splitting one link's count
+    // across two rows on a page whose whole job is not to overstate a number.
+    //
+    // Ordered per URL rather than collapsed to one id per URL, because within a
+    // body the same URL twice really is two links: a "Read more" at the top and
+    // at the bottom are two places a person can click, and the report should
+    // say which. The Nth occurrence in the text is the text rendering of the
+    // Nth occurrence in the HTML.
+    //
+    // A URL the HTML never had — a bare address in a text-only send, or a
+    // hand-written text part that added one — falls through and is minted, so
+    // nothing is lost by reusing where reuse is right.
+    const pool = new Map<string, string[]>();
+    for (const m of minted) {
+        const queue = pool.get(m.url);
+        if (queue === undefined) pool.set(m.url, [m.id]);
+        else queue.push(m.id);
+    }
+
+    const trackText = (url: string): string => {
+        const queue = pool.get(url);
+        const reused = queue?.shift();
+        if (reused !== undefined) return `${base}/${reused}`;
+        return track(url);
+    };
+
     const outText = text.replace(BARE_URL, (match) => {
         // Split the trailing punctuation off, rewrite the URL, put it back —
         // so a link at the end of a sentence keeps its full stop and does not
@@ -145,7 +177,7 @@ export function rewrite(
         const trailing = TRAILING.exec(match)?.[0] ?? "";
         const url = trailing === "" ? match : match.slice(0, -trailing.length);
         if (!trackable(url, base)) return match;
-        return `${track(url)}${trailing}`;
+        return `${trackText(url)}${trailing}`;
     });
 
     return { html: outHtml, text: outText, minted };

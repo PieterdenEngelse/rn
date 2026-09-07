@@ -195,3 +195,57 @@ test("a borrowed base mints once the operator has accepted it", () => {
         '<a href="https://laptop.tail1e7abb.ts.net/t/id1">x</a>',
     );
 });
+
+test("the text alternative reuses the html ids rather than minting its own", () => {
+    let minted = 0;
+    const counting: Mint = () => `id${++minted}`;
+
+    // The two parts are alternatives — a client renders one, never both — so a
+    // second id for the text copy invents a link that does not exist and
+    // splits one link's clicks across two rows.
+    const out = rewrite(
+        '<a href="https://example.com/a">a</a>',
+        "see https://example.com/a",
+        BASE,
+        counting,
+    );
+
+    assert.equal(out.minted.length, 1);
+    assert.equal(out.html, `<a href="${BASE}/id1">a</a>`);
+    assert.equal(out.text, `see ${BASE}/id1`);
+});
+
+test("the same url twice is still two links, matched up across the parts", () => {
+    let minted = 0;
+    const counting: Mint = () => `id${++minted}`;
+
+    // Within a body the same URL twice is two places to click and the report
+    // should say which, so the pairing is positional: the Nth occurrence in
+    // the text is the text rendering of the Nth in the HTML.
+    const out = rewrite(
+        '<a href="https://example.com/a">top</a> ... <a href="https://example.com/a">bottom</a>',
+        "top https://example.com/a ... bottom https://example.com/a",
+        BASE,
+        counting,
+    );
+
+    assert.equal(out.minted.length, 2);
+    assert.equal(out.text, `top ${BASE}/id1 ... bottom ${BASE}/id2`);
+});
+
+test("a url only the text part has is still minted", () => {
+    let minted = 0;
+    const counting: Mint = () => `id${++minted}`;
+
+    // Reuse where reuse is right, and nothing lost where it is not: a
+    // hand-written text part that mentions an address the HTML never had.
+    const out = rewrite(
+        '<a href="https://example.com/a">a</a>',
+        "also https://example.com/b",
+        BASE,
+        counting,
+    );
+
+    assert.equal(out.minted.length, 2);
+    assert.equal(out.text, `also ${BASE}/id2`);
+});
