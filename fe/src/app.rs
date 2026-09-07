@@ -1,7 +1,8 @@
 use crate::components::header::Header;
 use crate::components::SubNav;
 use crate::pages::{
-    Config, ConfigConnection, ConfigJobs, Home, MonitorConnection, MonitorJobs, MonitorRuntime, PageNotFound,
+    Config, ConfigConnection, ConfigJobs, Home, MonitorConnection, MonitorJobs, MonitorLinks,
+    MonitorRuntime, PageNotFound,
 };
 use dioxus::prelude::*;
 use dioxus_router::{Outlet, Routable, Router};
@@ -25,6 +26,12 @@ pub enum Route {
         // MonitorRuntime is the counterpart of Config → Runtime.
         #[route("/monitor/connection")]
         MonitorConnection {},
+        // Under Monitor rather than Config: a tracked link is something that
+        // happened, not something set. What can be configured about it — where
+        // links point, how long identity is kept — is environment, and the page
+        // reports it rather than editing it.
+        #[route("/monitor/links")]
+        MonitorLinks {},
         #[route("/config")]
         Config {},
         // What is listening, who may talk to it, and what it may reach. Its

@@ -6,7 +6,7 @@
 
 use super::wire::{
     ConnectionResponse, EnvResponse, HealthResponse, JobConfigResponse, JobErrors, JobOverride,
-    JobRunResult, JobSource, JobsResponse, NodeHistory, NodeMetrics,
+    JobRunResult, JobSource, JobsResponse, LinksResponse, NodeHistory, NodeMetrics, SendDetail,
     ParamsResponse, RestartOutcome, RunsResponse, SaveResponse, StateResetResponse, StatusResponse,
     CredentialSaveResponse, CredentialsResponse, StopOutcome, TestDelivery, WebhookDef,
     WebhookSaveResponse, WebhooksResponse,
@@ -115,6 +115,33 @@ pub async fn fetch_jobs() -> Result<JobsResponse, String> {
         .await
         .map_err(|e| format!("{e}"))?;
     resp.json::<JobsResponse>().await.map_err(|e| format!("{e}"))
+}
+
+/// Every send the tracker has minted links for, newest first.
+///
+/// Read from the API and never from the tracker's own port: that port serves
+/// exactly one route to the public internet, and a read endpoint there would be
+/// a second thing a stranger can reach.
+pub async fn fetch_links() -> Result<LinksResponse, String> {
+    let resp = gloo_net::http::Request::get(&format!("{API_BASE}/api/links"))
+        .send()
+        .await
+        .map_err(|e| format!("{e}"))?;
+    resp.json::<LinksResponse>().await.map_err(|e| format!("{e}"))
+}
+
+/// One send's links, with every arrival on each.
+///
+/// The id is interpolated as the other id-taking calls here do. Send ids are
+/// minted by rn rather than typed by anyone, so there is nothing in one that
+/// needs escaping — and the backend resolves it against the store, so an id
+/// that is not a send is a 404 rather than a path.
+pub async fn fetch_send(id: &str) -> Result<SendDetail, String> {
+    let resp = gloo_net::http::Request::get(&format!("{API_BASE}/api/links/{id}"))
+        .send()
+        .await
+        .map_err(|e| format!("{e}"))?;
+    resp.json::<SendDetail>().await.map_err(|e| format!("{e}"))
 }
 
 /// What is listening, who may talk to it, and what it may reach.

@@ -21,6 +21,13 @@ pub use shared::{
     WebhookAuth, WebhookInfo, WebhookScheme,
 };
 
+// Tracked links. Its own module in `shared/` rather than a corner of the jobs
+// surface, because what governs it is a different document —
+// `docs/link-tracking.md` — and the rule it encodes is structural: no shape in
+// there can carry a click count without also carrying what the count is made
+// of, since an arrival at a tracked link cannot be attributed to a person.
+pub use shared::links::*;
+
 pub use shared::monitor::*;
 
 // The webhooks made on Config → Jobs. Deliberately the same crate as the job
