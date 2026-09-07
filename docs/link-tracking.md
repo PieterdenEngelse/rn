@@ -202,9 +202,29 @@ should not.
    a box whose whole job is to forward one path.
 
 3. **Funnel on the `.ts.net` name.** Free, no extra infrastructure, and
-   permanently borrowed. Defensible only when every recipient already knows what
-   rn is — an internal circle, your own addresses, a pilot you expect to resend
+   permanently borrowed. Defensible when every recipient already knows what rn
+   is — an internal circle, your own addresses, a pilot you expect to resend
    from scratch. rn refuses this by default; waiving it is a deliberate act.
+
+   **This is what rn is currently set up for.** Two settings and one mapping:
+
+       RN_TRACKER_BASE_URL=https://laptop.tail1e7abb.ts.net/t
+       RN_TRACKER_ACCEPT_BORROWED_HOSTNAME=1
+
+       tailscale funnel --bg --set-path=/t http://127.0.0.1:3012/t
+
+   The waiver accepts exactly one thing. A `.ts.net` origin over http, or with
+   a port in it, is still refused — those are different mistakes and this says
+   nothing about them, which is why the accepted set is a list rather than a
+   boolean. Monitor → Links shows the problem *and* the acceptance rather than
+   hiding a signed-off problem, because the decision outlives whoever made it.
+
+   **What it commits to, in one sentence:** if this machine is renamed,
+   replaced, or leaves the tailnet, every link already sent stops resolving at
+   the same moment and there is nothing to redirect them to. The exit is to
+   move to option 1 or 2 *before* that happens — links minted after the move
+   are fine, and links minted before it are not recoverable, so the cost of
+   changing your mind grows with every send.
 
 Whichever it is, set `RN_TRACKER_BASE_URL=https://links.yourdomain.com/t` and do
 not change it afterwards. Two consequences worth stating: the `/t` stays in the

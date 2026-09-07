@@ -142,6 +142,14 @@ wire! {
         /// them changes nothing a recipient would notice.
         #[serde(default)]
         pub base_url_problems: Vec<BaseUrlProblem>,
+        /// Which of those the operator has accepted by configuration.
+        ///
+        /// Sent alongside rather than subtracted from `base_url_problems`,
+        /// because a page that showed an accepted problem as no problem would
+        /// be hiding the decision from the person who has to live with it.
+        /// Something is still wrong with the URL; somebody has said they know.
+        #[serde(default)]
+        pub base_url_accepted: Vec<BaseUrlProblem>,
         pub retention_days: u32,
         /// Whether the tracker is actually bound. A link in a mailbox that
         /// finds nothing listening is a recipient looking at a browser error,

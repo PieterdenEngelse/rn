@@ -199,6 +199,19 @@ export const config = {
     trackerRetentionDays: Number(process.env.RN_TRACKER_RETENTION_DAYS ?? 90),
 
     /**
+     * Whether the operator has accepted that the tracker's hostname is lent
+     * rather than owned — `docs/link-tracking.md` §3, option 3.
+     *
+     * It waives exactly one check and no others. A `.ts.net` name still cannot
+     * be minted against over http, from a bare address, or with a port in it:
+     * those are different mistakes and this says nothing about them. The
+     * variable is long and unabbreviated on purpose — it is not a thing to set
+     * while trying to get a send working, and every link minted while it is on
+     * outlives the setting.
+     */
+    trackerAcceptBorrowedHostname: process.env.RN_TRACKER_ACCEPT_BORROWED_HOSTNAME === "1",
+
+    /**
      * Per-job settings changed from Config → Jobs, keyed by job id.
      *
      * Its own file rather than a section of settings.json, for the reason

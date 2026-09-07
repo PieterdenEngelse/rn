@@ -990,7 +990,16 @@ baseUrl: string,
  * (`http://127.0.0.1:3012/t`) trips three at once and fixing one of
  * them changes nothing a recipient would notice.
  */
-baseUrlProblems: Array<BaseUrlProblem>, retentionDays: number, 
+baseUrlProblems: Array<BaseUrlProblem>, 
+/**
+ * Which of those the operator has accepted by configuration.
+ *
+ * Sent alongside rather than subtracted from `base_url_problems`,
+ * because a page that showed an accepted problem as no problem would
+ * be hiding the decision from the person who has to live with it.
+ * Something is still wrong with the URL; somebody has said they know.
+ */
+baseUrlAccepted: Array<BaseUrlProblem>, retentionDays: number, 
 /**
  * Whether the tracker is actually bound. A link in a mailbox that
  * finds nothing listening is a recipient looking at a browser error,

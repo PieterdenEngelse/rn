@@ -118,22 +118,52 @@ export function classifyBaseUrl(base: string): BaseUrlProblem[] {
     return problems;
 }
 
+/** What the caller has decided it can live with. */
+export interface MintGuardOptions {
+    /**
+     * Problems the operator has accepted by configuration, and which therefore
+     * stop blocking a mint.
+     *
+     * A list and not a boolean, because the accepted problems are not
+     * interchangeable. Someone running `docs/link-tracking.md` §3 option 3 has
+     * accepted exactly one thing — that the hostname is lent — and has accepted
+     * nothing at all about loopback, plaintext, or a port in the URL. A blanket
+     * waiver would turn a considered decision about permanence into an
+     * unrelated escape from three checks they never looked at.
+     */
+    accepted?: readonly BaseUrlProblem[];
+    /**
+     * Waive every check. Dry runs and tests only — nothing that reaches SMTP.
+     */
+    allowUnsafe?: boolean;
+}
+
 /**
- * Throw unless `base` is fit to mint, or the caller has said it knows better.
+ * Throw unless `base` is fit to mint.
  *
  * Separate from [`classifyBaseUrl`] so the page can report a problem without
  * anything throwing, and the mint path can refuse without deciding what to say
  * about it.
  */
-export function assertMintableBase(base: string, allowUnsafe = false): void {
-    if (allowUnsafe) return;
-    const problems = classifyBaseUrl(base);
-    if (problems.length === 0) return;
+export function assertMintableBase(base: string, opts: MintGuardOptions = {}): void {
+    if (opts.allowUnsafe === true) return;
+
+    const accepted = new Set(opts.accepted ?? []);
+    const blocking = classifyBaseUrl(base).filter((p) => !accepted.has(p));
+    if (blocking.length === 0) return;
+
+    // The waiver is only mentioned when it is the thing that would help.
+    // Offering it to somebody whose origin is plaintext would be advice that
+    // does not fix their problem and arms a different decision on the way past.
+    const waiver = blocking.includes("borrowed")
+        ? " If the hostname is deliberately a borrowed one, set " +
+          "RN_TRACKER_ACCEPT_BORROWED_HOSTNAME=1 — read docs/link-tracking.md §3 first."
+        : "";
+
     throw new Error(
-        `refusing to mint tracked links against ${base}: ${problems.join(", ")}. ` +
+        `refusing to mint tracked links against ${base}: ${blocking.join(", ")}. ` +
             "A tracked link outlives every setting here — it stays in the recipient's " +
             "mailbox — so this cannot be corrected after the mail is sent. Set " +
-            "RN_TRACKER_BASE_URL to an https origin on a domain you own, or pass " +
-            "allowUnsafeBase for a dry run that is not going anywhere.",
+            `RN_TRACKER_BASE_URL to an https origin on a domain you own.${waiver}`,
     );
 }

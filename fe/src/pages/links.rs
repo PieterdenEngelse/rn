@@ -108,7 +108,10 @@ fn Health(data: LinksResponse) -> Element {
                     if_wrong: "Two failures, and the quiet one is worse. A 127.0.0.1 base URL means every recipient sees a connection error — obvious the first time anybody clicks. A hostname you do not own works perfectly and dies later: a *.ts.net name follows the machine, so renaming it or leaving the tailnet kills every link ever sent, in mail people kept, with nothing left to redirect. rn refuses to mint against either, and against an http origin, a bare IP, or an explicit port.".to_string(),
                 }
                 if !data.base_url_problems.is_empty() {
-                    BaseUrlProblems { problems: data.base_url_problems.clone() }
+                    BaseUrlProblems {
+                        problems: data.base_url_problems.clone(),
+                        accepted: data.base_url_accepted.clone(),
+                    }
                 }
                 Metric {
                     label: "Identity kept for".to_string(),
@@ -344,22 +347,59 @@ fn found_entry() -> GlossaryEntry {
 /// this machine or works fine today. There is no run to inspect afterwards —
 /// afterwards the links are in mailboxes.
 #[component]
-fn BaseUrlProblems(problems: Vec<BaseUrlProblem>) -> Element {
+fn BaseUrlProblems(problems: Vec<BaseUrlProblem>, accepted: Vec<BaseUrlProblem>) -> Element {
+    let blocking: Vec<BaseUrlProblem> =
+        problems.iter().filter(|p| !accepted.contains(p)).copied().collect();
+
     rsx! {
         div { class: "border border-amber-600 rounded p-3 mt-2 space-y-2 max-w-3xl",
-            p { class: "text-amber-400 text-sm",
-                "rn will refuse to mint tracked links against this base URL."
+            if blocking.is_empty() {
+                // Everything wrong here has been signed off, so this is not a
+                // warning any more. It is still shown, because the decision
+                // outlives whoever made it and the next person to read this
+                // board should not have to find it in an environment variable.
+                p { class: "text-gray-200 text-sm",
+                    "Links will be minted. Something is still wrong with this base URL and somebody has accepted it."
+                }
+            } else {
+                p { class: "text-amber-400 text-sm",
+                    "rn will refuse to mint tracked links against this base URL."
+                }
             }
             for p in problems.iter() {
                 div { key: "{problem_headline(p)}",
-                    p { class: "text-gray-200 text-xs", "{problem_headline(p)}" }
+                    p { class: "text-gray-200 text-xs",
+                        "{problem_headline(p)}"
+                        if accepted.contains(p) {
+                            span { class: "text-gray-400", " — accepted in configuration." }
+                        }
+                    }
                     p { class: "text-gray-300 text-xs", "{problem_detail(p)}" }
+                    if accepted.contains(p) {
+                        p { class: "text-gray-400 text-xs italic", "{problem_accepted_note(p)}" }
+                    }
                 }
             }
-            p { class: "text-gray-400 text-xs",
-                "Set RN_TRACKER_BASE_URL to an https origin on a domain you own, ending in /t. See docs/link-tracking.md §3."
+            if !blocking.is_empty() {
+                p { class: "text-gray-400 text-xs",
+                    "Set RN_TRACKER_BASE_URL to an https origin on a domain you own, ending in /t. See docs/link-tracking.md §3."
+                }
             }
         }
+    }
+}
+
+/// What accepting a problem actually commits you to.
+///
+/// Separate from the explanation of the problem, because they are read at
+/// different moments: one before the decision and one long after it, by
+/// somebody wondering why the setting is on.
+fn problem_accepted_note(p: &BaseUrlProblem) -> &'static str {
+    match p {
+        BaseUrlProblem::Borrowed => {
+            "RN_TRACKER_ACCEPT_BORROWED_HOSTNAME=1. What that commits to: if this machine is renamed, replaced, or leaves the tailnet, every link already sent stops resolving at the same moment, and there is nothing to redirect them to. It is a reasonable trade when the recipients are people who know what rn is."
+        }
+        _ => "Accepted in configuration.",
     }
 }
 

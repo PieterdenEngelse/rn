@@ -176,3 +176,22 @@ test("a dry run may waive the check deliberately", () => {
     assert.equal(out.minted.length, 1);
     assert.equal(out.html, '<a href="http://127.0.0.1:3012/t/id1">x</a>');
 });
+
+test("a borrowed base mints once the operator has accepted it", () => {
+    let minted = 0;
+    const counting: Mint = () => `id${++minted}`;
+
+    const out = rewrite(
+        '<a href="https://example.com/x">x</a>',
+        "",
+        "https://laptop.tail1e7abb.ts.net/t",
+        counting,
+        { acceptedBaseProblems: ["borrowed"] },
+    );
+
+    assert.equal(out.minted.length, 1);
+    assert.equal(
+        out.html,
+        '<a href="https://laptop.tail1e7abb.ts.net/t/id1">x</a>',
+    );
+});

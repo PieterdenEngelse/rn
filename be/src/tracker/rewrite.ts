@@ -43,7 +43,7 @@
  */
 
 /** What the rewriter minted, so the caller can record or report it. */
-import { assertMintableBase } from "./base-url.ts";
+import { assertMintableBase, type BaseUrlProblem } from "./base-url.ts";
 
 export interface MintedLink {
     id: string;
@@ -73,6 +73,8 @@ export type Mint = (url: string) => string;
  */
 export interface RewriteOptions {
     allowUnsafeBase?: boolean;
+    /** Problems the operator accepted by configuration. See `base-url.ts`. */
+    acceptedBaseProblems?: readonly BaseUrlProblem[];
 }
 
 /** `<a ... href="..." ...>`, single or double quoted. */
@@ -118,7 +120,10 @@ export function rewrite(
     // is in a sent message, so the only place this check is worth anything is
     // ahead of the first `mint()` call — see `base-url.ts` for why that is a
     // different kind of mistake from everything else in rn.
-    assertMintableBase(base, opts.allowUnsafeBase === true);
+    assertMintableBase(base, {
+        allowUnsafe: opts.allowUnsafeBase === true,
+        accepted: opts.acceptedBaseProblems ?? [],
+    });
 
     const minted: MintedLink[] = [];
 

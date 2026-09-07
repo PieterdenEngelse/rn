@@ -466,6 +466,7 @@ export function createApp() {
                 // function the mint path refuses on, so the page cannot say a
                 // base URL is fine and then have a send reject it.
                 baseUrlProblems: classifyBaseUrl(config.trackerBaseUrl),
+                baseUrlAccepted: config.trackerAcceptBorrowedHostname ? ["borrowed"] : [],
                 retentionDays: config.trackerRetentionDays,
                 listening: health.listening,
                 port: health.port === 0 ? config.trackerPort : health.port,

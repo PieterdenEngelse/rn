@@ -65,7 +65,7 @@ test("a named tunnel on your own domain is clean; the throwaway one is not", () 
 
 test("the refusal names every problem and can be waived deliberately", () => {
     assert.throws(() => assertMintableBase("http://127.0.0.1:3012/t"), /insecure, loopback, port/);
-    assert.doesNotThrow(() => assertMintableBase("http://127.0.0.1:3012/t", true));
+    assert.doesNotThrow(() => assertMintableBase("http://127.0.0.1:3012/t", { allowUnsafe: true }));
     assert.doesNotThrow(() => assertMintableBase("https://links.example.com/t"));
 });
 
@@ -74,4 +74,33 @@ test("a clean verdict is not a claim that the domain is yours", () => {
     // thing to forget: a free subdomain from a provider not on the list looks
     // exactly like a domain somebody bought.
     assert.deepEqual(classifyBaseUrl("https://someones-free-subdomain.example.net/t"), []);
+});
+
+test("accepting a borrowed hostname accepts nothing else", () => {
+    const accepted = ["borrowed"] as const;
+
+    // The whole reason the waiver is a list. Option 3 in docs/link-tracking.md
+    // §3 is a decision about one thing — that the name is lent — and it must
+    // not become a way past three checks nobody looked at.
+    assert.doesNotThrow(() =>
+        assertMintableBase("https://laptop.tail1e7abb.ts.net/t", { accepted }),
+    );
+    assert.throws(
+        () => assertMintableBase("http://laptop.tail1e7abb.ts.net/t", { accepted }),
+        /insecure/,
+    );
+    assert.throws(
+        () => assertMintableBase("https://laptop.tail1e7abb.ts.net:8443/t", { accepted }),
+        /port/,
+    );
+    assert.throws(() => assertMintableBase("https://127.0.0.1/t", { accepted }), /loopback/);
+});
+
+test("the refusal names only what is still blocking", () => {
+    // An operator who has accepted the hostname should not be told about it
+    // again in the message for a different mistake.
+    assert.throws(
+        () => assertMintableBase("http://laptop.tail1e7abb.ts.net/t", { accepted: ["borrowed"] }),
+        (e: Error) => e.message.includes("insecure") && !e.message.includes("borrowed"),
+    );
 });
