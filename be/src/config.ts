@@ -212,6 +212,38 @@ export const config = {
     trackerAcceptBorrowedHostname: process.env.RN_TRACKER_ACCEPT_BORROWED_HOSTNAME === "1",
 
     /**
+     * Which (send, recipient) pairs the send job has already attempted.
+     *
+     * Its own file rather than a section of the link store, because the two
+     * have different lifetimes: links are pruned on a retention clock and these
+     * markers must outlive that, or a pruned send becomes sendable again.
+     */
+    trackerSentPath:
+        process.env.RN_TRACKER_SENT_PATH ??
+        `${process.env.HOME ?? "."}/.config/rn/link-sends.jsonl`,
+
+    /** SMTP host the send job connects to. */
+    smtpHost: process.env.RN_SMTP_HOST ?? "smtp.gmail.com",
+
+    /**
+     * SMTP port. 465 is implicit TLS, which is what this connects with.
+     *
+     * 587 (STARTTLS) works too and is what some providers require, but it opens
+     * in plaintext and upgrades, so a network that strips the upgrade leaves
+     * the session readable. 465 cannot be downgraded that way.
+     */
+    smtpPort: Number(process.env.RN_SMTP_PORT ?? 465),
+
+    /**
+     * The address mail is sent from, and the SMTP username.
+     *
+     * Not a credential: it is printed on every message that arrives, so it is
+     * not a secret, and holding it as one would only hide it from the pages
+     * that should say which account is sending.
+     */
+    smtpUser: process.env.RN_SMTP_USER ?? "",
+
+    /**
      * Per-job settings changed from Config → Jobs, keyed by job id.
      *
      * Its own file rather than a section of settings.json, for the reason

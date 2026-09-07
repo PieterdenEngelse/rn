@@ -13,6 +13,7 @@
 
 import { notify } from "./notify.ts";
 import { pruneProfiles } from "./prune-profiles.ts";
+import { sendMail } from "./send-mail.ts";
 import { watchFeeds } from "./watch-feeds.ts";
 import { watchUpstreams } from "./watch-upstreams.ts";
 import { webhookEcho } from "./webhook-echo.ts";
@@ -23,6 +24,7 @@ export const JOBS: readonly Job[] = [
     watchUpstreams,
     watchFeeds,
     notify,
+    sendMail,
     webhookEcho,
 ];
 

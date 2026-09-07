@@ -296,6 +296,33 @@ duplicate mail to real recipients, which is the only failure in this feature
 that cannot be taken back. A crash part-way through a fifty-recipient send has
 the same shape, so the marker earns itself twice over.
 
+**Two things the plan did not anticipate, found while building it.**
+
+*The send id cannot be generated inside the run.* `run.ts` retries by calling
+`run()` again, so an id minted in the function is different on the second
+attempt — it would match no marker and mail the whole list twice, which is
+precisely the failure the marker exists to prevent, reintroduced by the
+mechanism meant to fix it. The id is therefore a hash of the subject, the body
+and the sorted recipient list, so two attempts agree by construction. The
+consequence reads like a bug and is the protection working: sending identical
+mail to the same list twice does nothing the second time, and an explicit
+`sendId` is how you say you meant it.
+
+*SMTP status codes are inverted against HTTP.* `permanent.ts` exports
+`isPermanentStatus`, where 4xx is permanent because in HTTP it is the sender's
+fault. In SMTP, 4xx is a *transient* negative reply — greylisting, a rate limit
+— and 5xx is the permanent one. Reusing the HTTP helper here would have retried
+the unrecoverable failures and given up on the recoverable ones, which is the
+worst available combination. `isPermanentSmtp` is written out separately, and
+the reason is in a comment above it so nobody unifies them later.
+
+*And the marker does not live in `ctx.state`*, which was the obvious home.
+State writes are staged and committed by the runner only if the run finishes
+without throwing — correct for a cursor, and exactly backwards for a marker
+whose whole job is to survive a run that threw. `seen()` is also a bounded
+window, so a long list would evict its own earliest marks mid-run.
+`be/src/tracker/sent.ts` is an append-only file for those two reasons.
+
 Whether `retry` should be overridable at all for a job like this is a question
 for that feature rather than this one. `overrides.ts` already refuses it for
 `effectFree`, on the grounds that a page must not change what rn *believes*
