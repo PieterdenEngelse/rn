@@ -33,12 +33,14 @@ import type {
     CredentialsResponse,
     JobConfigResponse,
     JobOverride,
+    LinksResponse,
     WebhookDef,
     WebhookSaveResponse,
     WebhooksResponse,
     ParamsResponse,
     RestartOutcome,
     SaveResponse,
+    SendDetail,
     StateResetResponse,
     StatusResponse,
     StopOutcome,
@@ -466,7 +468,7 @@ export function createApp() {
                 retentionDays: config.trackerRetentionDays,
                 listening: health.listening,
                 port: health.port === 0 ? config.trackerPort : health.port,
-            });
+            } satisfies LinksResponse);
             return done(200);
         }
 
@@ -498,7 +500,7 @@ export function createApp() {
                             afterMintMs: c.at - l.mintedAt,
                         })),
                     })),
-            });
+            } satisfies SendDetail);
             return done(200);
         }
 
