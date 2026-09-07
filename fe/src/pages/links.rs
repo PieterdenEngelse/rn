@@ -12,7 +12,7 @@
 //! A page that quietly dropped the suspicious ones would be making a judgement
 //! it cannot support and hiding the evidence for it in the same move.
 
-use crate::api::{fetch_links, fetch_send, LinksResponse, SendDetail, TrackedLink};
+use crate::api::{fetch_links, fetch_send, BaseUrlProblem, LinksResponse, SendDetail, TrackedLink};
 use crate::components::param::*;
 use crate::components::{Board, GlossaryEntry, InfoButton, Metric, Panel};
 use dioxus::prelude::*;
@@ -105,12 +105,10 @@ fn Health(data: LinksResponse) -> Element {
                     value: base.clone(),
                     what: "The origin rn writes into a tracked link — RN_TRACKER_BASE_URL. It is what a recipient's browser will actually be sent to, and it is not derived from anything else.".to_string(),
                     why: "It is the one setting whose mistake is invisible from inside rn. Every page here works perfectly with a loopback base URL; the links are simply dead for everyone who is not sitting at this machine.".to_string(),
-                    if_wrong: "A 127.0.0.1 base URL means every recipient sees a connection error. Set it to the public origin the tunnel serves, without a port number in it if you can — a port inside a link in an email reads as phishing to filters and to people.".to_string(),
+                    if_wrong: "Two failures, and the quiet one is worse. A 127.0.0.1 base URL means every recipient sees a connection error — obvious the first time anybody clicks. A hostname you do not own works perfectly and dies later: a *.ts.net name follows the machine, so renaming it or leaving the tailnet kills every link ever sent, in mail people kept, with nothing left to redirect. rn refuses to mint against either, and against an http origin, a bare IP, or an explicit port.".to_string(),
                 }
-                if data.base_url_is_loopback {
-                    p { class: "text-xs text-gray-300 italic max-w-3xl",
-                        "This base URL is this machine's own loopback address. Links minted now will not resolve for anybody else."
-                    }
+                if !data.base_url_problems.is_empty() {
+                    BaseUrlProblems { problems: data.base_url_problems.clone() }
                 }
                 Metric {
                     label: "Identity kept for".to_string(),
@@ -335,5 +333,71 @@ fn found_entry() -> GlossaryEntry {
             "reason to hand it which link on which send sent the visitor.",
         )
         .to_string(),
+    }
+}
+
+/// What is wrong with the base URL, said plainly and in place.
+///
+/// On the page rather than only in a log because of when it has to be read: the
+/// operator is looking at this board precisely when they are deciding what the
+/// origin should be, and every problem here is one that either works fine on
+/// this machine or works fine today. There is no run to inspect afterwards —
+/// afterwards the links are in mailboxes.
+#[component]
+fn BaseUrlProblems(problems: Vec<BaseUrlProblem>) -> Element {
+    rsx! {
+        div { class: "border border-amber-600 rounded p-3 mt-2 space-y-2 max-w-3xl",
+            p { class: "text-amber-400 text-sm",
+                "rn will refuse to mint tracked links against this base URL."
+            }
+            for p in problems.iter() {
+                div { key: "{problem_headline(p)}",
+                    p { class: "text-gray-200 text-xs", "{problem_headline(p)}" }
+                    p { class: "text-gray-300 text-xs", "{problem_detail(p)}" }
+                }
+            }
+            p { class: "text-gray-400 text-xs",
+                "Set RN_TRACKER_BASE_URL to an https origin on a domain you own, ending in /t. See docs/link-tracking.md §3."
+            }
+        }
+    }
+}
+
+/// The one-line name of a problem.
+///
+/// A free function rather than a method: `BaseUrlProblem` is defined in
+/// `shared/` and `fe` cannot write an `impl` for a foreign type.
+fn problem_headline(p: &BaseUrlProblem) -> &'static str {
+    match p {
+        BaseUrlProblem::Malformed => "Not a URL.",
+        BaseUrlProblem::Insecure => "http, not https.",
+        BaseUrlProblem::Loopback => "This machine's own address.",
+        BaseUrlProblem::IpLiteral => "An address, not a name.",
+        BaseUrlProblem::Port => "Carries an explicit port.",
+        BaseUrlProblem::Borrowed => "A hostname you do not own.",
+    }
+}
+
+/// Why it matters, in the terms of the thing that cannot be undone.
+fn problem_detail(p: &BaseUrlProblem) -> &'static str {
+    match p {
+        BaseUrlProblem::Malformed => {
+            "Nothing can be minted from it, which is the one harmless way to get this wrong: it fails here rather than in somebody's mail."
+        }
+        BaseUrlProblem::Insecure => {
+            "A redirect any network in between can read and rewrite, and a scheme mail filters mark down on sight."
+        }
+        BaseUrlProblem::Loopback => {
+            "Every link works perfectly on this machine and is dead for every recipient — the failure that looks like success right up until somebody clicks."
+        }
+        BaseUrlProblem::IpLiteral => {
+            "Unmovable if the address ever changes, and a bare IP in an emailed link reads as phishing to filters and to people."
+        }
+        BaseUrlProblem::Port => {
+            "A port number inside a link in an email reads as phishing, to software and to the person deciding whether to click."
+        }
+        BaseUrlProblem::Borrowed => {
+            "It works today, which is what makes it the worst one. A *.ts.net name, a quick tunnel or an ngrok host is lent to you: it follows a machine, an account or a process, and when any of those changes every link ever sent stops resolving at once. A domain you own is the only kind you can still redirect in five years."
+        }
     }
 }

@@ -18,6 +18,17 @@ import type { JsonValue } from "./serde_json/JsonValue.ts";
 export type AppliesAt = "restart" | "runtime";
 
 /**
+ * A reason a tracker base URL should not be minted into real mail.
+ *
+ * Every one of these is permanent in a way nothing else in rn is. A link
+ * lives in a mailbox for as long as the recipient keeps the message, so a
+ * base URL is not a setting that can be corrected later — it can only be
+ * corrected for mail not yet sent. That asymmetry is why this is a checked
+ * list rather than advice in a doc.
+ */
+export type BaseUrlProblem = "malformed" | "insecure" | "loopback" | "ip-literal" | "port" | "borrowed";
+
+/**
  * One bucket of a long-window tier.
  */
 export type Bucket = { t: number, heapFloorMB: number, rssPeakMB: number, 
@@ -973,10 +984,13 @@ sends: Array<TrackedSend>,
  */
 baseUrl: string, 
 /**
- * True when the base URL is this machine's own loopback — the default,
- * and a link nobody else can follow.
+ * Everything wrong with the base URL, empty when it is fit to mint.
+ *
+ * A list rather than a worst-problem, because the default
+ * (`http://127.0.0.1:3012/t`) trips three at once and fixing one of
+ * them changes nothing a recipient would notice.
  */
-baseUrlIsLoopback: boolean, retentionDays: number, 
+baseUrlProblems: Array<BaseUrlProblem>, retentionDays: number, 
 /**
  * Whether the tracker is actually bound. A link in a mailbox that
  * finds nothing listening is a recipient looking at a browser error,

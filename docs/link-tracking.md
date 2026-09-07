@@ -152,6 +152,67 @@ same change. "The hooks port serves exactly one route" stops being true, and a
 security argument that has quietly become false is worse than one that was never
 made.
 
+### The origin is never a name you borrowed
+
+The destination rule below is about what a link points *at*. This one is about
+what it points *from*, and it is the same argument one level up: a tracked link
+is in somebody's mailbox for as long as they keep the message, so the origin can
+only ever be corrected for mail **not yet sent**.
+
+That makes the hostname the most permanent decision in this feature, and the
+easiest one to make badly, because the bad answers all work. `laptop.tail1e7abb.ts.net`
+resolves, serves a valid certificate, and redirects correctly. It is also not
+yours: a `*.ts.net` name follows the machine and the tailnet, so renaming the
+laptop, replacing it, or leaving the tailnet kills every link ever sent, all at
+once, with nothing left to redirect them to. The same is true of a quick tunnel
+hostname or an ngrok name. A loopback base URL fails more honestly — it is dead
+for everyone immediately.
+
+**So the origin must be a domain you own, and rn enforces it.**
+`be/src/tracker/base-url.ts` classifies the base URL and `rewrite()` refuses to
+mint against a bad one *before the first id is generated*, so there is no
+half-rewritten body and no orphan row in the store. The problems it names —
+`malformed`, `insecure`, `loopback`, `ip-literal`, `port`, `borrowed` — are
+reported on Monitor → Links as well, because the moment an operator is looking
+at that board is the moment they are deciding what the origin should be.
+
+What it cannot check is whether a domain is *yours*. `borrowed` is a list of
+provider suffixes, so a clean verdict means "no known problem" and never
+"checked and owned"; a free subdomain from a provider not on the list passes and
+should not.
+
+**How to actually have one.** Three shapes, in the order I would try them:
+
+1. **A named Cloudflare Tunnel on your own domain.** `cloudflared` on this
+   machine, `links.yourdomain.com` routed to `127.0.0.1:3012`. No VPS, no open
+   inbound port, a certificate you do not manage, and a hostname that is yours
+   permanently. Cloudflare sees the redirect traffic, which is acceptable here
+   in a way it would not be for the hooks port: there is no signature to
+   invalidate, the destination is a public URL anyway, and the only secret in
+   the exchange is which opaque id was fetched. Note that this is a *named*
+   tunnel — a `trycloudflare.com` quick tunnel is a borrowed hostname and is
+   refused.
+
+2. **A small host you own, joined to the tailnet.** Caddy or nginx on it,
+   `links.yourdomain.com` proxying to `100.x.y.z:3012` over Tailscale. Costs a
+   few euros a month and some ops, and buys the strongest property available:
+   **this machine gets no public surface at all.** Funnel is not involved, so
+   the tracker never spends the argument `docs/network.md` §4 and `docs/sec.md`
+   make about the hooks port, and the only thing reachable from the internet is
+   a box whose whole job is to forward one path.
+
+3. **Funnel on the `.ts.net` name.** Free, no extra infrastructure, and
+   permanently borrowed. Defensible only when every recipient already knows what
+   rn is — an internal circle, your own addresses, a pilot you expect to resend
+   from scratch. rn refuses this by default; waiving it is a deliberate act.
+
+Whichever it is, set `RN_TRACKER_BASE_URL=https://links.yourdomain.com/t` and do
+not change it afterwards. Two consequences worth stating: the `/t` stays in the
+base so the domain can host other things later, and **the domain is now a
+dependency of mail already sent** — put it on auto-renew, because letting it
+lapse breaks links in messages you no longer control and hands the name to
+whoever registers it next.
+
 ### The destination is never in the URL
 
 `/t/<opaque id>`, looked up in a store, `302` to whatever the store says. Put
@@ -521,7 +582,7 @@ bisect when the click count is wrong.
 | 2 | The tracker listener | `GET /t/:id` and 404 for everything else, mirroring `hooks/server.ts:321`. Tested as a table the way `docs/tunnel.md` tests the hooks port: an unknown id, an attempt to pass a destination in the query, a non-GET. |
 | 3 | The click store | Append, look up, retain. Own module, own tests. The recipient column is nullable from the first commit — §6 says why that is the schema decision rather than a later one. |
 | 4 | The rewriter | A pure function — HTML in, HTML and minted rows out, plain-text alternative included. No I/O, so the cheapest thing here to get right. |
-| 5 | The send job | Per-recipient render, a real dry-run path, `PermanentFailure` classification, declared credentials, `JobInfo`; registered in `jobs/index.ts`. Plus the `(send, recipient)` sent-marker committed before the SMTP call — §3 says why that one is not optional. |
+| 5 | The send job | Per-recipient render, a real dry-run path, `PermanentFailure` classification, declared credentials, `JobInfo`; registered in `jobs/index.ts`. Plus the `(send, recipient)` sent-marker committed before the SMTP call — §3 says why that one is not optional. `rewrite()` already refuses an unfit base URL; the job classifies that throw as `PermanentFailure` (retrying a hostname does not fix it) and passes `allowUnsafeBase` only on a dry run. |
 | 6 | Wire types and the API | `shared/src/`, `npm run types:build`, read endpoints on the API port. |
 | 7 | The page | Route, nav, and the info panels that say what §5 says. |
 | 8 | Exposure and docs | The Funnel mapping, rehearsed on `--https=8443` first because a funnel-enabled port has no private path (§3), and the edits §3 promises to `docs/network.md` and `docs/sec.md`. `--set-path=/t` is confirmed against 1.102.3: it outranks the `/` catch-all, and it strips the prefix, so the target is `http://127.0.0.1:3012/t` and not `3012` — §3 has all three findings. |

@@ -10,9 +10,14 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { rewrite } from "../src/tracker/rewrite.ts";
+import { rewrite, type Mint } from "../src/tracker/rewrite.ts";
 
-const BASE = "https://example.ts.net/t";
+// A domain somebody owns. This constant read `https://example.ts.net/t` until
+// the base-URL check landed and refused it — which is the clearest evidence
+// available that a borrowed hostname is the natural thing to reach for, since
+// it was reached for here, in the tests for the very function that mints the
+// permanent links.
+const BASE = "https://links.example.com/t";
 
 /** Deterministic ids, so the assertions can name them. */
 function counter() {
@@ -27,7 +32,7 @@ test("an anchor href is rewritten and the link is reported", () => {
         BASE,
         counter(),
     );
-    assert.equal(out.html, '<p>See <a href="https://example.ts.net/t/id1">this</a>.</p>');
+    assert.equal(out.html, '<p>See <a href="https://links.example.com/t/id1">this</a>.</p>');
     assert.deepEqual(out.minted, [{ id: "id1", url: "https://example.com/a" }]);
 });
 
@@ -36,23 +41,23 @@ test("the plain-text alternative is rewritten too", () => {
     // never happened, and the two bodies then disagree about where the mail
     // points — which is a thing spam filters look at.
     const out = rewrite("", "See https://example.com/a for more", BASE, counter());
-    assert.equal(out.text, "See https://example.ts.net/t/id1 for more");
+    assert.equal(out.text, "See https://links.example.com/t/id1 for more");
 });
 
 test("a link at the end of a sentence keeps its punctuation outside the url", () => {
     const out = rewrite("", "Read https://example.com/a. Then stop.", BASE, counter());
-    assert.equal(out.text, "Read https://example.ts.net/t/id1. Then stop.");
+    assert.equal(out.text, "Read https://links.example.com/t/id1. Then stop.");
     assert.deepEqual(out.minted, [{ id: "id1", url: "https://example.com/a" }]);
 });
 
 test("a link inside parentheses does not swallow the closing paren", () => {
     const out = rewrite("", "(see https://example.com/a)", BASE, counter());
-    assert.equal(out.text, "(see https://example.ts.net/t/id1)");
+    assert.equal(out.text, "(see https://links.example.com/t/id1)");
 });
 
 test("single quotes are handled and the quote style is preserved", () => {
     const out = rewrite("<a href='https://example.com/a'>x</a>", "", BASE, counter());
-    assert.equal(out.html, "<a href='https://example.ts.net/t/id1'>x</a>");
+    assert.equal(out.html, "<a href='https://links.example.com/t/id1'>x</a>");
 });
 
 test("other attributes and whitespace on the anchor survive untouched", () => {
@@ -64,7 +69,7 @@ test("other attributes and whitespace on the anchor survive untouched", () => {
     );
     assert.equal(
         out.html,
-        '<a class="btn" href = "https://example.ts.net/t/id1" target="_blank">x</a>',
+        '<a class="btn" href = "https://links.example.com/t/id1" target="_blank">x</a>',
     );
 });
 
@@ -129,4 +134,45 @@ test("a body with no links comes back unchanged and mints nothing", () => {
     assert.equal(out.html, "<p>Hello</p>");
     assert.equal(out.text, "Hello");
     assert.deepEqual(out.minted, []);
+});
+
+test("a borrowed hostname is refused before anything is minted", () => {
+    let minted = 0;
+    const counting: Mint = () => `id${++minted}`;
+
+    // The whole point of doing this before the first mint rather than after:
+    // there is no half-rewritten body and no orphaned row in the store, and the
+    // operator finds out at the machine instead of from a recipient.
+    assert.throws(
+        () => rewrite('<a href="https://example.com/x">x</a>', "", "https://laptop.tail1e7abb.ts.net/t", counting),
+        /borrowed/,
+    );
+    assert.equal(minted, 0);
+});
+
+test("the shipped default trips three problems and names all of them", () => {
+    assert.throws(
+        () => rewrite("", "", "http://127.0.0.1:3012/t", () => "id"),
+        /insecure, loopback, port/,
+    );
+});
+
+test("a dry run may waive the check deliberately", () => {
+    let minted = 0;
+    const counting: Mint = () => `id${++minted}`;
+
+    // Waived at the call site, where the reader can see it. A run that is not
+    // going anywhere still has to rewrite and still has to report what it would
+    // have minted — docs/jobs.md §1 is explicit that a dry run reporting
+    // nothing has proved nothing.
+    const out = rewrite(
+        '<a href="https://example.com/x">x</a>',
+        "",
+        "http://127.0.0.1:3012/t",
+        counting,
+        { allowUnsafeBase: true },
+    );
+
+    assert.equal(out.minted.length, 1);
+    assert.equal(out.html, '<a href="http://127.0.0.1:3012/t/id1">x</a>');
 });

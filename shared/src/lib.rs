@@ -60,6 +60,7 @@ pub fn export_all(cfg: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     JobRun::export_all(cfg)?;
     JobsConfig::export_all(cfg)?;
     JobsResponse::export_all(cfg)?;
+    BaseUrlProblem::export_all(cfg)?;
     LinkClick::export_all(cfg)?;
     TrackedLink::export_all(cfg)?;
     TrackedSend::export_all(cfg)?;

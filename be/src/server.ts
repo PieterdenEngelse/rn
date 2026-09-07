@@ -96,6 +96,7 @@ import {
     defaultTimeoutMs,
 } from "./jobs/index.ts";
 import * as overrides from "./jobs/overrides.ts";
+import { classifyBaseUrl } from "./tracker/base-url.ts";
 import type { Job } from "./jobs/types.ts";
 import { collect as collectNodeMetrics, lifetimeDelay } from "./node_metrics.ts";
 import { withDistribution } from "./node_history.ts";
@@ -458,13 +459,13 @@ export function createApp() {
             send(res, 200, {
                 sends,
                 baseUrl: config.trackerBaseUrl,
-                // Named here rather than sniffed on the page, for the reason
-                // `loopbackOnly` is: what counts as loopback is a property of
-                // the address, and a second implementation in the frontend is a
-                // second thing to keep right.
-                baseUrlIsLoopback: /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/)/.test(
-                    config.trackerBaseUrl,
-                ),
+                // Classified here rather than sniffed on the page, for the
+                // reason `loopbackOnly` is: what is wrong with an origin is a
+                // property of the origin, and a second implementation in the
+                // frontend is a second thing to keep right. It is the same
+                // function the mint path refuses on, so the page cannot say a
+                // base URL is fine and then have a send reject it.
+                baseUrlProblems: classifyBaseUrl(config.trackerBaseUrl),
                 retentionDays: config.trackerRetentionDays,
                 listening: health.listening,
                 port: health.port === 0 ? config.trackerPort : health.port,

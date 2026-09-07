@@ -43,6 +43,8 @@
  */
 
 /** What the rewriter minted, so the caller can record or report it. */
+import { assertMintableBase } from "./base-url.ts";
+
 export interface MintedLink {
     id: string;
     url: string;
@@ -59,6 +61,19 @@ export interface RewriteResult {
  * the send job passes the store, a test passes a counter.
  */
 export type Mint = (url: string) => string;
+
+/**
+ * What a caller may waive.
+ *
+ * `allowUnsafeBase` exists for the two cases that are honestly not going
+ * anywhere: a dry run, and a test. It is a parameter rather than an environment
+ * read because this module is pure — and because a waiver that travels with the
+ * call is visible at the call site, where the decision is, instead of in a
+ * process the reader has to go and inspect.
+ */
+export interface RewriteOptions {
+    allowUnsafeBase?: boolean;
+}
 
 /** `<a ... href="..." ...>`, single or double quoted. */
 const HREF = /(<a\b[^>]*?\bhref\s*=\s*)(["'])(.*?)\2/gi;
@@ -97,7 +112,14 @@ export function rewrite(
     text: string,
     base: string,
     mint: Mint,
+    opts: RewriteOptions = {},
 ): RewriteResult {
+    // Before anything is minted, not after. A link is permanent the moment it
+    // is in a sent message, so the only place this check is worth anything is
+    // ahead of the first `mint()` call — see `base-url.ts` for why that is a
+    // different kind of mistake from everything else in rn.
+    assertMintableBase(base, opts.allowUnsafeBase === true);
+
     const minted: MintedLink[] = [];
 
     const track = (url: string): string => {

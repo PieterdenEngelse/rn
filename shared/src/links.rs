@@ -87,6 +87,44 @@ wire! {
 }
 
 wire! {
+    /// A reason a tracker base URL should not be minted into real mail.
+    ///
+    /// Every one of these is permanent in a way nothing else in rn is. A link
+    /// lives in a mailbox for as long as the recipient keeps the message, so a
+    /// base URL is not a setting that can be corrected later — it can only be
+    /// corrected for mail not yet sent. That asymmetry is why this is a checked
+    /// list rather than advice in a doc.
+    #[derive(Copy, Eq)]
+    #[serde(rename_all = "kebab-case")]
+    pub enum BaseUrlProblem {
+        /// Not a URL at all.
+        Malformed,
+        /// `http://`. A redirect a network can read and rewrite, and a scheme
+        /// mail filters mark down on sight.
+        Insecure,
+        /// This machine's own address. Every link works perfectly here and is
+        /// dead for every recipient — the failure that looks like success.
+        Loopback,
+        /// A bare address with no name. Unmovable if the address changes, and
+        /// read as phishing by filters and by people.
+        IpLiteral,
+        /// An explicit non-default port. `docs/link-tracking.md` §3: a port
+        /// inside an emailed URL reads as phishing to both filters and people.
+        Port,
+        /// A hostname under a suffix somebody else owns — `*.ts.net`, a quick
+        /// tunnel, an ngrok name.
+        ///
+        /// The one that is hardest to see and worst to get wrong. It works, it
+        /// looks fine, and the name is not yours: it changes if the machine is
+        /// renamed or leaves the tailnet, and it cannot be pointed anywhere
+        /// else afterwards. Every link already sent dies with it, in mail
+        /// people kept. A domain you own is the only kind you can still
+        /// redirect in five years.
+        Borrowed,
+    }
+}
+
+wire! {
     /// GET /api/links.
     #[serde(rename_all = "camelCase")]
     pub struct LinksResponse {
@@ -97,9 +135,13 @@ wire! {
         /// `http://127.0.0.1:3012/t/...` is configured but useless, and that is
         /// invisible from anywhere except the link itself.
         pub base_url: String,
-        /// True when the base URL is this machine's own loopback — the default,
-        /// and a link nobody else can follow.
-        pub base_url_is_loopback: bool,
+        /// Everything wrong with the base URL, empty when it is fit to mint.
+        ///
+        /// A list rather than a worst-problem, because the default
+        /// (`http://127.0.0.1:3012/t`) trips three at once and fixing one of
+        /// them changes nothing a recipient would notice.
+        #[serde(default)]
+        pub base_url_problems: Vec<BaseUrlProblem>,
         pub retention_days: u32,
         /// Whether the tracker is actually bound. A link in a mailbox that
         /// finds nothing listening is a recipient looking at a browser error,
@@ -116,5 +158,38 @@ wire! {
         pub id: String,
         #[serde(default)]
         pub links: Vec<TrackedLink>,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The wire spellings, pinned.
+    ///
+    /// `be` sends these strings and `fe` matches on them. A variant renamed
+    /// without a `#[serde(rename)]` would leave the page unable to say what is
+    /// wrong with a base URL, on the one screen whose job is to say so before
+    /// a link is permanent.
+    #[test]
+    fn base_url_problems_keep_their_wire_spelling() {
+        let one = |p: &BaseUrlProblem| serde_json::to_string(p).expect("serialises");
+
+        assert_eq!(one(&BaseUrlProblem::Malformed), "\"malformed\"");
+        assert_eq!(one(&BaseUrlProblem::Insecure), "\"insecure\"");
+        assert_eq!(one(&BaseUrlProblem::Loopback), "\"loopback\"");
+        assert_eq!(one(&BaseUrlProblem::IpLiteral), "\"ip-literal\"");
+        assert_eq!(one(&BaseUrlProblem::Port), "\"port\"");
+        assert_eq!(one(&BaseUrlProblem::Borrowed), "\"borrowed\"");
+    }
+
+    /// A response from a tracker with nothing wrong with it omits the list.
+    #[test]
+    fn a_clean_base_url_parses_without_the_problems_key() {
+        let out: LinksResponse = serde_json::from_str(
+            r#"{"sends":[],"baseUrl":"https://links.example.com/t","retentionDays":90,"listening":true,"port":3012}"#,
+        )
+        .expect("parses");
+        assert!(out.base_url_problems.is_empty());
     }
 }
