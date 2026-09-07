@@ -523,17 +523,25 @@ the reason each gets its own build directory: four backends sharing one
 `job-state.json` would have one worktree's run clear another's cursors, with
 nothing in the store to say whose entry it was.
 
-**Installed dependencies go the other way — they are shared, by symlink into
-`~/rn`.** Nothing in the repository says so, which is why it is written here;
-both halves of it have already surprised a session in one morning. As of
-2026-09-04:
+**Installed dependencies go the other way — some of them are shared, by symlink
+into `~/rn`.** Nothing in the repository says so, which is why it is written
+here; both halves of it have already surprised a session in one morning. As of
+2026-09-07:
 
 | | `be/node_modules` | `fe/node_modules` | `be/runtime` |
 |---|---|---|---|
 | `~/rn` | own | own | own |
 | `~/ca` | → `~/rn` | → `~/rn` | absent |
 | `~/cb` | → `~/rn` | → `~/rn` | → `~/rn` |
-| `~/cc` | → `~/rn` | own | own |
+| `~/cc` | own | own | own |
+
+**That table drifts, and it has.** It said `~/cc`'s `be/node_modules` was a
+symlink for three days after an `npm install` there had replaced it with a real
+directory — so the document warning about the hazard was itself an instance of
+it. Read the topology rather than this table when it matters:
+
+    for w in rn ca cb cc; do printf '%-4s ' $w
+      readlink ~/$w/be/node_modules || echo own; done
 
 **Which direction you run `npm install` from decides what it does**, and the two
 outcomes are opposites:
@@ -562,6 +570,33 @@ somewhere else.
 Landing a dependency bump therefore has a second half. `~/rn` needs the
 `npm install`, because that is the copy the symlinks point at; any worktree that
 has un-shared itself needs its own.
+
+**The sharing is not worth keeping, and was never chosen.** The commit that
+documented it says so outright — "nothing in the repository says so" — because
+it is a state this machine arrived at, not a design. Measured 2026-09-07, it
+buys about 120MB across `~/ca` and `~/cb`, against 24GB free; and it saves no
+download at all, because `~/.npm/_cacache` is global and already 595MB, so an
+install in an un-shared tree fetches nothing over the network. What it costs is
+everything above: an `npm install` that is never a local act, a topology that
+drifts silently, the CSS-watcher trap reaching across trees, and a standing
+instruction to check what is installed rather than what is committed.
+
+So the intended end state is **each worktree owning its own `node_modules`**,
+with the npm cache doing the sharing that actually matters — which is npm's job
+and not a symlink's. Getting there is one command per shared tree:
+
+    cd ~/ca/be && npm install && cd ../fe && npm install
+    cd ~/cb/be && npm install && cd ../fe && npm install
+
+Run it when no session is working in that tree: npm replaces the symlink with a
+real directory, and a build running out of the old one mid-install is the sort
+of thing that produces a mismatched pair and a blank page. When both are done,
+this whole subsection reduces to a sentence, and the paragraph above about
+`npm install` never being local goes with it.
+
+`be/runtime` is the one where size is a real argument — 104MB, and `~/cb`
+symlinks it — so leave it alone unless you want it consistent.
+`scripts/install-node.sh` populates it per tree, and `~/ca` has none at all.
 
 The backend on **:3010** is launcher-supervised and the launcher is
 **systemd-supervised** — `rn-backend.service`, a user unit, runs
