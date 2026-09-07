@@ -79,6 +79,21 @@ fifty cannot dedupe at all — and it fails by re-reporting things silently,
 weeks later, with nothing red. Check the product up front and put it on the run
 record, the way `watch-feeds` does, rather than leaving it to be discovered.
 
+**Open the mailbox read-only.** An ordinary IMAP `FETCH` of a body sets `\Seen`
+as a side effect, so the obvious implementation marks a person's unread mail as
+read — a change to something they look at every day, made by an automation
+pointed at their inbox to *observe* it. `EXAMINE` rather than `SELECT` makes
+that impossible at the protocol level instead of relying on every fetch
+remembering `BODY.PEEK`, and it is what makes `effectFree: true` an honest
+claim rather than a hopeful one.
+
+**Do not call `download()` while iterating `fetch()`.** IMAP runs one command at
+a time on a connection, so a download issued inside the fetch loop waits for the
+fetch to finish and the fetch cannot finish until the loop consumes it. Nothing
+errors: the run hangs until its timeout, every time, against any real server.
+Drain the fetch into an array first. Found by talking to a server and not
+findable any other way — the unit tests over the pure parts all passed.
+
 **Extraction is a scan, not a parse.** Same tradeoff `watch-feeds` states for
 its feed reader: find `href` on anchors, unwrap entities, and accept that
 adversarial HTML can hide a link from it. An HTML parser is a dependency and a
@@ -650,7 +665,7 @@ bisect when the click count is wrong.
 | 6 | Wire types and the API | `shared/src/`, `npm run types:build`, read endpoints on the API port. |
 | 7 | The page | Route, nav, and the info panels that say what §5 says. |
 | 8 | Exposure and docs | The Funnel mapping, rehearsed on `--https=8443` first because a funnel-enabled port has no private path (§3), and the edits §3 promises to `docs/network.md` and `docs/sec.md`. `--set-path=/t` is confirmed against 1.102.3: it outranks the `/` catch-all, and it strips the prefix, so the target is `http://127.0.0.1:3012/t` and not `3012` — §3 has all three findings. |
-| 9 | The inbound job | IMAP, `seen()` dedupe, the window arithmetic on the run record. |
+| 9 | The inbound job | IMAP, `seen()` dedupe, the window arithmetic on the run record. Read-only mailbox open, which is what makes `effectFree` honest — an ordinary fetch sets `\Seen` and would mark a person's unread mail as read while merely observing it. |
 | 10 | An inbound view | Only if the links need a page rather than the run summary. Skippable. |
 
 Three properties of that order, all of them the reason for it:

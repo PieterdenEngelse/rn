@@ -235,13 +235,25 @@ export const config = {
     smtpPort: Number(process.env.RN_SMTP_PORT ?? 465),
 
     /**
-     * The address mail is sent from, and the SMTP username.
+     * The account rn sends from and reads with — the address and the username
+     * for both SMTP and IMAP.
+     *
+     * One setting rather than two because it is one account:
+     * `docs/link-tracking.md` §1 takes the app-password path precisely so that
+     * a single opaque credential covers sending and reading, and a pair of
+     * user fields that must always match is a pair that can disagree.
      *
      * Not a credential: it is printed on every message that arrives, so it is
      * not a secret, and holding it as one would only hide it from the pages
-     * that should say which account is sending.
+     * that should say which account is in use.
      */
-    smtpUser: process.env.RN_SMTP_USER ?? "",
+    mailUser: process.env.RN_MAIL_USER ?? "",
+
+    /** IMAP host the read-mail job connects to. */
+    imapHost: process.env.RN_IMAP_HOST ?? "imap.gmail.com",
+
+    /** IMAP port. 993 is implicit TLS, the counterpart of SMTP's 465. */
+    imapPort: Number(process.env.RN_IMAP_PORT ?? 993),
 
     /**
      * Per-job settings changed from Config → Jobs, keyed by job id.

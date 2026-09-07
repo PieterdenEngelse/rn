@@ -28,12 +28,12 @@ const mutable = config as unknown as {
     trackerStorePath: string;
     trackerSentPath: string;
     trackerBaseUrl: string;
-    smtpUser: string;
+    mailUser: string;
 };
 mutable.trackerStorePath = LINKS;
 mutable.trackerSentPath = SENT;
 mutable.trackerBaseUrl = "https://links.example.com/t";
-mutable.smtpUser = "sender@example.com";
+mutable.mailUser = "sender@example.com";
 
 const links = await import("../src/tracker/store.ts");
 const sent = await import("../src/tracker/sent.ts");
