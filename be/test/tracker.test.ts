@@ -91,6 +91,11 @@ test("an unminted id is 404, and so is a path that is not a link", async (t) => 
         "/t/",
         "/t/a/b",
         "/",
+        // The prefix-stripped form accepts one bare segment, so these are the
+        // rows that prove it opened nothing: an unminted bare id, and anything
+        // carrying a second slash, which is refused before the store is asked.
+        "/never-minted",
+        "/a/b",
         "/api/hooks/demo",
         // The row `docs/tunnel.md` keeps in every table: the API's mutating
         // routes are absent here, not merely forbidden.
@@ -154,4 +159,44 @@ test("the user-agent is kept as evidence and bounded", async (t) => {
     // Bounded, because it is a string a stranger chooses and it goes to a file
     // that grows with traffic from outside the machine.
     assert.equal(store.clicksFor(link.id)[0]!.userAgent.length, 512);
+});
+
+test("a proxy that stripped the prefix still resolves the link", async (t) => {
+    const origin = await serving(t);
+    const link = store.mint("send-1", "alice@example.com", "https://example.com/landing");
+
+    // What Tailscale's `--set-path=/t` actually delivers: `http.StripPrefix`
+    // removes the mount point, so a public `https://host/t/<id>` arrives here
+    // as `/<id>`. The mapping is configured to put the prefix back, and this
+    // is the belt to that pair of braces — the failure it guards against is
+    // dead links in mail somebody kept, which no revert reaches.
+    const res = await fetch(`${origin}/${link.id}`, { redirect: "manual" });
+
+    assert.equal(res.status, 302);
+    assert.equal(res.headers.get("location"), "https://example.com/landing");
+});
+
+test("both spellings record the arrival the same way", async (t) => {
+    const origin = await serving(t);
+    const link = store.mint("send-1", "alice@example.com", "https://example.com/landing");
+
+    await fetch(`${origin}/t/${link.id}`, { redirect: "manual" });
+    await fetch(`${origin}/${link.id}`, { redirect: "manual" });
+
+    // Two arrivals, not one deduplicated by path: the page counts requests
+    // that reached a link, and which spelling the proxy handed over is not a
+    // property of the click.
+    assert.equal(store.clicksFor(link.id).length, 2);
+});
+
+test("an encoded slash cannot smuggle a second segment into either spelling", async (t) => {
+    const origin = await serving(t);
+
+    // Decoding happens after the slash check, so `%2f` is part of an id that
+    // was never minted rather than a path to walk. Checked on both spellings
+    // because the stripped one is the newer door.
+    for (const path of ["/t/a%2fb", "/a%2fb"]) {
+        const res = await fetch(`${origin}${path}`, { redirect: "manual" });
+        assert.equal(res.status, 404, `${path} should be 404`);
+    }
 });

@@ -110,15 +110,42 @@ stranger on purpose. Adding it to 3011 spends that argument outright. So:
 
 **Give the tracker its own port and Funnel a second mapping.**
 
-    tailscale funnel --bg 3011                    # unchanged: hooks, POST-only
-    tailscale funnel --bg --set-path=/t 3012      # new: the tracker
+    tailscale funnel --bg 3011                                       # unchanged: hooks, POST-only
+    tailscale funnel --bg --set-path=/t http://127.0.0.1:3012/t      # new: the tracker
     tailscale funnel status
 
 That keeps `hooks/server.ts` one-route-by-construction, keeps the tracking links
 on 443 where they look like ordinary links, and makes the two surfaces separable
-later. Confirm `--set-path` against the installed `tailscale funnel --help`;
-without it, Funnel offers only 443, 8443 and 10000, and a port number inside an
-emailed URL reads as phishing to both people and filters.
+later. Without `--set-path`, Funnel offers only 443, 8443 and 10000, and a port
+number inside an emailed URL reads as phishing to both people and filters.
+
+**Three things about that second line, all of them checked against 1.102.3
+rather than assumed.**
+
+*`/t` does outrank the existing `/`.* Tailscale builds no mux: `getServeHandler`
+resolves per request, trying the exact path, then `/t/`, then `/t`, then walking
+up parents until `/`. So `/t/<id>` finds the tracker before the catch-all, and
+the hooks mapping is untouched. This was the open question §6 flagged, and the
+answer is yes.
+
+*The target carries `/t` because `--set-path` strips it.* `serve.go` wraps the
+handler in `http.StripPrefix(mountPoint, h)`, so a bare `--set-path=/t 3012`
+delivers `/<id>` to the tracker and every real click 404s — a mapping that
+passes every test in the repo and fails on a recipient's first click, because
+nothing here exercises the proxy. Naming the target as a full URL with the path
+on it makes `ProxyRequest.SetURL` join `/t` back on. The tracker also accepts
+the stripped `/<id>` directly, so the link survives these two behaviours ceasing
+to cancel out; `be/src/tracker/server.ts` says why that is worth the four lines.
+
+*There is no tailnet-only rehearsal on 443.* `AllowFunnel` is keyed on
+`host:port` and not on path — so **every** handler on a funnel-enabled port is
+public, including one added with `tailscale serve` rather than `funnel`. To
+rehearse the whole chain privately, mount it on a port Funnel is not enabled
+for:
+
+    tailscale serve --https=8443 --set-path=/t http://127.0.0.1:3012/t
+    # ... click a link, confirm the arrival lands on Monitor → Links ...
+    tailscale serve --https=8443 --set-path=/t off
 
 Whichever way it goes, `docs/network.md` and `docs/sec.md` need editing in the
 same change. "The hooks port serves exactly one route" stops being true, and a
@@ -384,11 +411,24 @@ https://laptop.tail1e7abb.ts.net (Funnel on)
 |-- / proxy http://127.0.0.1:3011
 ```
 
-**One thing the check did not settle.** Whether `--set-path=/t` onto the tracker
-takes precedence over that `/` catch-all. Longest-prefix match is the expected
-behaviour and it has not been run, so it is step 8's first measurement rather
-than a property to build on — the same distinction this document draws
-everywhere else between what was reasoned and what was observed.
+**Settled since, by reading 1.102.3's `ipn/ipnlocal/serve.go`.** `--set-path=/t`
+does take precedence over that `/` catch-all: there is no mux, `getServeHandler`
+tries the exact path and then walks up parents, so `/t/<id>` finds the tracker
+first. Longest-prefix was the expected behaviour and it is the actual one.
+
+**And a second thing the check would not have caught, which matters more.**
+`--set-path` *strips* the prefix before proxying, so the mapping this document
+first wrote — `--set-path=/t 3012` — would have handed the tracker `/<id>` and
+404'd every real click. Nothing in the repository would have failed: the tracker
+tests speak to the listener directly and never through a proxy, so the first
+evidence would have been a recipient reporting a dead link. §3 carries the
+corrected mapping and the two-sided guard.
+
+That is worth keeping as a note about method rather than about Tailscale.
+Precedence was the question that got asked because it was the one that sounded
+uncertain; stripping was never asked about at all, and it was the one that
+would have shipped broken. Reading the source answered both. Running the
+command would have answered only the first, and looked like a success.
 
 ### Decision: which sends carry identity
 
@@ -484,7 +524,7 @@ bisect when the click count is wrong.
 | 5 | The send job | Per-recipient render, a real dry-run path, `PermanentFailure` classification, declared credentials, `JobInfo`; registered in `jobs/index.ts`. Plus the `(send, recipient)` sent-marker committed before the SMTP call — §3 says why that one is not optional. |
 | 6 | Wire types and the API | `shared/src/`, `npm run types:build`, read endpoints on the API port. |
 | 7 | The page | Route, nav, and the info panels that say what §5 says. |
-| 8 | Exposure and docs | The Funnel mapping — confirming first that `--set-path=/t` actually outranks the existing `/` catch-all, which §6 flags as unrun — and the edits §3 promises to `docs/network.md` and `docs/sec.md`. |
+| 8 | Exposure and docs | The Funnel mapping, rehearsed on `--https=8443` first because a funnel-enabled port has no private path (§3), and the edits §3 promises to `docs/network.md` and `docs/sec.md`. `--set-path=/t` is confirmed against 1.102.3: it outranks the `/` catch-all, and it strips the prefix, so the target is `http://127.0.0.1:3012/t` and not `3012` — §3 has all three findings. |
 | 9 | The inbound job | IMAP, `seen()` dedupe, the window arithmetic on the run record. |
 | 10 | An inbound view | Only if the links need a page rather than the run summary. Skippable. |
 

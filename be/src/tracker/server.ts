@@ -38,9 +38,31 @@
  * | Request | Answer |
  * |---|---|
  * | `GET /t/<known id>` | 302 to the stored URL, click recorded |
+ * | `GET /<known id>` | the same, for a proxy that stripped the prefix |
  * | `HEAD /t/<known id>` | 302, recorded with `method: HEAD` |
  * | `GET /t/<unknown id>` | 404 |
  * | anything else | 404 |
+ *
+ * ## Why the id is accepted at two paths and not one
+ *
+ * Tailscale's `--set-path=/t` **strips** the prefix before proxying —
+ * `http.StripPrefix(mountPoint, h)` in `ipn/ipnlocal/serve.go` — so a public
+ * `https://host/t/<id>` arrives here as `/<id>`. The mapping can put the prefix
+ * back by carrying it on the target (`--set-path=/t http://127.0.0.1:3012/t`,
+ * where `ProxyRequest.SetURL` joins the base path on again), and that is what
+ * `docs/link-tracking.md` §7 now says to do. Accepting both shapes means the
+ * link does not depend on those two behaviours continuing to cancel out.
+ *
+ * That is not defensiveness for its own sake. Every other failure in this
+ * feature is a revert; this one is dead links in mail people kept, discovered
+ * when a recipient clicks rather than when a test runs. A third-party proxy
+ * changing how it rewrites a path is exactly the kind of thing that happens
+ * between an upgrade and the next time anyone looks.
+ *
+ * It costs no surface. A bare `/<segment>` was already a 404 and still is
+ * unless it is a minted id, and anything with a second slash in it — every
+ * route in the 404 table below, `/api/settings` included — is refused before
+ * the store is consulted, exactly as before. One route, two spellings.
  *
  * HEAD redirects rather than 404s because a link checker that gets a 404 for
  * HEAD reports the link as broken, and a mail full of apparently broken links
@@ -57,7 +79,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { debug, step, warn } from "../log.ts";
 import * as store from "./store.ts";
 
-/** The one prefix this server serves. */
+/** The prefix a link carries when nothing has stripped it. */
 const PREFIX = "/t/";
 
 /** Mirrors `HooksHealth`: what /api/health can say about this listener. */
@@ -90,29 +112,40 @@ function notFound(res: ServerResponse): void {
     res.end("Not found\n");
 }
 
+/**
+ * The id in `/t/<id>`, or in `/<id>` when a proxy has stripped the prefix.
+ *
+ * One segment either way. The slash check runs *before* `decodeURIComponent`,
+ * so an encoded slash cannot smuggle a second segment past it — the ordering is
+ * the whole of why a path cannot be walked here, and it is the reason this is
+ * one function rather than two branches that could drift apart.
+ */
+function idFrom(pathname: string): string | undefined {
+    const raw = pathname.startsWith(PREFIX)
+        ? pathname.slice(PREFIX.length)
+        : pathname.slice(1);
+    if (raw === "" || raw.includes("/")) return undefined;
+    try {
+        return decodeURIComponent(raw);
+    } catch {
+        return undefined;
+    }
+}
+
 export function handle() {
     return (req: IncomingMessage, res: ServerResponse): void => {
         const started = Date.now();
         const url = new URL(req.url ?? "/", "http://localhost");
         const method = req.method ?? "GET";
 
-        if ((method !== "GET" && method !== "HEAD") || !url.pathname.startsWith(PREFIX)) {
+        if (method !== "GET" && method !== "HEAD") {
             debug("tracker-not-found", { method, path: url.pathname });
             return notFound(res);
         }
 
-        // One segment. A slash after the prefix is not an id, and decoding
-        // happens after that check so an encoded slash cannot smuggle one in.
-        const raw = url.pathname.slice(PREFIX.length);
-        if (raw === "" || raw.includes("/")) {
+        const id = idFrom(url.pathname);
+        if (id === undefined) {
             debug("tracker-not-found", { method, path: url.pathname });
-            return notFound(res);
-        }
-
-        let id: string;
-        try {
-            id = decodeURIComponent(raw);
-        } catch {
             return notFound(res);
         }
 
