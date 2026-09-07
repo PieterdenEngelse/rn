@@ -14,7 +14,7 @@
 
 use crate::api::{fetch_links, fetch_send, LinksResponse, SendDetail, TrackedLink};
 use crate::components::param::*;
-use crate::components::{Board, InfoButton, Metric, Panel};
+use crate::components::{Board, GlossaryEntry, InfoButton, Metric, Panel};
 use dioxus::prelude::*;
 
 #[component]
@@ -52,7 +52,9 @@ pub fn MonitorLinks() -> Element {
                 h1 { class: "text-xl text-white", "Links" }
                 InfoButton {
                     title: "Tracked links".to_string(),
-                    what: "Every link rn rewrote into an outgoing message, and every arrival at one. A tracked link is /t/<id> on this machine's tracker port; the id is opaque and the destination lives in the store, so following one is a lookup and a redirect.".to_string(),
+                    lead: Some("Following one is a lookup, never an instruction — [[open redirect]] is what that refuses, and [[302]] is why a link can be clicked twice.".to_string()),
+                    glossary: vec![open_redirect_entry(), found_entry()],
+                    what: "Every link rn rewrote into an outgoing message, and every arrival at one. A tracked link is /t/<id> on this machine's tracker port; the id is opaque and the destination lives in the store, so following one is a lookup and a redirect.\n\nThe destination is never in the URL. Not as a query parameter, which would be an [[open redirect]] carrying your own hostname, and not signed into the link either — an HMAC needs no store but puts the target in every mail client's status bar and every scanner's log. The store is not extra work; it is also the click log.".to_string(),
                     why: "It is the only way to tell a message that was read from one that was delivered. Delivery is what the mail server reports; a click is the first evidence that a person was involved at all — which is also why the number needs reading carefully rather than trusting.".to_string(),
                     if_wrong: "If the base URL still points at 127.0.0.1 the links work only on this machine, and every recipient sees a browser error. If the tracker is not listening, links already in mailboxes resolve to nothing — which is a recipient's problem, not just an operator's.".to_string(),
                 }
@@ -94,7 +96,7 @@ fn Health(data: LinksResponse) -> Element {
                 Metric {
                     label: "Listening".to_string(),
                     value: format!("{listening} (port {})", data.port),
-                    what: "Whether the tracker's socket is actually bound. It is a separate listener from the API and from the webhook port, started by the same process.".to_string(),
+                    what: "Whether the tracker's socket is actually bound. It is a separate listener from the API and from the webhook port, started by the same process.\n\nThe separateness is the design rather than an accident of wiring. The webhook listener refuses everything that is not a POST to /api/hooks/…, and docs/network.md and docs/sec.md both rest on that refusal being structural — the route is absent rather than forbidden, which is what makes it an argument instead of a setting. A tracking redirect is the first thing rn has ever served to an unauthenticated stranger on purpose, and hanging it off the webhook port would have spent that argument for every other route there. On a port of its own, each listener is still one shape by construction.".to_string(),
                     why: "A link lives in somebody's mailbox for as long as they keep the mail. If this says no, every one of those links resolves to nothing — so unlike a poller being down, the failure is visible to other people rather than only here.".to_string(),
                     if_wrong: "A bind failure is deliberately not fatal: rn keeps running and every other trigger still works. Check whether something else holds the port, then restart the backend.".to_string(),
                 }
@@ -198,8 +200,9 @@ fn SendLinks(detail: SendDetail) -> Element {
                 }
                 InfoButton {
                     title: "Why every arrival is shown".to_string(),
+                    glossary: vec![found_entry()],
                     what: "One row per request that reached a tracked link, with how long after the send it arrived and which HTTP method it used. Nothing is filtered out.".to_string(),
-                    why: "Scanners click before people do — Google's own link checking on delivery, and any gateway on the recipient's side — so a raw count is inflated and sometimes fabricated entirely. The two columns beside each arrival are what let you judge it: an arrival a second after the send is a machine whatever its user-agent claims, and no browser navigates with HEAD, so a HEAD arrival is a link checker and never a person.".to_string(),
+                    why: "A count can exceed one at all only because the redirect is a [[302]] — a permanent one would be answered from the browser's cache and never reach rn, so the total would stop at one with nothing to say why.\n\nScanners click before people do — Google's own link checking on delivery, and any gateway on the recipient's side — so a raw count is inflated and sometimes fabricated entirely. The two columns beside each arrival are what let you judge it: an arrival a second after the send is a machine whatever its user-agent claims, and no browser navigates with HEAD, so a HEAD arrival is a link checker and never a person.".to_string(),
                     if_wrong: "Filtering these out would hide the evidence rather than remove the problem, and would still leave one error it cannot see: under identified links, a forwarded mail attributes the click to the person it was minted for. That one is indistinguishable from inside and no column here can show it.".to_string(),
                 }
             }
@@ -267,5 +270,70 @@ fn after(ms: f64) -> String {
         format!("{:.0}h", secs / 3600.0)
     } else {
         format!("{:.0}d", secs / 86_400.0)
+    }
+}
+
+/// What putting the destination in the URL would have cost, linked from the
+/// panels that say rn does not do it.
+///
+/// A glossary entry rather than a paragraph in the header panel: it is a
+/// property of the whole design — the reason for the store, the reason
+/// `Location` reflects nothing — and repeating it in each panel that depends on
+/// it would be three copies to keep true.
+fn open_redirect_entry() -> GlossaryEntry {
+    GlossaryEntry {
+        term: "open redirect".to_string(),
+        body: concat!(
+            "A URL on your own host that takes its destination from the request and ",
+            "sends the visitor wherever it says. `https://your-host/t?to=https://example.com` ",
+            "is one.\n\n",
+
+            "What makes it worth refusing is whose name is on it. The link is served by ",
+            "this machine, over HTTPS, with your hostname in it — so whatever it can be ",
+            "talked into redirecting to inherits all of that. Anyone who works out the ",
+            "shape can mint their own links, send them to other people, and the part a ",
+            "recipient reads before clicking is yours.\n\n",
+
+            "rn refuses it structurally rather than by validating anything. The ",
+            "destination is not in the URL at all: `/t/<id>` is an opaque id, the URL ",
+            "comes out of the store, and the `Location` header is that stored URL and ",
+            "nothing else — no part of the request is reflected into it. There is no ",
+            "allowlist to get wrong and no parser to slip past, because there is nothing ",
+            "in the request to parse.\n\n",
+
+            "The alternative that looks cheaper is signing the destination into the link ",
+            "with an HMAC, which needs no store. It is still wrong here: the target is ",
+            "then visible in the link itself, in every mail client's status bar and every ",
+            "scanner's log. And the store is not an extra thing to maintain — it is also ",
+            "the click log this page reads.",
+        )
+        .to_string(),
+    }
+}
+
+/// Why the redirect is temporary, linked from the panels that count arrivals.
+///
+/// It reads like a detail of the HTTP reply and is really a property of the
+/// number on this page: the wrong status code here does not fail, it silently
+/// undercounts.
+fn found_entry() -> GlossaryEntry {
+    GlossaryEntry {
+        term: "302".to_string(),
+        body: concat!(
+            "The status a tracked link answers with — \"found\", a *temporary* redirect. ",
+            "The permanent one is 301, and which of the two is used decides whether a ",
+            "click count can ever go above one.\n\n",
+
+            "A 301 is cached, by the browser and by anything sitting in front of it. The ",
+            "second click on the same link would be answered out of that cache and would ",
+            "never reach rn, so the total would stop at one — not as an error, just as a ",
+            "number that quietly stopped moving. `Cache-Control: no-store` says the same ",
+            "thing again to anything in between.\n\n",
+
+            "One other header rides along, for a different reason: `Referrer-Policy: ",
+            "no-referrer`. The destination is somebody else's site, and there is no ",
+            "reason to hand it which link on which send sent the visitor.",
+        )
+        .to_string(),
     }
 }
