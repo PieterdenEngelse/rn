@@ -39,6 +39,7 @@
  * is an SSRF primitive that no `netAllowlist` can bound.
  */
 
+import { readFileSync } from "node:fs";
 import { config } from "../config.ts";
 import {
     extractLinks,
@@ -49,7 +50,6 @@ import {
 } from "../mail/extract.ts";
 import { netPermissionHint } from "./net-permission.ts";
 import { PermanentFailure } from "./permanent.ts";
-import { load as loadSettings } from "../settings.ts";
 import { seenCapacity } from "./state.ts";
 import type { Job, JobContext, JobResult } from "./types.ts";
 
@@ -92,6 +92,29 @@ export function textPartNumbers(node: {
 
     walk(node);
     return out;
+}
+
+/**
+ * What the settings file says the sender filter should be.
+ *
+ * Read with `fs` rather than through `settings.ts`, which reaches
+ * `jobs/scheduler.ts` and `jobs/run.ts` and so cannot be imported from a job
+ * without a cycle — `readMail` ended up referenced before initialisation, which
+ * a test caught rather than a user. Two lines of JSON is the cheaper answer
+ * than untangling the module graph for one string.
+ *
+ * Absent, unreadable or malformed all mean the same thing here: nothing saved,
+ * so nothing to disagree with what is in force.
+ */
+function savedAllowedSenders(): string {
+    try {
+        const parsed: unknown = JSON.parse(readFileSync(config.settingsPath, "utf8"));
+        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return "";
+        const v = (parsed as Record<string, unknown>)["mailAllowedSenders"];
+        return typeof v === "string" ? v.trim() : "";
+    } catch {
+        return "";
+    }
 }
 
 /** Read a stream to a string, stopping at the cap. */
@@ -314,7 +337,7 @@ export const readMail: Job = {
         // question is not "is something pending" but "is *this* setting in
         // force", and only these two values answer that.
         if (typed === "") {
-            const saved = String(loadSettings(config.settingsPath).mailAllowedSenders ?? "").trim();
+            const saved = savedAllowedSenders();
             if (saved !== "" && saved !== config.mailAllowedSenders.trim()) {
                 throw new PermanentFailure(
                     "read-mail: \"Accept mail only from\" has been saved but not applied — " +
