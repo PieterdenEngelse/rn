@@ -49,6 +49,7 @@ import {
 } from "../mail/extract.ts";
 import { netPermissionHint } from "./net-permission.ts";
 import { PermanentFailure } from "./permanent.ts";
+import { load as loadSettings } from "../settings.ts";
 import { seenCapacity } from "./state.ts";
 import type { Job, JobContext, JobResult } from "./types.ts";
 
@@ -299,6 +300,30 @@ export const readMail: Job = {
         // scheduled run — which carries no inputs at all — still filtered.
         const typed = String(ctx.input.from ?? "").trim();
         const senders = parseSenders(typed === "" ? config.mailAllowedSenders : typed);
+
+        // Fail closed on a filter that has been saved but not yet applied.
+        //
+        // `mailAllowedSenders` takes effect at restart, so between saving it
+        // and relaunching, the page says mail is restricted and this process
+        // still has no filter at all. Running then would read the whole mailbox
+        // — every sender, downloaded and written to a run record — while the
+        // operator believes the opposite. That is the one failure this filter
+        // exists to prevent, arrived at by following the UI.
+        //
+        // Checked against the saved file rather than a restart flag because the
+        // question is not "is something pending" but "is *this* setting in
+        // force", and only these two values answer that.
+        if (typed === "") {
+            const saved = String(loadSettings(config.settingsPath).mailAllowedSenders ?? "").trim();
+            if (saved !== "" && saved !== config.mailAllowedSenders.trim()) {
+                throw new PermanentFailure(
+                    "read-mail: \"Accept mail only from\" has been saved but not applied — " +
+                        "this process is running without it, so a run now would read every " +
+                        "sender. Restart rn (be/r) and run again.",
+                    "the setting takes effect at restart, and no retry restarts anything",
+                );
+            }
+        }
 
         if (config.mailUser === "") {
             throw new PermanentFailure(
