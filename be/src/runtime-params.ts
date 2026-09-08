@@ -812,16 +812,37 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
         category: "mail",
         label: "Mailbox to watch",
         info: {
-            what: "Which mailbox the held-open connection watches. One only.",
+            what:
+                "Which mailbox the held-open connection watches. INBOX is the answer almost " +
+                "every time — it is where mail lands before anything moves it, so it is what " +
+                "\"has something arrived\" actually means.\n\n" +
+                "One mailbox only. IMAP idles on a *selected* mailbox, so watching two would " +
+                "mean holding two connections; that is why this is a single name rather than " +
+                "a list.\n\n" +
+                "A Gmail label is a mailbox too, spelled exactly as Gmail spells it. The " +
+                "separator is / — a nested label is \"Projects/rn\" — and case matters on " +
+                "most servers, so a name that reads fine in the web interface may need a " +
+                "different spelling here.",
             why:
-                "IMAP idles on a selected mailbox, so watching two means two connections. " +
-                "INBOX is where mail lands before any filter moves it, which is what you " +
-                "want if the question is \"has something arrived\".",
+                "THE ONE CASE WHERE INBOX IS WRONG, AND IT IS WORTH CHECKING.\n\n" +
+                "If a Gmail filter on the sender has \"Skip the Inbox (Archive it)\" ticked, " +
+                "the message never touches INBOX at all. A watcher there sits connected and " +
+                "healthy and never fires — and the read-mail schedule does not save you, " +
+                "because it searches the same mailbox. Everything looks fine and nothing " +
+                "arrives. Put the label\'s own name here if that is your setup.\n\n" +
+                "Watching a label that a filter moves mail into has a smaller cost worth " +
+                "knowing: you are then waiting on Gmail\'s filters as well as on delivery. " +
+                "Usually seconds. Occasionally not.",
             ifWrong:
-                "Watch a Gmail label that a filter moves mail into and you are waiting on " +
-                "Gmail's filters as well as on delivery — usually seconds, occasionally not. " +
-                "Watch a mailbox nothing is delivered to and the connection stays up, healthy " +
-                "and silent, which looks identical to no mail arriving.",
+                "The failure here is the quiet one. A mailbox nothing is delivered to keeps " +
+                "the connection up and reports healthy, which looks exactly like no mail " +
+                "arriving — there is no error to see, because nothing has gone wrong.\n\n" +
+                "So if this is on and never fires, suspect the mailbox name before suspecting " +
+                "the connection. The check is the read-mail job itself: run it by hand against " +
+                "the same mailbox, and if it finds the message the watcher should have caught " +
+                "it, while if it finds nothing either then the mail is somewhere else.\n\n" +
+                "A name that does not exist is the honest failure — the connection fails to " +
+                "open, says so, and retries with a backoff.",
         },
     },
     {
