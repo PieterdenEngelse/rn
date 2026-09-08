@@ -123,7 +123,13 @@ export const desktopNotify: Job = {
             id: "urgency",
             label: "Urgency",
             type: "text",
-            default: "normal",
+            // critical rather than normal, and the reason is mechanical rather
+            // than a preference: a handler run passes no inputs at all, so
+            // whatever is declared here is what an onChange notification
+            // actually uses. On xfce4-notifyd, critical is also the lever that
+            // changes how a notification is *drawn* — it is the urgent styling,
+            // and it does not auto-dismiss.
+            default: "critical",
             info: {
                 what:
                     "How insistent the notification is: low, normal, or critical. Passed " +
@@ -137,6 +143,34 @@ export const desktopNotify: Job = {
                 ifWrong:
                     "An unrecognised value is refused before anything is sent, with the three " +
                     "valid ones named. Nothing is lost — fix it and run again.",
+            },
+        },
+        {
+            id: "color",
+            label: "Colour",
+            type: "text",
+            default: "#b00020",
+            info: {
+                what:
+                    "A hex colour passed to the notification daemon as the fgcolor, bgcolor " +
+                    "and frcolor hints. Empty sends no hints at all.",
+                why:
+                    "Some daemons colour a notification from these — dunst and mako do. " +
+                    "Others theme entirely from their own stylesheet and ignore them, which " +
+                    "is the case for xfce4-notifyd, the one running here.\n\n" +
+                    "So on XFCE the lever that actually changes how a notification looks is " +
+                    "the urgency, not this: critical is drawn as urgent and does not " +
+                    "auto-dismiss. The hints are sent anyway because they cost one argument " +
+                    "and they are what makes the same job look right on a desktop that does " +
+                    "honour them.",
+                ifWrong:
+                    "An unrecognised value is passed through rather than validated — the " +
+                    "daemon is the authority on what it accepts, and refusing a colour rn " +
+                    "merely failed to recognise would be rn having an opinion it cannot " +
+                    "support. A hint a daemon does not understand is ignored, not an error.\n\n" +
+                    "If notifications are not coloured on this machine, that is xfce4-notifyd " +
+                    "theming them itself. Its appearance is set in its own settings dialog, " +
+                    "not here.",
             },
         },
     ],
@@ -178,6 +212,8 @@ export const desktopNotify: Job = {
             );
         }
 
+        const color = String(ctx.input.color ?? "").trim();
+
         const bus = process.env["DBUS_SESSION_BUS_ADDRESS"];
         if (bus === undefined || bus === "") {
             return {
@@ -203,7 +239,7 @@ export const desktopNotify: Job = {
         const { title, body } = buildNotification(ctx.cause);
 
         if (ctx.dryRun) {
-            ctx.step("would-notify", { title, chars: body.length, urgency });
+            ctx.step("would-notify", { title, chars: body.length, urgency, color: color || "none" });
             return {
                 summary: { delivered: false, chars: body.length, urgency },
                 changed: false,
@@ -216,15 +252,29 @@ export const desktopNotify: Job = {
         await new Promise<void>((resolve, reject) => {
             // execFile, not exec: no shell, and the arguments reach the program
             // exactly as written. The body is mail somebody else composed.
+            // Hints before the `--`, which separates options from the two
+            // positional arguments. Colour is best-effort: a daemon that does
+            // not understand a hint ignores it rather than failing, which is
+            // why these are sent unconditionally rather than gated on knowing
+            // what is listening.
+            const hints = color === ""
+                ? []
+                : [
+                      "--hint", `string:fgcolor:${color}`,
+                      "--hint", `string:frcolor:${color}`,
+                  ];
             execFile(
                 binary,
-                ["--app-name=rn", `--urgency=${urgency}`, "--", title, body],
+                ["--app-name=rn", `--urgency=${urgency}`, ...hints, "--", title, body],
                 { timeout: TIMEOUT_MS },
                 (err) => (err === null ? resolve() : reject(err)),
             );
         });
 
-        ctx.step("notified", { title, chars: body.length, urgency });
-        return { summary: { delivered: true, chars: body.length, urgency }, changed: true };
+        ctx.step("notified", { title, chars: body.length, urgency, color: color || "none" });
+        return {
+            summary: { delivered: true, chars: body.length, urgency, color: color || "none" },
+            changed: true,
+        };
     },
 };
