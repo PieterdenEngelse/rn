@@ -520,7 +520,8 @@ fn ParamBoards(
                         "mechanism carries them, because that distinction matters to the ",
                         "runtime and not to you. Memory is the heap ceiling. Concurrency is how ",
                         "many operations run at once. Time is the zone schedules are read in. ",
-                        "Network covers certificates. Diagnostics turn extra reporting on. ",
+                        "Network covers certificates, and the mail account rn sends and reads with. ",
+                        "Diagnostics turn extra reporting on. ",
                         "Output is cosmetic.\n\n",
 
                         "Behind the scenes some are environment variables and some are flags ",
