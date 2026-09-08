@@ -261,6 +261,16 @@ export const config = {
     mailAllowedSenders: process.env.RN_MAIL_ALLOWED_SENDERS ?? "",
 
     /**
+     * Recipients the read-mail job will accept mail to, install-wide.
+     *
+     * The counterpart of `mailAllowedSenders`, and what makes watching a sent
+     * mailbox useful: there the sender is always you, so the recipient is the
+     * only thing that distinguishes one message from another. Both apply when
+     * both are set.
+     */
+    mailAllowedRecipients: process.env.RN_MAIL_ALLOWED_RECIPIENTS ?? "",
+
+    /**
      * Hold an IMAP connection open and read mail the moment it arrives, rather
      * than waiting for the read-mail schedule.
      *

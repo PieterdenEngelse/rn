@@ -15,6 +15,7 @@ import {
     messageKey,
     fallbackKey,
     senderMatches,
+    recipientMatches,
     parseSenders,
 } from "../src/mail/extract.ts";
 import { textPartNumbers } from "../src/jobs/read-mail.ts";
@@ -182,4 +183,21 @@ test("senders are split on lines, commas and semicolons", () => {
         "@z.com",
     ]);
     assert.deepEqual(parseSenders("   "), []);
+});
+
+test("a recipient filter matches To or Cc, and nothing else", () => {
+    const to = ["her@example.com", "someone@other.test"];
+    assert.equal(recipientMatches(to, ["her@example.com"]), true);
+    assert.equal(recipientMatches(to, ["other.test"]), true);
+    assert.equal(recipientMatches(to, ["nobody@example.com"]), false);
+    // Empty patterns is "no filtering", the same convention as senders.
+    assert.equal(recipientMatches(to, []), true);
+    // A message with no parsed recipients cannot satisfy a filter that exists.
+    assert.equal(recipientMatches([], ["her@example.com"]), false);
+});
+
+test("a recipient display name cannot impersonate an address", () => {
+    // Same hazard as the sender side: IMAP's SEARCH TO is a substring match
+    // over the header, display names included.
+    assert.equal(recipientMatches(["evil@attacker.example"], ["example.com"]), false);
 });

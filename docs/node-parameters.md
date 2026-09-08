@@ -27,6 +27,7 @@ scales with installed RAM, so expect a different number elsewhere.
 | **Time zone** | `TZ` | unset (system default) | — | on restart |
 | **Extra CA certificates** | `NODE_EXTRA_CA_CERTS` | unset (system default) | — | on restart |
 | **Mail account** | `RN_MAIL_USER` | unset (system default) | — | on restart |
+| **Only to these recipients** | `RN_MAIL_ALLOWED_RECIPIENTS` | unset (system default) | — | on restart |
 | **Read mail the moment it arrives** | `RN_MAIL_WATCH` | off | — | on restart |
 | **Mailboxes to watch** | `RN_MAIL_WATCH_MAILBOX` | INBOX | — | on restart |
 | **Accept mail only from** | `RN_MAIL_ALLOWED_SENDERS` | unset (system default) | — | on restart |
@@ -423,6 +424,24 @@ docs/link-tracking.md §1 takes the app-password path precisely so a single opaq
 An address that does not match the app password's account is the same 535: the credential is minted for one account and means nothing for another.
 
 Default: unset (system default) · Takes effect: on restart · Settings key: `mailUser`
+
+### Only to these recipients — `RN_MAIL_ALLOWED_RECIPIENTS`
+
+**What it does.** Addresses or domains matched against a message's To and Cc, one per line or comma-separated. Same spellings as the sender filter: an exact address, or a bare domain for anybody at it. Empty means every recipient.
+
+THERE ARE TWO OF THESE, AND THIS IS THE STANDING ONE. It applies to every run including the automatic ones; the job's own "Only to these recipients" field overrides it for one run started by hand.
+
+**Why you would change it.** It is what makes watching a sent mailbox worth doing. In [Gmail]/Sent Mail the sender is always you, so a sender filter there matches everything or nothing and the recipient is the only thing that distinguishes one message from another. Watching INBOX and Sent Mail together, with the sender filter naming yourself and this naming the other person, is how "tell me when I mail her" is expressed.
+
+Cc counts as well as To — a message copied to somebody is a message to them as far as any reader is concerned. Bcc is deliberately not consulted: a received message carries no Bcc in its envelope at all, so using it would work on sent mail and quietly not on anything else, which is the worst kind of half-working.
+
+**If it's wrong.** Both filters must match when both are set. That is what makes "from me to her" expressible, and equally what makes it easy to write a pair that matches nothing — a sender filter naming her and a recipient filter naming her cannot both hold for the same message.
+
+There is no OR between them. "Anything either of us sent the other" is two rules and this is one, so it needs either two mailboxes with the filters set for the direction each carries, or a filter naming only the correspondent and left off the other field.
+
+The server's TO search matches display names too, so the parsed addresses are rechecked and a mismatch is reported rather than dropped.
+
+Default: unset (system default) · Takes effect: on restart · Settings key: `mailAllowedRecipients`
 
 ### Read mail the moment it arrives — `RN_MAIL_WATCH`
 

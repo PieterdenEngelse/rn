@@ -169,3 +169,30 @@ export function parseSenders(raw: string): string[] {
     }
     return out;
 }
+
+/**
+ * Does any recipient of this message match one of the operator's patterns?
+ *
+ * The counterpart of [`senderMatches`], and the one that makes watching
+ * `[Gmail]/Sent Mail` useful: in a sent mailbox the sender is always you, so
+ * "who was this to" is the only question that distinguishes one message from
+ * another.
+ *
+ * `To` and `Cc` together, deliberately. A message copied to somebody is a
+ * message to them as far as anyone reading it is concerned, and a filter that
+ * silently ignored Cc would miss exactly the threads with more than two people
+ * in them. `Bcc` is not consulted: it is absent from the envelope of a received
+ * message by definition, so including it would work on sent mail and quietly
+ * not on anything else.
+ *
+ * Matched against parsed addresses for the same reason `senderMatches` is —
+ * IMAP's `SEARCH TO` is a substring match over the header, display name
+ * included.
+ */
+export function recipientMatches(
+    addresses: readonly string[],
+    patterns: readonly string[],
+): boolean {
+    if (patterns.length === 0) return true;
+    return addresses.some((a) => senderMatches(a, patterns));
+}

@@ -46,6 +46,7 @@ import {
     fallbackKey,
     messageKey,
     parseSenders,
+    recipientMatches,
     senderMatches,
 } from "../mail/extract.ts";
 import { netPermissionHint } from "./net-permission.ts";
@@ -106,15 +107,38 @@ export function textPartNumbers(node: {
  * Absent, unreadable or malformed all mean the same thing here: nothing saved,
  * so nothing to disagree with what is in force.
  */
-function savedAllowedSenders(): string {
+function savedSetting(key: string): string {
     try {
         const parsed: unknown = JSON.parse(readFileSync(config.settingsPath, "utf8"));
         if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return "";
-        const v = (parsed as Record<string, unknown>)["mailAllowedSenders"];
+        const v = (parsed as Record<string, unknown>)[key];
         return typeof v === "string" ? v.trim() : "";
     } catch {
         return "";
     }
+}
+
+/**
+ * Refuse when a filter has been saved but the process is running without it.
+ *
+ * Both filters need this and for the same reason, so it is one function: the
+ * gap between saving a restart-scoped setting and relaunching is a window in
+ * which the page says mail is restricted and this process reads everything.
+ * Fail closed rather than read wide.
+ */
+function unappliedFilterGuard(
+    key: string,
+    inForce: string,
+    label: string,
+    what: string,
+): void {
+    const saved = savedSetting(key);
+    if (saved === "" || saved === inForce.trim()) return;
+    throw new PermanentFailure(
+        `read-mail: ${label} has been saved but not applied — this process is running ` +
+            `without it, so a run now would read every ${what}. Restart rn (be/r) and run again.`,
+        "the setting takes effect at restart, and no retry restarts anything",
+    );
 }
 
 /** Read a stream to a string, stopping at the cap. */
@@ -264,6 +288,39 @@ export const readMail: Job = {
             },
         },
         {
+            id: "to",
+            label: "Only to these recipients",
+            type: "text",
+            default: "",
+            info: {
+                what:
+                    "Addresses or domains, matched against a message's To and Cc. Same " +
+                    "spellings as the sender field: an exact address, or a bare domain for " +
+                    "anybody at it.\n\n" +
+                    "THERE ARE TWO OF THESE, AND THIS IS THE ONE-OFF. The standing answer is " +
+                    "\"Only to these recipients\" on Config → Runtime; this overrides it for " +
+                    "the single run you start with Run now, and reaches no scheduled run.",
+                why:
+                    "It is what makes watching a sent mailbox useful. In [Gmail]/Sent Mail " +
+                    "the sender is always you, so the recipient is the only thing that tells " +
+                    "one message from another — a sender filter there matches everything or " +
+                    "nothing.\n\n" +
+                    "Cc counts as well as To. A message copied to somebody is a message to " +
+                    "them as far as any reader is concerned, and ignoring Cc would miss " +
+                    "exactly the threads with more than two people in them. Bcc is not " +
+                    "consulted: a received message has no Bcc in its envelope at all, so " +
+                    "using it would work on sent mail and quietly not on anything else.",
+                ifWrong:
+                    "Set alongside a sender filter, both must match. That is how \"from me to " +
+                    "her\" is expressed, and also why setting one without thinking about the " +
+                    "other can produce a filter that matches nothing at all.\n\n" +
+                    "As with senders, the server's own TO search is a substring match over " +
+                    "the header including display names, so the parsed addresses are checked " +
+                    "again and a message that passes the server and fails that check is " +
+                    "reported as recipient-mismatch rather than dropped.",
+            },
+        },
+        {
             id: "unreadOnly",
             label: "Unread only",
             type: "bool",
@@ -323,6 +380,10 @@ export const readMail: Job = {
         // scheduled run — which carries no inputs at all — still filtered.
         const typed = String(ctx.input.from ?? "").trim();
         const senders = parseSenders(typed === "" ? config.mailAllowedSenders : typed);
+        const typedTo = String(ctx.input.to ?? "").trim();
+        const recipients = parseSenders(
+            typedTo === "" ? config.mailAllowedRecipients : typedTo,
+        );
 
         // Fail closed on a filter that has been saved but not yet applied.
         //
@@ -337,15 +398,20 @@ export const readMail: Job = {
         // question is not "is something pending" but "is *this* setting in
         // force", and only these two values answer that.
         if (typed === "") {
-            const saved = savedAllowedSenders();
-            if (saved !== "" && saved !== config.mailAllowedSenders.trim()) {
-                throw new PermanentFailure(
-                    "read-mail: \"Accept mail only from\" has been saved but not applied — " +
-                        "this process is running without it, so a run now would read every " +
-                        "sender. Restart rn (be/r) and run again.",
-                    "the setting takes effect at restart, and no retry restarts anything",
-                );
-            }
+            unappliedFilterGuard(
+                "mailAllowedSenders",
+                config.mailAllowedSenders,
+                '"Accept mail only from"',
+                "sender",
+            );
+        }
+        if (typedTo === "") {
+            unappliedFilterGuard(
+                "mailAllowedRecipients",
+                config.mailAllowedRecipients,
+                '"Only to these recipients"',
+                "recipient",
+            );
         }
 
         if (config.mailUser === "") {
@@ -413,7 +479,7 @@ export const readMail: Job = {
                 // Narrowed on the server, so mail from anyone else is never
                 // fetched. IMAP has no "from is one of" — the OR is binary and
                 // nests — so a list becomes a right-leaning chain of them.
-                type Criteria = { from?: string; or?: Criteria[] };
+                type Criteria = { from?: string; to?: string; or?: Criteria[] };
                 const fromCriteria: Criteria | undefined =
                     senders.length === 0
                         ? undefined
@@ -421,10 +487,19 @@ export const readMail: Job = {
                               .map((f): Criteria => ({ from: f }))
                               .reduce((acc, one): Criteria => ({ or: [acc, one] }));
 
+                const toCriteria: Criteria | undefined =
+                    recipients.length === 0
+                        ? undefined
+                        : recipients
+                              .map((t): Criteria => ({ to: t }))
+                              .reduce((acc, one): Criteria => ({ or: [acc, one] }));
+
+                const narrowed = fromCriteria !== undefined || toCriteria !== undefined;
                 const criteria = {
                     ...(unreadOnly ? { seen: false } : {}),
                     ...(fromCriteria ?? {}),
-                    ...(unreadOnly || fromCriteria !== undefined ? {} : { all: true }),
+                    ...(toCriteria ?? {}),
+                    ...(unreadOnly || narrowed ? {} : { all: true }),
                 };
                 const uids = await client.search(criteria, { uid: true });
                 if (uids === false) {
@@ -439,6 +514,7 @@ export const readMail: Job = {
                     examining: recent.length,
                     unreadOnly,
                     ...(senders.length === 0 ? {} : { from: senders.join(", ") }),
+                    ...(recipients.length === 0 ? {} : { to: recipients.join(", ") }),
                 });
 
                 // Drained into an array before anything is downloaded, and
@@ -489,6 +565,22 @@ export const readMail: Job = {
                             from: sender === "" ? "(no address)" : sender,
                             subject: String(envelope?.subject ?? "").slice(0, 120),
                             effect: "matched the server search but not the address filter",
+                        });
+                        continue;
+                    }
+
+                    const to = [
+                        ...(envelope?.to ?? []),
+                        ...(envelope?.cc ?? []),
+                    ]
+                        .map((a) => a.address ?? "")
+                        .filter((a) => a !== "");
+                    if (!recipientMatches(to, recipients)) {
+                        mismatched += 1;
+                        ctx.step("recipient-mismatch", {
+                            to: to.join(", ") || "(none)",
+                            subject: String(envelope?.subject ?? "").slice(0, 120),
+                            effect: "matched the server search but not the recipient filter",
                         });
                         continue;
                     }
@@ -549,6 +641,7 @@ export const readMail: Job = {
             // shows how close this install runs to the bound.
             seenCapacity: seenCapacity(),
             ...(senders.length === 0 ? {} : { senderFilter: senders.length }),
+            ...(recipients.length === 0 ? {} : { recipientFilter: recipients.length }),
             ...(mismatched === 0 ? {} : { senderMismatch: mismatched }),
             ...(truncatedAny ? { truncated: true } : {}),
         };
