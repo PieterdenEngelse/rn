@@ -8,7 +8,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildNotification, findNotifySend } from "../src/jobs/desktop-notify.ts";
+import { buildNotification, escapeMarkup, findNotifySend } from "../src/jobs/desktop-notify.ts";
 import type { JobRun } from "../src/generated/wire.ts";
 
 function run(over: Partial<JobRun> = {}): JobRun {
@@ -69,4 +69,13 @@ test("notify-send is looked for at absolute paths only", () => {
     // spawning by name would undo that one level up.
     const found = findNotifySend();
     assert.ok(found === undefined || found.startsWith("/"), `got ${found}`);
+});
+
+test("markup escaping keeps somebody else's subject line out of the markup", () => {
+    // The body is mail a stranger wrote. Unescaped, a subject containing < or &
+    // either breaks the span or injects tags into it.
+    assert.equal(
+        escapeMarkup('Re: <b>urgent</b> & "important"'),
+        'Re: &lt;b&gt;urgent&lt;/b&gt; &amp; "important"',
+    );
 });

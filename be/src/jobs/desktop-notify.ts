@@ -64,6 +64,19 @@ const TIMEOUT_MS = 10_000;
  */
 const MAX_BODY = 800;
 
+/**
+ * Escape text that is about to sit inside Pango markup.
+ *
+ * Not optional. The body is built from mail somebody else wrote, and a subject
+ * line containing `<` or `&` would either break the markup or inject tags into
+ * it. Pango is not a shell and this is not code execution — the worst case is a
+ * mangled or attacker-styled notification — but "somebody else's text in a
+ * markup context, unescaped" is a habit worth not having.
+ */
+export function escapeMarkup(text: string): string {
+    return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 /** The first `notify-send` that actually exists, or undefined. */
 export function findNotifySend(): string | undefined {
     return CANDIDATES.find((p) => existsSync(p));
@@ -123,13 +136,12 @@ export const desktopNotify: Job = {
             id: "urgency",
             label: "Urgency",
             type: "text",
-            // critical rather than normal, and the reason is mechanical rather
-            // than a preference: a handler run passes no inputs at all, so
-            // whatever is declared here is what an onChange notification
-            // actually uses. On xfce4-notifyd, critical is also the lever that
-            // changes how a notification is *drawn* — it is the urgent styling,
-            // and it does not auto-dismiss.
-            default: "critical",
+            // Back to normal now that the colour comes from markup rather
+            // than from urgency. critical was only ever chosen because it was
+            // the one lever that changed how xfce4-notifyd drew a
+            // notification; it also stops the thing auto-dismissing, which is
+            // a separate decision and the wrong default for routine mail.
+            default: "normal",
             info: {
                 what:
                     "How insistent the notification is: low, normal, or critical. Passed " +
@@ -146,31 +158,62 @@ export const desktopNotify: Job = {
             },
         },
         {
+            id: "expireSeconds",
+            label: "Dismiss after",
+            type: "number",
+            default: 0,
+            info: {
+                what:
+                    "Seconds before the notification disappears on its own. 0 leaves it to " +
+                    "the daemon's own default, which on xfce4-notifyd is a few seconds.\n\n" +
+                    "Either way it can always be dismissed by hand: click the notification, " +
+                    "or the × that appears when the pointer is over it.",
+                why:
+                    "A notification you have to dismiss is a small tax, and one that vanishes " +
+                    "before you look up is no notification at all. Which of those is worse " +
+                    "depends on what it is telling you, which is why this is a setting rather " +
+                    "than a decision made here.\n\n" +
+                    "Note that urgency overrides it: a critical notification does not expire " +
+                    "on most desktops however this is set, and that is the daemon's rule " +
+                    "rather than something rn can ask it to bend.",
+                ifWrong:
+                    "Set this long and forget it and notifications stack up on screen until " +
+                    "you clear them by hand — mail from one correspondent is fine, a chatty " +
+                    "mailing list is not.\n\n" +
+                    "If it never disappears whatever you set, check the urgency: critical is " +
+                    "the likely reason, and it is doing what it is for.",
+            },
+        },
+        {
             id: "color",
             label: "Colour",
             type: "text",
             default: "#b00020",
             info: {
                 what:
-                    "A hex colour passed to the notification daemon as the fgcolor, bgcolor " +
-                    "and frcolor hints. Empty sends no hints at all.",
+                    "A hex colour for the notification's text. Empty sends the body as plain " +
+                    "text with no markup at all.",
                 why:
-                    "Some daemons colour a notification from these — dunst and mako do. " +
-                    "Others theme entirely from their own stylesheet and ignore them, which " +
-                    "is the case for xfce4-notifyd, the one running here.\n\n" +
-                    "So on XFCE the lever that actually changes how a notification looks is " +
-                    "the urgency, not this: critical is drawn as urgent and does not " +
-                    "auto-dismiss. The hints are sent anyway because they cost one argument " +
-                    "and they are what makes the same job look right on a desktop that does " +
-                    "honour them.",
+                    "Applied as Pango markup in the body — <span foreground=…> — rather than " +
+                    "as the fgcolor and frcolor hints, which is the obvious approach and does " +
+                    "not work. Asking this machine's daemon what it supports settles it: " +
+                    "xfce4-notifyd advertises body-markup and does not advertise any colour " +
+                    "hint, so it themes the frame and background itself and colours only what " +
+                    "the body asks for.\n\n" +
+                    "The text is escaped before the markup is wrapped round it. The body is " +
+                    "built from mail somebody else wrote, and an unescaped subject line " +
+                    "containing < or & would break the markup or inject tags into it.",
                 ifWrong:
                     "An unrecognised value is passed through rather than validated — the " +
                     "daemon is the authority on what it accepts, and refusing a colour rn " +
                     "merely failed to recognise would be rn having an opinion it cannot " +
-                    "support. A hint a daemon does not understand is ignored, not an error.\n\n" +
-                    "If notifications are not coloured on this machine, that is xfce4-notifyd " +
-                    "theming them itself. Its appearance is set in its own settings dialog, " +
-                    "not here.",
+                    "support.\n\n" +
+                    "Only the text is coloured. The frame and the background belong to the " +
+                    "notification theme, which is set in XFCE's own Notifications dialog and " +
+                    "not from here — so a red *panel* is that dialog's business and a red " +
+                    "*message* is this field's.\n\n" +
+                    "A daemon that does not support body markup is meant to strip the tags. " +
+                    "Clear this field if one shows them literally instead.",
             },
         },
     ],
@@ -213,6 +256,7 @@ export const desktopNotify: Job = {
         }
 
         const color = String(ctx.input.color ?? "").trim();
+        const expireSeconds = Math.max(0, Number(ctx.input.expireSeconds ?? 0));
 
         const bus = process.env["DBUS_SESSION_BUS_ADDRESS"];
         if (bus === undefined || bus === "") {
@@ -236,7 +280,12 @@ export const desktopNotify: Job = {
             );
         }
 
-        const { title, body } = buildNotification(ctx.cause);
+        const { title, body: plain } = buildNotification(ctx.cause);
+        // Colour goes in the body as markup, because the hints this daemon
+        // would need are not among the capabilities it advertises. Escaped
+        // first: the body is somebody else's mail.
+        const body =
+            color === "" ? plain : `<span foreground="${color}">${escapeMarkup(plain)}</span>`;
 
         if (ctx.dryRun) {
             ctx.step("would-notify", { title, chars: body.length, urgency, color: color || "none" });
@@ -252,28 +301,21 @@ export const desktopNotify: Job = {
         await new Promise<void>((resolve, reject) => {
             // execFile, not exec: no shell, and the arguments reach the program
             // exactly as written. The body is mail somebody else composed.
-            // Hints before the `--`, which separates options from the two
-            // positional arguments. Colour is best-effort: a daemon that does
-            // not understand a hint ignores it rather than failing, which is
-            // why these are sent unconditionally rather than gated on knowing
-            // what is listening.
-            const hints = color === ""
-                ? []
-                : [
-                      "--hint", `string:fgcolor:${color}`,
-                      "--hint", `string:frcolor:${color}`,
-                  ];
+            // Options before the `--`, which separates them from the two
+            // positional arguments.
+            const expiry =
+                expireSeconds > 0 ? ["--expire-time", String(expireSeconds * 1000)] : [];
             execFile(
                 binary,
-                ["--app-name=rn", `--urgency=${urgency}`, ...hints, "--", title, body],
+                ["--app-name=rn", `--urgency=${urgency}`, ...expiry, "--", title, body],
                 { timeout: TIMEOUT_MS },
                 (err) => (err === null ? resolve() : reject(err)),
             );
         });
 
-        ctx.step("notified", { title, chars: body.length, urgency, color: color || "none" });
+        ctx.step("notified", { title, chars: body.length, urgency, color: color || "none", expireSeconds });
         return {
-            summary: { delivered: true, chars: body.length, urgency, color: color || "none" },
+            summary: { delivered: true, chars: body.length, urgency, color: color || "none", expireSeconds },
             changed: true,
         };
     },
