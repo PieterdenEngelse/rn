@@ -27,6 +27,8 @@ scales with installed RAM, so expect a different number elsewhere.
 | **Time zone** | `TZ` | unset (system default) | — | on restart |
 | **Extra CA certificates** | `NODE_EXTRA_CA_CERTS` | unset (system default) | — | on restart |
 | **Mail account** | `RN_MAIL_USER` | unset (system default) | — | on restart |
+| **Read mail the moment it arrives** | `RN_MAIL_WATCH` | off | — | on restart |
+| **Mailbox to watch** | `RN_MAIL_WATCH_MAILBOX` | INBOX | — | on restart |
 | **Accept mail only from** | `RN_MAIL_ALLOWED_SENDERS` | unset (system default) | — | on restart |
 | **SMTP host** | `RN_SMTP_HOST` | smtp.gmail.com | — | on restart |
 | **SMTP port** | `RN_SMTP_PORT` | 465 | 1 … 65535 | on restart |
@@ -421,6 +423,34 @@ docs/link-tracking.md §1 takes the app-password path precisely so a single opaq
 An address that does not match the app password's account is the same 535: the credential is minted for one account and means nothing for another.
 
 Default: unset (system default) · Takes effect: on restart · Settings key: `mailUser`
+
+### Read mail the moment it arrives — `RN_MAIL_WATCH`
+
+**What it does.** Holds an IMAP connection open and starts a read-mail run within a couple of seconds of a message landing, instead of waiting for the job's thirty-minute schedule.
+
+The schedule keeps running either way. It becomes the backstop that catches anything missed while the connection was down.
+
+**Why you would change it.** Polling has a floor: a thirty-minute schedule reports mail up to thirty minutes late, and dropping the interval to fix that pays for the latency with a connection a minute, forever.
+
+This is IMAP IDLE, which is not the kind of push docs/link-tracking.md §2 argued against. That was the Gmail API's push — a cloud project, a Pub/Sub topic, and a second public endpoint for Google to deliver to. IDLE is one outbound connection this machine opens and holds: nothing listens, nothing is exposed, and no third party is in the path.
+
+The connection is opened read-only, like the job's. It is held all day, so an ordinary SELECT letting the server mark mail seen would matter more here rather than less.
+
+**If it's wrong.** The failure that matters is silent: a dropped connection means mail simply stops arriving promptly, with nothing red anywhere. Wifi changing, a laptop suspending and a server recycling connections all do it, routinely. rn reconnects with a backoff and says so in the log each time, and Monitor reports whether the connection is up rather than assuming it — but the schedule is what guarantees the mail is eventually read.
+
+It needs the account and the credential at boot. Without either it does not start, says why, and leaves the schedule to do the work.
+
+Default: off · Takes effect: on restart · Settings key: `mailWatch`
+
+### Mailbox to watch — `RN_MAIL_WATCH_MAILBOX`
+
+**What it does.** Which mailbox the held-open connection watches. One only.
+
+**Why you would change it.** IMAP idles on a selected mailbox, so watching two means two connections. INBOX is where mail lands before any filter moves it, which is what you want if the question is "has something arrived".
+
+**If it's wrong.** Watch a Gmail label that a filter moves mail into and you are waiting on Gmail's filters as well as on delivery — usually seconds, occasionally not. Watch a mailbox nothing is delivered to and the connection stays up, healthy and silent, which looks identical to no mail arriving.
+
+Default: INBOX · Takes effect: on restart · Settings key: `mailWatchMailbox`
 
 ### Accept mail only from — `RN_MAIL_ALLOWED_SENDERS`
 

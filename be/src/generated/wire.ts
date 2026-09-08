@@ -1584,7 +1584,7 @@ recipients: number, };
 /**
  * How a run was started.
  */
-export type Trigger = "manual" | "schedule" | "failure" | "webhook" | "change";
+export type Trigger = "manual" | "schedule" | "failure" | "webhook" | "change" | "mail";
 
 /**
  * One figure that is not being measured, and why.

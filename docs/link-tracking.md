@@ -65,10 +65,27 @@ give you at all. See §3 for why push is worse than it sounds here anyway.
 Reading arriving mail and pulling the links out of it is an ordinary job in
 `be/src/jobs/`, and it lands on machinery that exists.
 
-**Poll; do not push.** A `schedule?` on the `Job` and either an IMAP
-`SEARCH`/`FETCH` or `history.list` from a stored `historyId`. Push means
-Pub/Sub, a GCP topic, and a second public endpoint — the whole of §3's cost
-paid again, for latency an inbox does not need.
+**Poll; do not push — where "push" means the Gmail API's.** A `schedule?` on the
+`Job` and either an IMAP `SEARCH`/`FETCH` or `history.list` from a stored
+`historyId`. `users.watch()` onto a Pub/Sub topic means a GCP project, a
+subscription and a second public endpoint for Google to deliver to — the whole
+of §3's cost paid again, for latency an inbox does not need.
+
+**IMAP IDLE is not that, and this document conflated them.** IDLE is one
+outbound connection this machine opens and holds: nothing listens, nothing is
+exposed, no third party is in the path, and it needs no project and no
+subscription. So the sentence above rejects Google's push and says nothing about
+IDLE, which `be/src/mail/watcher.ts` now uses — opt-in, read-only, reconnecting
+with a backoff, and ringing a doorbell rather than reading anything itself. The
+schedule stays as the backstop for whatever arrives while the connection is
+down.
+
+Two things it cost, both found by talking to a server rather than reasoning:
+imapflow waits fifteen seconds of inactivity before entering IDLE, which is
+right for a client that issues commands and leaves a fifteen-second blind window
+after every reconnect for one that does not; and a burst of deliveries is a
+burst of `EXISTS` events, so they are coalesced into one run rather than racing
+several reads of the same mailbox.
 
 **Dedupe on message id through `ctx.state.seen()`.** This is precisely what
 `watch-feeds.ts` was written to prove out, and its arithmetic transfers without

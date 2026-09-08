@@ -1082,6 +1082,13 @@ fn trigger_label(t: &Trigger) -> &'static str {
         // handler wired to both would otherwise leave a history where "the
         // backup failed" and "the backup found new files" look the same.
         Trigger::Change => "on change",
+        // "mail arrived" rather than "mail": the history is a column of
+        // sentences and this row has to say what happened, not name a
+        // subsystem. Distinct from `Schedule` because a run seconds after a
+        // message landed and a run on the half hour are different events, and
+        // filing both under the schedule would make the watcher's whole
+        // contribution invisible in the history.
+        Trigger::Mail => "mail arrived",
     }
 }
 

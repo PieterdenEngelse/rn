@@ -442,6 +442,36 @@
       }
     },
     {
+      "id": "mailWatch",
+      "flag": "RN_MAIL_WATCH",
+      "kind": "env",
+      "type": "bool",
+      "default": false,
+      "appliesAt": "restart",
+      "category": "mail",
+      "label": "Read mail the moment it arrives",
+      "info": {
+        "what": "Holds an IMAP connection open and starts a read-mail run within a couple of seconds of a message landing, instead of waiting for the job's thirty-minute schedule.\n\nThe schedule keeps running either way. It becomes the backstop that catches anything missed while the connection was down.",
+        "why": "Polling has a floor: a thirty-minute schedule reports mail up to thirty minutes late, and dropping the interval to fix that pays for the latency with a connection a minute, forever.\n\nThis is IMAP IDLE, which is not the kind of push docs/link-tracking.md §2 argued against. That was the Gmail API's push — a cloud project, a Pub/Sub topic, and a second public endpoint for Google to deliver to. IDLE is one outbound connection this machine opens and holds: nothing listens, nothing is exposed, and no third party is in the path.\n\nThe connection is opened read-only, like the job's. It is held all day, so an ordinary SELECT letting the server mark mail seen would matter more here rather than less.",
+        "ifWrong": "The failure that matters is silent: a dropped connection means mail simply stops arriving promptly, with nothing red anywhere. Wifi changing, a laptop suspending and a server recycling connections all do it, routinely. rn reconnects with a backoff and says so in the log each time, and Monitor reports whether the connection is up rather than assuming it — but the schedule is what guarantees the mail is eventually read.\n\nIt needs the account and the credential at boot. Without either it does not start, says why, and leaves the schedule to do the work."
+      }
+    },
+    {
+      "id": "mailWatchMailbox",
+      "flag": "RN_MAIL_WATCH_MAILBOX",
+      "kind": "env",
+      "type": "string",
+      "default": "INBOX",
+      "appliesAt": "restart",
+      "category": "mail",
+      "label": "Mailbox to watch",
+      "info": {
+        "what": "Which mailbox the held-open connection watches. One only.",
+        "why": "IMAP idles on a selected mailbox, so watching two means two connections. INBOX is where mail lands before any filter moves it, which is what you want if the question is \"has something arrived\".",
+        "ifWrong": "Watch a Gmail label that a filter moves mail into and you are waiting on Gmail's filters as well as on delivery — usually seconds, occasionally not. Watch a mailbox nothing is delivered to and the connection stays up, healthy and silent, which looks identical to no mail arriving."
+      }
+    },
+    {
       "id": "mailAllowedSenders",
       "flag": "RN_MAIL_ALLOWED_SENDERS",
       "kind": "env",

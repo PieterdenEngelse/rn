@@ -59,6 +59,7 @@ import {
 import { config, remoteBindRefusal } from "./config.ts";
 import { createHookApp, hooksHealth, startHooks } from "./hooks/server.ts";
 import { createTrackerApp, startTracker, trackerHealth } from "./tracker/server.ts";
+import { startMailWatch } from "./mail/watcher.ts";
 import * as trackerStore from "./tracker/store.ts";
 import { sendTestDelivery } from "./hooks/test-delivery.ts";
 import { describeEnv } from "./env-file.ts";
@@ -1314,6 +1315,10 @@ server.listen(config.port, config.host, () => {
             retentionDays: config.trackerRetentionDays,
         });
     });
+    // Fourth long-lived thing, and the first that is a client rather than a
+    // server: an IMAP connection held open so mail is read when it lands
+    // instead of on the half hour. Off unless the install asked for it.
+    startMailWatch();
     scheduler.start();
     step("listening", {
         url: `http://${config.host}:${config.port}`,

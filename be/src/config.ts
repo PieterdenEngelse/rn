@@ -260,6 +260,19 @@ export const config = {
      */
     mailAllowedSenders: process.env.RN_MAIL_ALLOWED_SENDERS ?? "",
 
+    /**
+     * Hold an IMAP connection open and read mail the moment it arrives, rather
+     * than waiting for the read-mail schedule.
+     *
+     * Off by default. It holds a connection all day and needs the credential at
+     * boot, so it is a thing an install opts into rather than something that
+     * starts happening after an upgrade.
+     */
+    mailWatch: process.env.RN_MAIL_WATCH === "1",
+
+    /** Which mailbox the watcher holds open. */
+    mailWatchMailbox: process.env.RN_MAIL_WATCH_MAILBOX ?? "INBOX",
+
     /** IMAP host the read-mail job connects to. */
     imapHost: process.env.RN_IMAP_HOST ?? "imap.gmail.com",
 

@@ -405,6 +405,12 @@ wire! {
         /// leave a history in which "the backup failed" and "the backup found
         /// new files" look identical.
         Change,
+        /// Mail arrived, and the IMAP watcher rang. Distinct for the reason
+        /// `Webhook` is: a run nobody started, at an hour nobody chose, is
+        /// unreadable unless the record says what woke it — and "schedule"
+        /// would be an outright lie about a run that happened seconds after a
+        /// message landed rather than on the half hour.
+        Mail,
     }
 }
 
