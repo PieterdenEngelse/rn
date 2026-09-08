@@ -764,6 +764,45 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
         },
     },
     {
+        id: "mailAllowedSenders",
+        flag: "RN_MAIL_ALLOWED_SENDERS",
+        kind: "env",
+        type: "string",
+        default: null,
+        appliesAt: "restart",
+        category: "mail",
+        label: "Accept mail only from",
+        info: {
+            what:
+                "Addresses or domains the read-mail job will accept, one per line or " +
+                "comma-separated. \"reports@example.com\" is that address exactly; " +
+                "\"example.com\" or \"@example.com\" is anybody at that domain.\n\n" +
+                "Empty means every sender. The job's own \"Only from these senders\" field " +
+                "overrides this for a single run you start by hand.",
+            why:
+                "It has to live here rather than only on the run form, because the scheduler " +
+                "supplies no inputs: an automatic run uses the job's declared defaults, so a " +
+                "filter typed on the form would be empty on every scheduled run — which is " +
+                "every run that matters. A filter that is decorative exactly where it counts " +
+                "is worse than none, because the form implies it is working.\n\n" +
+                "What it buys is not a tidier report. The filter narrows the search on the " +
+                "server, so mail from anyone else is never downloaded, never scanned and " +
+                "never written to a run record — and since this job's output goes on a page " +
+                "and into the job history, not fetching a message is the only way to be sure " +
+                "it is not stored.",
+            ifWrong:
+                "A domain here is matched against the parsed sender address and never the " +
+                "display name, and as a suffix on \"@domain\" rather than a substring — " +
+                "notexample.com contains example.com and anybody can register it. The " +
+                "server's own search is looser than both, so a message that satisfies the " +
+                "server and fails this check is reported as sender-mismatch rather than " +
+                "dropped: that is either a coincidence or somebody putting a trusted address " +
+                "in their display name.\n\n" +
+                "A typo means runs that report nothing, which looks exactly like a quiet " +
+                "inbox. The searched count on each run record tells the two apart.",
+        },
+    },
+    {
         id: "smtpHost",
         flag: "RN_SMTP_HOST",
         kind: "env",

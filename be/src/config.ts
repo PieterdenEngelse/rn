@@ -249,6 +249,17 @@ export const config = {
      */
     mailUser: process.env.RN_MAIL_USER ?? "",
 
+    /**
+     * Senders the read-mail job will accept mail from, install-wide.
+     *
+     * A setting rather than only a job input, because the scheduler supplies no
+     * inputs at all: `runJob(job, "schedule")` runs with the job's declared
+     * defaults, so a filter that lived only on the run form would be empty on
+     * every automatic run — decorative exactly where it matters, and worse than
+     * absent because the form implies otherwise.
+     */
+    mailAllowedSenders: process.env.RN_MAIL_ALLOWED_SENDERS ?? "",
+
     /** IMAP host the read-mail job connects to. */
     imapHost: process.env.RN_IMAP_HOST ?? "imap.gmail.com",
 

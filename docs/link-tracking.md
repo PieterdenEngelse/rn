@@ -94,6 +94,14 @@ errors: the run hangs until its timeout, every time, against any real server.
 Drain the fetch into an array first. Found by talking to a server and not
 findable any other way — the unit tests over the pure parts all passed.
 
+**The sender filter is an install setting, not only a job input.** The
+scheduler calls `runJob(job, "schedule")` with no input at all, so an automatic
+run uses the job's declared defaults — and a filter that lived only on the run
+form would be empty on every scheduled run, which is every run that matters. It
+would be worse than absent, because the form implies it is working. So
+`RN_MAIL_ALLOWED_SENDERS` carries the standing answer and the form field
+overrides it for one run started by hand.
+
 **A sender filter narrows the server's search, and is checked again after.**
 Narrowing at the server is what keeps mail from anyone else from being fetched,
 scanned, or written to a run record — not fetching is the only way to be sure a

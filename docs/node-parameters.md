@@ -27,6 +27,7 @@ scales with installed RAM, so expect a different number elsewhere.
 | **Time zone** | `TZ` | unset (system default) | — | on restart |
 | **Extra CA certificates** | `NODE_EXTRA_CA_CERTS` | unset (system default) | — | on restart |
 | **Mail account** | `RN_MAIL_USER` | unset (system default) | — | on restart |
+| **Accept mail only from** | `RN_MAIL_ALLOWED_SENDERS` | unset (system default) | — | on restart |
 | **SMTP host** | `RN_SMTP_HOST` | smtp.gmail.com | — | on restart |
 | **SMTP port** | `RN_SMTP_PORT` | 465 | 1 … 65535 | on restart |
 | **IMAP host** | `RN_IMAP_HOST` | imap.gmail.com | — | on restart |
@@ -420,6 +421,22 @@ docs/link-tracking.md §1 takes the app-password path precisely so a single opaq
 An address that does not match the app password's account is the same 535: the credential is minted for one account and means nothing for another.
 
 Default: unset (system default) · Takes effect: on restart · Settings key: `mailUser`
+
+### Accept mail only from — `RN_MAIL_ALLOWED_SENDERS`
+
+**What it does.** Addresses or domains the read-mail job will accept, one per line or comma-separated. "reports@example.com" is that address exactly; "example.com" or "@example.com" is anybody at that domain.
+
+Empty means every sender. The job's own "Only from these senders" field overrides this for a single run you start by hand.
+
+**Why you would change it.** It has to live here rather than only on the run form, because the scheduler supplies no inputs: an automatic run uses the job's declared defaults, so a filter typed on the form would be empty on every scheduled run — which is every run that matters. A filter that is decorative exactly where it counts is worse than none, because the form implies it is working.
+
+What it buys is not a tidier report. The filter narrows the search on the server, so mail from anyone else is never downloaded, never scanned and never written to a run record — and since this job's output goes on a page and into the job history, not fetching a message is the only way to be sure it is not stored.
+
+**If it's wrong.** A domain here is matched against the parsed sender address and never the display name, and as a suffix on "@domain" rather than a substring — notexample.com contains example.com and anybody can register it. The server's own search is looser than both, so a message that satisfies the server and fails this check is reported as sender-mismatch rather than dropped: that is either a coincidence or somebody putting a trusted address in their display name.
+
+A typo means runs that report nothing, which looks exactly like a quiet inbox. The searched count on each run record tells the two apart.
+
+Default: unset (system default) · Takes effect: on restart · Settings key: `mailAllowedSenders`
 
 ### SMTP host — `RN_SMTP_HOST`
 

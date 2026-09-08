@@ -195,7 +195,10 @@ export const readMail: Job = {
                 what:
                     "Addresses or domains, one per line or comma-separated. " +
                     "\"reports@example.com\" is that address exactly; \"example.com\" or " +
-                    "\"@example.com\" is anybody at that domain. Empty means every sender.",
+                    "\"@example.com\" is anybody at that domain.\n\n" +
+                    "Empty falls back to \"Accept mail only from\" on Config → Runtime, which " +
+                    "is where the standing answer belongs: a scheduled run carries no inputs, " +
+                    "so anything typed here applies only to a run you start by hand.",
                 why:
                     "It narrows the search on the server, so mail from anyone else is never " +
                     "downloaded, never scanned, and never written to a run record. That is " +
@@ -272,7 +275,11 @@ export const readMail: Job = {
         const mailbox = String(ctx.input.mailbox ?? "INBOX").trim() || "INBOX";
         const maxMessages = Math.max(1, Number(ctx.input.maxMessages ?? 25));
         const unreadOnly = ctx.input.unreadOnly === true;
-        const senders = parseSenders(String(ctx.input.from ?? ""));
+        // The run's own field wins when it is filled in; otherwise the
+        // install's standing setting applies. That order is what makes a
+        // scheduled run — which carries no inputs at all — still filtered.
+        const typed = String(ctx.input.from ?? "").trim();
+        const senders = parseSenders(typed === "" ? config.mailAllowedSenders : typed);
 
         if (config.mailUser === "") {
             throw new PermanentFailure(
