@@ -182,7 +182,7 @@ overridden: JobOverride, };
 /**
  * The board a parameter is filed under on Config → Runtime.
  */
-export type Category = "memory" | "concurrency" | "time" | "network" | "diagnostics" | "output" | "runtime" | "security";
+export type Category = "memory" | "concurrency" | "time" | "network" | "mail" | "diagnostics" | "output" | "runtime" | "security";
 
 /**
  * One entry in a command webhook's routing table: this action runs this

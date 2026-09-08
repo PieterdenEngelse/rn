@@ -150,6 +150,7 @@ fn category_title(cat: Category) -> &'static str {
         Category::Concurrency => "Concurrency",
         Category::Time => "Time",
         Category::Network => "Network",
+        Category::Mail => "Mail",
         Category::Diagnostics => "Diagnostics",
         Category::Output => "Output",
         Category::Runtime => "Runtime",
@@ -520,7 +521,7 @@ fn ParamBoards(
                         "mechanism carries them, because that distinction matters to the ",
                         "runtime and not to you. Memory is the heap ceiling. Concurrency is how ",
                         "many operations run at once. Time is the zone schedules are read in. ",
-                        "Network covers certificates, and the mail account rn sends and reads with. ",
+                        "Network covers certificates. Mail is the account rn sends and reads with. ",
                         "Diagnostics turn extra reporting on. ",
                         "Output is cosmetic.\n\n",
 
@@ -557,7 +558,12 @@ fn ParamBoards(
             }),
 
             p { class: "text-gray-400 mb-3 max-w-3xl",
-                "Settings for the Node runtime rn ships with. Everything except stack trace depth is read once when the process starts."
+                // Was "Settings for the Node runtime rn ships with", which
+                // stopped being true when rn's own mail settings landed here:
+                // this tile is where a setting goes when it names no runtime,
+                // and that now includes settings the runtime knows nothing
+                // about.
+                "Settings that apply whichever runtime is selected — the runtime's own, and rn's. Everything except stack trace depth is read once when the process starts."
             }
 
             div { class: "flex flex-wrap gap-4 items-stretch",

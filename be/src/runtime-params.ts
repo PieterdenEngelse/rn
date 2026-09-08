@@ -738,7 +738,7 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
         type: "string",
         default: null,
         appliesAt: "restart",
-        category: "network",
+        category: "mail",
         label: "Mail account",
         info: {
             what:
@@ -770,7 +770,7 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
         type: "string",
         default: "smtp.gmail.com",
         appliesAt: "restart",
-        category: "network",
+        category: "mail",
         label: "SMTP host",
         info: {
             what: "The server the send job hands outgoing mail to.",
@@ -797,7 +797,7 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
         min: 1,
         max: 65535,
         appliesAt: "restart",
-        category: "network",
+        category: "mail",
         label: "SMTP port",
         info: {
             what:
@@ -823,7 +823,7 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
         type: "string",
         default: "imap.gmail.com",
         appliesAt: "restart",
-        category: "network",
+        category: "mail",
         label: "IMAP host",
         info: {
             what: "The server the read-mail job polls for arriving mail.",
@@ -847,7 +847,7 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
         min: 1,
         max: 65535,
         appliesAt: "restart",
-        category: "network",
+        category: "mail",
         label: "IMAP port",
         info: {
             what:

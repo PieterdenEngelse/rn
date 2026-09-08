@@ -433,7 +433,7 @@
       "type": "string",
       "default": null,
       "appliesAt": "restart",
-      "category": "network",
+      "category": "mail",
       "label": "Mail account",
       "info": {
         "what": "The address rn sends from and reads with — the From line on every message the send job produces, and the username for both SMTP and IMAP.\n\nOne setting rather than two because it is one account. The password is not here: it is the gmailAppPassword credential, set on Config → Jobs and never shown back.",
@@ -448,7 +448,7 @@
       "type": "string",
       "default": "smtp.gmail.com",
       "appliesAt": "restart",
-      "category": "network",
+      "category": "mail",
       "label": "SMTP host",
       "info": {
         "what": "The server the send job hands outgoing mail to.",
@@ -465,7 +465,7 @@
       "min": 1,
       "max": 65535,
       "appliesAt": "restart",
-      "category": "network",
+      "category": "mail",
       "label": "SMTP port",
       "info": {
         "what": "The port, and — because 465 means implicit TLS — also the choice of how the session is encrypted. Set to 465 the connection is TLS from the first byte; set to anything else it is not.",
@@ -480,7 +480,7 @@
       "type": "string",
       "default": "imap.gmail.com",
       "appliesAt": "restart",
-      "category": "network",
+      "category": "mail",
       "label": "IMAP host",
       "info": {
         "what": "The server the read-mail job polls for arriving mail.",
@@ -497,7 +497,7 @@
       "min": 1,
       "max": 65535,
       "appliesAt": "restart",
-      "category": "network",
+      "category": "mail",
       "label": "IMAP port",
       "info": {
         "what": "The port, and the encryption choice with it: 993 is implicit TLS, the IMAP counterpart of SMTP's 465, and anything else connects in the clear.",

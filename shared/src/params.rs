@@ -79,6 +79,12 @@ wire! {
         Concurrency,
         Time,
         Network,
+        /// The mail account rn sends and reads with, and the two servers it
+        /// uses. Its own board rather than a corner of Network, because these
+        /// are rn's own settings and Network is the *runtime's* — a page that
+        /// filed them together showed two boards both titled "Network", one
+        /// per tile, which is unreadable however correct each half is.
+        Mail,
         Diagnostics,
         Output,
         Runtime,
@@ -389,6 +395,7 @@ mod tests {
         assert_eq!(one(&Category::Concurrency), "\"concurrency\"");
         assert_eq!(one(&Category::Time), "\"time\"");
         assert_eq!(one(&Category::Network), "\"network\"");
+        assert_eq!(one(&Category::Mail), "\"mail\"");
         assert_eq!(one(&Category::Diagnostics), "\"diagnostics\"");
         assert_eq!(one(&Category::Output), "\"output\"");
         assert_eq!(one(&Category::Runtime), "\"runtime\"");
