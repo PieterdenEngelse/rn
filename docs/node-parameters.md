@@ -26,6 +26,11 @@ scales with installed RAM, so expect a different number elsewhere.
 | **Unhandled rejection policy** | `--unhandled-rejections` (NODE_OPTIONS) | unset (system default) | — | on restart |
 | **Time zone** | `TZ` | unset (system default) | — | on restart |
 | **Extra CA certificates** | `NODE_EXTRA_CA_CERTS` | unset (system default) | — | on restart |
+| **Mail account** | `RN_MAIL_USER` | unset (system default) | — | on restart |
+| **SMTP host** | `RN_SMTP_HOST` | smtp.gmail.com | — | on restart |
+| **SMTP port** | `RN_SMTP_PORT` | 465 | 1 … 65535 | on restart |
+| **IMAP host** | `RN_IMAP_HOST` | imap.gmail.com | — | on restart |
+| **IMAP port** | `RN_IMAP_PORT` | 993 | 1 … 65535 | on restart |
 | **Trace warnings** | `--trace-warnings` (NODE_OPTIONS) | off | — | on restart |
 | **Trace deprecations** | `--trace-deprecation` (NODE_OPTIONS) | off | — | on restart |
 | **Stack trace depth** | `--stack-trace-limit` (NODE_OPTIONS) | 10 | 0 … 200 | immediately |
@@ -193,6 +198,66 @@ Default: off · Takes effect: on restart · Settings key: `denoNoRemote`
 **If it's wrong.** A wrong path fails SILENTLY: Node starts with no warning and TLS keeps failing. rn validates the path itself and reports it, because Node won't.
 
 Default: unset (system default) · Takes effect: on restart · Settings key: `extraCaCerts`
+
+### Mail account — `RN_MAIL_USER`
+
+**What it does.** The address rn sends from and reads with — the From line on every message the send job produces, and the username for both SMTP and IMAP.
+
+One setting rather than two because it is one account. The password is not here: it is the gmailAppPassword credential, set on Config → Jobs and never shown back.
+
+**Why you would change it.** Nothing else identifies the sender. It is on the outside of every message that arrives, so it is not a secret and holding it as one would only hide it from the page that should say which account is in use.
+
+docs/link-tracking.md §1 takes the app-password path precisely so a single opaque credential covers sending and reading; a pair of user fields that must always match is a pair that can disagree.
+
+**If it's wrong.** Empty and both mail jobs refuse before opening a connection, saying so rather than failing somewhere less legible. Wrong and SMTP rejects the login with a 535 — which rn classifies as permanent, so it fails once instead of three times.
+
+An address that does not match the app password's account is the same 535: the credential is minted for one account and means nothing for another.
+
+Default: unset (system default) · Takes effect: on restart · Settings key: `mailUser`
+
+### SMTP host — `RN_SMTP_HOST`
+
+**What it does.** The server the send job hands outgoing mail to.
+
+**Why you would change it.** Gmail's by default, because that is the account shape docs/link-tracking.md §1 recommends. Any SMTP server works — the job speaks the protocol, not Gmail.
+
+It is also the host to add to the network allowlist on Config → Connection: under Deno the runtime denies everything not named there, and the failure message talks about permissions without mentioning that an allowlist exists.
+
+**If it's wrong.** A host that does not resolve fails the run with the connection error and sends nothing — no half-send, because the connection is opened before the first recipient. A host that resolves but is not an SMTP server hangs until the job's timeout.
+
+Default: smtp.gmail.com · Takes effect: on restart · Settings key: `smtpHost`
+
+### SMTP port — `RN_SMTP_PORT`
+
+**What it does.** The port, and — because 465 means implicit TLS — also the choice of how the session is encrypted. Set to 465 the connection is TLS from the first byte; set to anything else it is not.
+
+**Why you would change it.** 587 is the common alternative and it is weaker in a specific way: it opens in plaintext and upgrades with STARTTLS, so a network that strips the upgrade leaves the whole session — credentials included — readable. 465 cannot be downgraded that way because there is no plaintext phase to strip.
+
+**If it's wrong.** Point 465 at a server that only speaks STARTTLS and the handshake fails immediately, which is the honest failure. The dangerous direction is the other one: a port that quietly works without encryption looks identical to one that works with it, from here.
+
+Default: 465 · Takes effect: on restart · Settings key: `smtpPort`
+
+### IMAP host — `RN_IMAP_HOST`
+
+**What it does.** The server the read-mail job polls for arriving mail.
+
+**Why you would change it.** The counterpart of the SMTP host, and the same app password authenticates against both — which is the whole reason §1 prefers an app password to OAuth.
+
+Needs adding to the network allowlist on Config → Connection alongside the SMTP host, for the same reason.
+
+**If it's wrong.** The run fails on connect and changes nothing at all — this job never writes to the mailbox, so a wrong host costs a red run and no more.
+
+Default: imap.gmail.com · Takes effect: on restart · Settings key: `imapHost`
+
+### IMAP port — `RN_IMAP_PORT`
+
+**What it does.** The port, and the encryption choice with it: 993 is implicit TLS, the IMAP counterpart of SMTP's 465, and anything else connects in the clear.
+
+**Why you would change it.** Mail bodies and the account password both cross this connection. 143 is the plaintext port and exists for STARTTLS, with the same downgrade weakness 587 has on the sending side.
+
+**If it's wrong.** A mismatch fails the handshake rather than silently reading your mail over an unencrypted socket — but only because the port decides TLS here. Changing this to a non-993 port turns encryption off, so it is not a setting to adjust while chasing a connection problem.
+
+Default: 993 · Takes effect: on restart · Settings key: `imapPort`
 
 ## security
 
