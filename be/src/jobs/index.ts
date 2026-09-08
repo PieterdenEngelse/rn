@@ -11,6 +11,7 @@
  * than keeping their own.
  */
 
+import { desktopNotify } from "./desktop-notify.ts";
 import { notify } from "./notify.ts";
 import { pruneProfiles } from "./prune-profiles.ts";
 import { readMail } from "./read-mail.ts";
@@ -24,6 +25,7 @@ export const JOBS: readonly Job[] = [
     pruneProfiles,
     watchUpstreams,
     watchFeeds,
+    desktopNotify,
     notify,
     readMail,
     sendMail,

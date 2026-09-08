@@ -70,6 +70,37 @@ the app booting before its first line runs. Credentials go in through
 `NodeCommand::env` — the door for values that come from *us* — not through
 `allow_var`. No prefix allowlist, no new trust in the ambient environment.
 
+### The one variable allowed through that is not ours
+
+`DBUS_SESSION_BUS_ADDRESS`, for the `desktop-notify` job. Everything else in
+`allow_var` is rn's own configuration or `TERM`; this one is the desktop's, and
+it is recorded here rather than left for somebody to find in `main.rs` and
+wonder about.
+
+**What it is.** The address of the per-user D-Bus socket —
+`unix:path=/run/user/1000/bus`. Not a credential: it carries no secret, and it
+grants nothing to a process that could not already reach that socket through the
+filesystem, since the path belongs to the same uid the backend runs as.
+
+**What it costs, stated rather than waved away.** A job can now speak to the
+session bus, and the session bus is how a desktop is driven — notifications, and
+also whatever else that user's own services expose on it. rn's jobs are code in
+this repository rather than anything an install composes at runtime, so the
+practical exposure is what a reviewer can read; but "a job could" is now a
+larger set than it was.
+
+**Why it is still the right trade.** The seal exists to stop a *user's*
+environment breaking rn — the poisoned `NODE_OPTIONS` that has a test. This
+variable is rn reaching outward, not the environment reaching in. Different
+direction, smaller risk, and the alternative for a local notification is an
+account with a third-party push service and a URL that is itself a bearer
+capability (see `notify`). That trade is worth making explicitly, which is what
+this section is.
+
+**It is absent whenever nobody is logged in graphically**, which is the ordinary
+state of a server. `desktop-notify` reports that as a skipped run rather than a
+failure: nothing is wrong, there is simply no screen.
+
 ---
 
 ## What a job may do with one

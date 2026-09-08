@@ -255,6 +255,29 @@ fn build_command(layout: &Layout, params: &[settings::RuntimeParam]) -> NodeComm
         // The click tracker, for exactly the same reason. See
         // docs/link-tracking.md §3.
         "BACKEND_TRACKER_PORT",
+        // The desktop session's message bus, so the `desktop-notify` job can
+        // raise an ordinary notification on the screen of whoever is logged in.
+        //
+        // This is the only entry here that is neither ours nor the terminal's,
+        // so the reason is written down rather than assumed. What it is: the
+        // address of the per-user D-Bus socket, `unix:path=/run/user/1000/bus`.
+        // What it is not: a credential. It carries no secret, and knowing it
+        // grants nothing to a process that could not already reach that socket
+        // through the filesystem — the path belongs to this process's own uid.
+        //
+        // What it does cost, stated honestly: a job can now speak to the
+        // session bus, and the session bus is how a desktop is driven.
+        // Notifications, yes — but also whatever else the user's own services
+        // happen to expose there. The seal exists to stop a *user's*
+        // environment breaking rn, which is why a poisoned NODE_OPTIONS has a
+        // test; this variable is rn reaching outward rather than the
+        // environment reaching in. A different direction and a smaller risk,
+        // but not none, and `docs/sec.md` says so rather than leaving the next
+        // reader to find an unexplained hole in the seal.
+        //
+        // Absent whenever nobody is logged in graphically, which is the
+        // ordinary case on a server. The job reports that instead of failing.
+        "DBUS_SESSION_BUS_ADDRESS",
     ] {
         cmd.allow_var(key);
     }
