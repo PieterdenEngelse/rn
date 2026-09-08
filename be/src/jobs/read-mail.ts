@@ -40,7 +40,13 @@
  */
 
 import { config } from "../config.ts";
-import { extractLinks, fallbackKey, messageKey } from "../mail/extract.ts";
+import {
+    extractLinks,
+    fallbackKey,
+    messageKey,
+    parseSenders,
+    senderMatches,
+} from "../mail/extract.ts";
 import { netPermissionHint } from "./net-permission.ts";
 import { PermanentFailure } from "./permanent.ts";
 import { seenCapacity } from "./state.ts";
@@ -181,6 +187,37 @@ export const readMail: Job = {
             },
         },
         {
+            id: "from",
+            label: "Only from these senders",
+            type: "text",
+            default: "",
+            info: {
+                what:
+                    "Addresses or domains, one per line or comma-separated. " +
+                    "\"reports@example.com\" is that address exactly; \"example.com\" or " +
+                    "\"@example.com\" is anybody at that domain. Empty means every sender.",
+                why:
+                    "It narrows the search on the server, so mail from anyone else is never " +
+                    "downloaded, never scanned, and never written to a run record. That is " +
+                    "worth more than a tidier report: this job's output goes on a page and " +
+                    "into the job history, so not fetching a message is the only way to be " +
+                    "sure it is not stored.\n\n" +
+                    "It also makes the per-run message count go further. The dedupe window " +
+                    "holds a fixed number of ids, and a filtered search spends them only on " +
+                    "mail you care about.",
+                ifWrong:
+                    "The server's own FROM search is a substring match over the whole header, " +
+                    "and the display name is a string the sender chooses — so a message from " +
+                    "evil@attacker.example calling itself \"reports@example.com\" satisfies " +
+                    "it. rn therefore checks the parsed address again after fetching, and a " +
+                    "message that passed the server and failed that check is reported as " +
+                    "sender-mismatch rather than silently dropped: it is worth seeing.\n\n" +
+                    "A typo means a run that reports nothing, which looks identical to a quiet " +
+                    "inbox. The searched count is on the run record so the two can be told " +
+                    "apart.",
+            },
+        },
+        {
             id: "unreadOnly",
             label: "Unread only",
             type: "bool",
@@ -235,6 +272,7 @@ export const readMail: Job = {
         const mailbox = String(ctx.input.mailbox ?? "INBOX").trim() || "INBOX";
         const maxMessages = Math.max(1, Number(ctx.input.maxMessages ?? 25));
         const unreadOnly = ctx.input.unreadOnly === true;
+        const senders = parseSenders(String(ctx.input.from ?? ""));
 
         if (config.mailUser === "") {
             throw new PermanentFailure(
@@ -274,6 +312,7 @@ export const readMail: Job = {
         let examined = 0;
         let skipped = 0;
         let truncatedAny = false;
+        let mismatched = 0;
 
         try {
             await client.connect();
@@ -297,7 +336,22 @@ export const readMail: Job = {
             // header: an ordinary fetch would set \Seen as a side effect.
             const lock = await client.getMailboxLock(mailbox, { readOnly: true });
             try {
-                const criteria = unreadOnly ? { seen: false } : { all: true };
+                // Narrowed on the server, so mail from anyone else is never
+                // fetched. IMAP has no "from is one of" — the OR is binary and
+                // nests — so a list becomes a right-leaning chain of them.
+                type Criteria = { from?: string; or?: Criteria[] };
+                const fromCriteria: Criteria | undefined =
+                    senders.length === 0
+                        ? undefined
+                        : senders
+                              .map((f): Criteria => ({ from: f }))
+                              .reduce((acc, one): Criteria => ({ or: [acc, one] }));
+
+                const criteria = {
+                    ...(unreadOnly ? { seen: false } : {}),
+                    ...(fromCriteria ?? {}),
+                    ...(unreadOnly || fromCriteria !== undefined ? {} : { all: true }),
+                };
                 const uids = await client.search(criteria, { uid: true });
                 if (uids === false) {
                     throw new Error(`read-mail: the server refused a search of ${mailbox}`);
@@ -310,6 +364,7 @@ export const readMail: Job = {
                     matched: uids.length,
                     examining: recent.length,
                     unreadOnly,
+                    ...(senders.length === 0 ? {} : { from: senders.join(", ") }),
                 });
 
                 // Drained into an array before anything is downloaded, and
@@ -345,6 +400,22 @@ export const readMail: Job = {
                     // the run is going to abandon for another reason.
                     if (ctx.state.seen(messageKey(mailbox, rawId))) {
                         skipped += 1;
+                        continue;
+                    }
+
+                    const sender = envelope?.from?.[0]?.address ?? "";
+                    if (!senderMatches(sender, senders)) {
+                        // Reported, not silently dropped. The server's FROM
+                        // search matches the display name too, so arriving here
+                        // means either a substring coincidence or somebody
+                        // putting a trusted address in the name field — and the
+                        // second one is worth a person seeing.
+                        mismatched += 1;
+                        ctx.step("sender-mismatch", {
+                            from: sender === "" ? "(no address)" : sender,
+                            subject: String(envelope?.subject ?? "").slice(0, 120),
+                            effect: "matched the server search but not the address filter",
+                        });
                         continue;
                     }
 
@@ -403,6 +474,8 @@ export const readMail: Job = {
             // On the record rather than only in a warning, so the history
             // shows how close this install runs to the bound.
             seenCapacity: seenCapacity(),
+            ...(senders.length === 0 ? {} : { senderFilter: senders.length }),
+            ...(mismatched === 0 ? {} : { senderMismatch: mismatched }),
             ...(truncatedAny ? { truncated: true } : {}),
         };
 

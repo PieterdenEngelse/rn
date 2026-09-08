@@ -119,3 +119,53 @@ export function messageKey(mailbox: string, messageId: string): string {
 export function fallbackKey(uid: number, date: string, subject: string): string {
     return `uid:${uid}:${date}:${subject}`;
 }
+
+/**
+ * Does this sender address match one of the operator's patterns?
+ *
+ * Two spellings, because the two questions are different:
+ *
+ *   - `someone@example.com` — that exact address, and nothing else.
+ *   - `example.com` or `@example.com` — anybody at that domain.
+ *
+ * Compared against the *parsed* address from the envelope, never against the
+ * raw `From` header. That distinction is the whole point of this function
+ * existing rather than trusting the IMAP `SEARCH FROM` that fetched the
+ * message: `SEARCH FROM` is a substring match over the entire header, and the
+ * display name is a string the sender chooses. A message from
+ * `evil@attacker.example` with the display name `notifications@github.com`
+ * matches a server-side search for `github.com`, and would pass a filter the
+ * operator believed named a sender. Here the display name is not consulted at
+ * all.
+ *
+ * An empty pattern list means no filtering — the caller decides whether that is
+ * allowed, since "match nothing" and "match everything" are both defensible
+ * readings of an empty box and only one of them is safe to guess.
+ */
+export function senderMatches(address: string, patterns: readonly string[]): boolean {
+    if (patterns.length === 0) return true;
+    const from = address.trim().toLowerCase();
+    if (from === "") return false;
+
+    return patterns.some((raw) => {
+        const p = raw.trim().toLowerCase();
+        if (p === "") return false;
+        // A bare domain, or one written with the leading @ that reads more
+        // clearly in a list beside full addresses.
+        if (!p.includes("@") || p.startsWith("@")) {
+            const domain = p.startsWith("@") ? p.slice(1) : p;
+            return domain !== "" && from.endsWith(`@${domain}`);
+        }
+        return from === p;
+    });
+}
+
+/** Split a list of senders written one per line or comma-separated. */
+export function parseSenders(raw: string): string[] {
+    const out: string[] = [];
+    for (const part of raw.split(/[\n,;]+/)) {
+        const s = part.trim();
+        if (s !== "") out.push(s);
+    }
+    return out;
+}

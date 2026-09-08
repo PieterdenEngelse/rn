@@ -94,6 +94,17 @@ errors: the run hangs until its timeout, every time, against any real server.
 Drain the fetch into an array first. Found by talking to a server and not
 findable any other way — the unit tests over the pure parts all passed.
 
+**A sender filter narrows the server's search, and is checked again after.**
+Narrowing at the server is what keeps mail from anyone else from being fetched,
+scanned, or written to a run record — not fetching is the only way to be sure a
+message is not stored. But IMAP's `SEARCH FROM` is a substring match over the
+whole `From` header, and the display name is a string the sender chooses: a
+message from `evil@attacker.example` calling itself `reports@example.com`
+satisfies it. So the parsed envelope address is checked again on arrival, and a
+message that passed the server and failed that check is *reported* as
+`sender-mismatch` rather than silently dropped. It is the one arrival worth a
+person seeing.
+
 **Extraction is a scan, not a parse.** Same tradeoff `watch-feeds` states for
 its feed reader: find `href` on anchors, unwrap entities, and accept that
 adversarial HTML can hide a link from it. An HTML parser is a dependency and a

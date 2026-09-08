@@ -10,7 +10,13 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { extractLinks, messageKey, fallbackKey } from "../src/mail/extract.ts";
+import {
+    extractLinks,
+    messageKey,
+    fallbackKey,
+    senderMatches,
+    parseSenders,
+} from "../src/mail/extract.ts";
 import { textPartNumbers } from "../src/jobs/read-mail.ts";
 
 test("anchors in html and bare urls in text are both found", () => {
@@ -129,4 +135,51 @@ test("text parts nested under an attachment wrapper are still found", () => {
         ],
     });
     assert.deepEqual(parts, { text: "1.1", html: "1.2" });
+});
+
+test("an exact address matches only itself", () => {
+    assert.equal(senderMatches("reports@example.com", ["reports@example.com"]), true);
+    assert.equal(senderMatches("other@example.com", ["reports@example.com"]), false);
+    // Case is not the sender's to decide.
+    assert.equal(senderMatches("Reports@Example.COM", ["reports@example.com"]), true);
+});
+
+test("a bare domain matches anybody at it, either spelling", () => {
+    for (const pattern of ["example.com", "@example.com"]) {
+        assert.equal(senderMatches("anyone@example.com", [pattern]), true, pattern);
+        assert.equal(senderMatches("anyone@other.com", [pattern]), false, pattern);
+    }
+});
+
+test("a domain filter is not a substring match", () => {
+    // The obvious wrong implementation. `notexample.com` contains
+    // `example.com`, and an attacker can register it.
+    assert.equal(senderMatches("someone@notexample.com", ["example.com"]), false);
+    assert.equal(senderMatches("someone@example.com.evil.test", ["example.com"]), false);
+});
+
+test("a display name cannot impersonate a sender", () => {
+    // The reason this check exists at all. IMAP's SEARCH FROM is a substring
+    // match over the whole header, and the display name is chosen by the
+    // sender — so this message satisfies the server-side search for
+    // example.com. It must not satisfy the filter.
+    assert.equal(senderMatches("evil@attacker.example", ["example.com"]), false);
+    assert.equal(senderMatches("evil@attacker.example", ["reports@example.com"]), false);
+});
+
+test("no patterns means no filtering, and no address means no match", () => {
+    assert.equal(senderMatches("anyone@example.com", []), true);
+    // A message whose envelope carries no parsed address cannot be shown to
+    // come from an allowed sender, so it does not pass a filter that exists.
+    assert.equal(senderMatches("", ["example.com"]), false);
+    assert.equal(senderMatches("", []), true);
+});
+
+test("senders are split on lines, commas and semicolons", () => {
+    assert.deepEqual(parseSenders("a@x.com, b@y.com\n@z.com; "), [
+        "a@x.com",
+        "b@y.com",
+        "@z.com",
+    ]);
+    assert.deepEqual(parseSenders("   "), []);
 });
