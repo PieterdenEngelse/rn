@@ -26,6 +26,21 @@
  * - **Bounded and timed**, because a notification daemon that has wedged must
  *   not hold a job in flight and, through it, the runner's restart.
  *
+ * ## Colour, and what is actually available
+ *
+ * Measured on this machine rather than reasoned about, after two wrong
+ * attempts. `xfce4-notifyd` advertises `body-markup` and no colour hint, so
+ * `--hint string:fgcolor:` does nothing; and of the markup it does render, `<b>`
+ * works while `<span foreground=…>` is dropped. Coloured *text* is therefore not
+ * available on this desktop however it is asked for.
+ *
+ * What is available is the title, because an emoji is a colour glyph drawn by
+ * the font and no stylesheet can grey it out — hence a title prefix carrying the
+ * default. An icon would work too, and `dialog-error` is the reliably red one in
+ * a standard theme, which is exactly why it is *not* the default: it means
+ * error, and a mail notification that claims something went wrong teaches you to
+ * dismiss the ones that did.
+ *
  * ## What it needs, and what it says when it does not have it
  *
  * `DBUS_SESSION_BUS_ADDRESS`, passed through the launcher's seal deliberately —
@@ -158,6 +173,56 @@ export const desktopNotify: Job = {
             },
         },
         {
+            id: "prefix",
+            label: "Title prefix",
+            type: "text",
+            default: "🔴 ",
+            info: {
+                what:
+                    "Put in front of the notification's title. The default is a red dot and " +
+                    "a space; empty adds nothing.",
+                why:
+                    "It is the reliable way to get colour into a notification on this " +
+                    "machine. Measured rather than assumed: xfce4-notifyd renders <b> from " +
+                    "the body but drops <span foreground=…>, so coloured *text* is not " +
+                    "available here however it is asked for. An emoji is a colour glyph drawn " +
+                    "by the font, so no stylesheet can grey it out.\n\n" +
+                    "A dot rather than a warning sign, and no icon by default, because a red " +
+                    "notification should not also claim something went wrong — see the icon " +
+                    "field.",
+                ifWrong:
+                    "A prefix long enough to push the real title out of view defeats the " +
+                    "point: the title is the line you read at a glance. One or two characters " +
+                    "and a space.\n\n" +
+                    "If it shows as a hollow box, the font has no glyph for it. Any character " +
+                    "works — a plain ! costs nothing and always renders.",
+            },
+        },
+        {
+            id: "icon",
+            label: "Icon",
+            type: "text",
+            default: "",
+            info: {
+                what:
+                    "A named icon from the desktop's theme, shown beside the text. Empty — " +
+                    "the default — shows none. \"mail-unread\" and \"dialog-information\" " +
+                    "are the sensible ones; \"dialog-error\" is the red one.",
+                why:
+                    "Empty by default deliberately, and dialog-error is the reason. It is the " +
+                    "only reliably red icon in a standard theme, and it *means* error — so " +
+                    "using it to say \"you have mail\" makes every arrival look like a " +
+                    "failure. A week of that and the notifications that really are failures " +
+                    "get dismissed with the rest, which costs more than the colour is worth.\n\n" +
+                    "The title prefix gives the same red without the claim, which is why it " +
+                    "is the field with a default and this one is not.",
+                ifWrong:
+                    "A name the theme does not have shows no icon rather than failing — " +
+                    "notify-send does not check, and neither does rn. Names come from the " +
+                    "freedesktop icon-naming spec; the theme decides what it actually has.",
+            },
+        },
+        {
             id: "expireSeconds",
             label: "Dismiss after",
             type: "number",
@@ -256,6 +321,8 @@ export const desktopNotify: Job = {
         }
 
         const color = String(ctx.input.color ?? "").trim();
+        const prefix = String(ctx.input.prefix ?? "");
+        const icon = String(ctx.input.icon ?? "").trim();
         const expireSeconds = Math.max(0, Number(ctx.input.expireSeconds ?? 0));
 
         const bus = process.env["DBUS_SESSION_BUS_ADDRESS"];
@@ -280,10 +347,14 @@ export const desktopNotify: Job = {
             );
         }
 
-        const { title, body: plain } = buildNotification(ctx.cause);
-        // Colour goes in the body as markup, because the hints this daemon
-        // would need are not among the capabilities it advertises. Escaped
-        // first: the body is somebody else's mail.
+        const { title: plainTitle, body: plain } = buildNotification(ctx.cause);
+        const title = `${prefix}${plainTitle}`;
+
+        // The span is kept for the desktops that honour it — dunst and mako
+        // colour from it — and it is measurably inert on this one:
+        // xfce4-notifyd renders <b> from the body and drops the foreground
+        // attribute, which is why the title prefix exists and carries the
+        // default. Escaped first either way: the body is somebody else's mail.
         const body =
             color === "" ? plain : `<span foreground="${color}">${escapeMarkup(plain)}</span>`;
 
@@ -305,17 +376,18 @@ export const desktopNotify: Job = {
             // positional arguments.
             const expiry =
                 expireSeconds > 0 ? ["--expire-time", String(expireSeconds * 1000)] : [];
+            const iconArg = icon === "" ? [] : ["--icon", icon];
             execFile(
                 binary,
-                ["--app-name=rn", `--urgency=${urgency}`, ...expiry, "--", title, body],
+                ["--app-name=rn", `--urgency=${urgency}`, ...expiry, ...iconArg, "--", title, body],
                 { timeout: TIMEOUT_MS },
                 (err) => (err === null ? resolve() : reject(err)),
             );
         });
 
-        ctx.step("notified", { title, chars: body.length, urgency, color: color || "none", expireSeconds });
+        ctx.step("notified", { title, chars: body.length, urgency, icon: icon || "none", expireSeconds });
         return {
-            summary: { delivered: true, chars: body.length, urgency, color: color || "none", expireSeconds },
+            summary: { delivered: true, chars: body.length, urgency, icon: icon || "none", expireSeconds },
             changed: true,
         };
     },
