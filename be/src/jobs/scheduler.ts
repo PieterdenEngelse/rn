@@ -28,7 +28,6 @@
 
 import { step } from "../log.ts";
 import * as running from "../running.ts";
-import { JOBS } from "./index.ts";
 import { runJob } from "./run.ts";
 import type { Job, Schedule } from "./types.ts";
 import * as overrides from "./overrides.ts";
@@ -183,7 +182,7 @@ export async function tick(now = new Date()): Promise<void> {
     }
 }
 
-export function start(jobs: readonly Job[] = JOBS, now = new Date()): void {
+export function start(jobs: readonly Job[], now = new Date()): void {
     stop();
     // Overrides first, then the filter: a job the file schedules can be set to
     // manual from a page, and one the file leaves manual can be given a

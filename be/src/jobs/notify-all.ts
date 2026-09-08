@@ -33,6 +33,7 @@
 
 import { desktopNotify } from "./desktop-notify.ts";
 import { notify } from "./notify.ts";
+import { runJob } from "./run.ts";
 import { PermanentFailure } from "./permanent.ts";
 import type { Job, JobContext, JobResult } from "./types.ts";
 
@@ -118,14 +119,6 @@ export const notifyAll: Job = {
     },
 
     async run(ctx: JobContext): Promise<JobResult> {
-        // Imported here rather than at the top, because `run.ts` imports the
-        // catalogue to resolve onFailure and onChange by id, and the catalogue
-        // imports this file — so a static import closes a cycle and Node
-        // reports `Cannot access 'notifyAll' before initialization` at boot.
-        // The same shape the mail rules hit with settings.ts, and the same
-        // answer: defer the edge to call time.
-        const { runJob } = await import("./run.ts");
-
         const wantDesktop = ctx.input.desktop !== false;
         const wantWebhook = ctx.input.webhook !== false;
 

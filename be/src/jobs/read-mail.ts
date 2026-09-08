@@ -39,8 +39,8 @@
  * is an SSRF primitive that no `netAllowlist` can bound.
  */
 
-import { readFileSync } from "node:fs";
 import { config } from "../config.ts";
+import { load as loadSettings } from "../settings.ts";
 import * as rules from "../mail/rules.ts";
 import {
     extractLinks,
@@ -97,26 +97,20 @@ export function textPartNumbers(node: {
 }
 
 /**
- * What the settings file says the sender filter should be.
+ * What the settings file says a filter should be.
  *
- * Read with `fs` rather than through `settings.ts`, which reaches
- * `jobs/scheduler.ts` and `jobs/run.ts` and so cannot be imported from a job
- * without a cycle — `readMail` ended up referenced before initialisation, which
- * a test caught rather than a user. Two lines of JSON is the cheaper answer
- * than untangling the module graph for one string.
+ * Through `settings.ts` rather than a second JSON parse here. It used to be the
+ * latter, because importing that module from a job closed a cycle through the
+ * catalogue and left `readMail` referenced before initialisation — a workaround
+ * for a problem that has since been fixed in one place. See the note on
+ * `catalogue()` in `run.ts`.
  *
  * Absent, unreadable or malformed all mean the same thing here: nothing saved,
  * so nothing to disagree with what is in force.
  */
 function savedSetting(key: string): string {
-    try {
-        const parsed: unknown = JSON.parse(readFileSync(config.settingsPath, "utf8"));
-        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return "";
-        const v = (parsed as Record<string, unknown>)[key];
-        return typeof v === "string" ? v.trim() : "";
-    } catch {
-        return "";
-    }
+    const v = loadSettings(config.settingsPath)[key];
+    return typeof v === "string" ? v.trim() : "";
 }
 
 /**

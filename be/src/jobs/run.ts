@@ -30,7 +30,6 @@ import * as state from "./state.ts";
 // alternative is a second registry, and two lists of jobs that can disagree is
 // exactly the failure the single catalogue exists to prevent. Safe because the
 // lookup happens when a job fails, long after both modules have evaluated.
-import { jobById } from "./index.ts";
 import { record, type Trigger } from "./history.ts";
 import { resolveInput } from "./input.ts";
 import { PermanentFailure } from "./permanent.ts";
@@ -236,6 +235,37 @@ async function settlesWithin(work: Promise<unknown>, ms: number): Promise<boolea
 }
 
 /**
+ * The catalogue, fetched at call time rather than imported at the top.
+ *
+ * This is the one deferred edge in `be/src/jobs/`, and it exists here so that
+ * no job needs one of its own.
+ *
+ * The cycle it cuts: `jobs/index.ts` imports every job, because it *is* the
+ * catalogue; this module imported it to turn an `onFailure` or `onChange` id
+ * into a job. So any job importing anything that reached this module closed a
+ * loop, and Node reported it at boot as `Cannot access '<the job>' before
+ * initialization` — naming a file that looks innocent. Three jobs hit it in one
+ * day: one reaching `settings.ts`, one the mail rules, one fanning out to two
+ * notifiers. Each was worked around where it surfaced, which guaranteed the
+ * next job would find it again.
+ *
+ * One deferred edge rather than N, and deferred rather than inverted with a
+ * registry: a registry can be left unwired, and a handler that silently never
+ * resolves is a worse failure than an import error at boot — it shows up only
+ * as news that never arrived.
+ *
+ * `scheduler.ts` had the same edge for a different reason, defaulting a
+ * parameter to `JOBS`. That one is gone rather than deferred: its callers pass
+ * the catalogue in, which they already had.
+ *
+ * A dynamic import is a map lookup after the first call, and this runs once per
+ * handler dispatch rather than per step.
+ */
+async function catalogue(): Promise<typeof import("./index.ts")> {
+    return import("./index.ts");
+}
+
+/**
  * Run a failed job's `onFailure` handler, if it named one and is allowed to.
  *
  * Every way this can decline is logged. A failure path that quietly does
@@ -260,7 +290,7 @@ async function runFailureHandler(job: Job, failure: JobRun, isHandler: boolean):
         return;
     }
 
-    const handler = jobById(job.onFailure);
+    const handler = (await catalogue()).jobById(job.onFailure);
     if (handler === undefined) {
         // A typo in an id must never be silent. Nothing else would ever
         // report it: the job it names does not exist, so it cannot fail.
@@ -315,7 +345,7 @@ async function runChangeHandler(job: Job, changed: JobRun, isHandler: boolean): 
         return;
     }
 
-    const handler = jobById(job.onChange);
+    const handler = (await catalogue()).jobById(job.onChange);
     if (handler === undefined) {
         // Same argument as the failure path, and it bites harder here. A typo
         // in this id means the news never goes anywhere, and nothing else in

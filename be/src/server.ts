@@ -877,7 +877,7 @@ export function createApp() {
                     const before = JSON.stringify(overrides.forJob(id).schedule);
                     overrides.set(id, override);
                     if (JSON.stringify(override.schedule) !== before) {
-                        scheduler.start();
+                        scheduler.start(JOBS);
                     }
 
                     send(res, 200, {
@@ -1385,7 +1385,7 @@ server.listen(config.port, config.host, () => {
     // server: an IMAP connection held open so mail is read when it lands
     // instead of on the half hour. Off unless the install asked for it.
     startMailWatch();
-    scheduler.start();
+    scheduler.start(JOBS);
     step("listening", {
         url: `http://${config.host}:${config.port}`,
         node: process.version,
