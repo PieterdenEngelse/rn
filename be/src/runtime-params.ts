@@ -810,15 +810,20 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
         default: "INBOX",
         appliesAt: "restart",
         category: "mail",
-        label: "Mailbox to watch",
+        label: "Mailboxes to watch",
         info: {
             what:
                 "Which mailbox the held-open connection watches. INBOX is the answer almost " +
                 "every time — it is where mail lands before anything moves it, so it is what " +
                 "\"has something arrived\" actually means.\n\n" +
-                "One mailbox only. IMAP idles on a *selected* mailbox, so watching two would " +
-                "mean holding two connections; that is why this is a single name rather than " +
-                "a list.\n\n" +
+                "More than one is allowed — comma-separated or one per line — and each gets " +
+                "its own connection, because IMAP idles on a *selected* mailbox and there is " +
+                "no way to watch two over one socket. They reconnect independently, so a " +
+                "label that goes away does not take INBOX\'s watch down with it. Each fires a " +
+                "run scoped to the mailbox that changed.\n\n" +
+                "Two or three is unremarkable; Gmail allows about fifteen simultaneous IMAP " +
+                "connections per account, and every other client you own is spending from the " +
+                "same budget.\n\n" +
                 "A Gmail label is a mailbox too, spelled exactly as Gmail spells it. The " +
                 "separator is / — a nested label is \"Projects/rn\" — and case matters on " +
                 "most servers, so a name that reads fine in the web interface may need a " +
@@ -829,7 +834,8 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
                 "the message never touches INBOX at all. A watcher there sits connected and " +
                 "healthy and never fires — and the read-mail schedule does not save you, " +
                 "because it searches the same mailbox. Everything looks fine and nothing " +
-                "arrives. Put the label\'s own name here if that is your setup.\n\n" +
+                "arrives. Add the label\'s own name here — alongside INBOX, not instead of " +
+                "it, since one filter rarely covers everything you want to hear about.\n\n" +
                 "Watching a label that a filter moves mail into has a smaller cost worth " +
                 "knowing: you are then waiting on Gmail\'s filters as well as on delivery. " +
                 "Usually seconds. Occasionally not.",

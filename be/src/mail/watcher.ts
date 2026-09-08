@@ -45,30 +45,51 @@ import { runJob } from "../jobs/run.ts";
 import * as secrets from "../secrets.ts";
 import { debug, step, warn } from "../log.ts";
 
-/** Mirrors `TrackerHealth`: what a page can say about this connection. */
-export interface MailWatchHealth {
-    /** Whether the connection is up and idling. */
-    watching: boolean;
+/** One watched mailbox, and whether its connection is up. */
+export interface WatchedMailbox {
     mailbox: string;
+    watching: boolean;
     /** Why it is not, when it is not. */
     error: string | null;
-    /** Runs this watcher has started since boot. */
+    /** Runs this mailbox has started since boot. */
     triggered: number;
 }
 
-let health: MailWatchHealth = {
-    watching: false,
-    mailbox: "",
-    error: null,
-    triggered: 0,
-};
+/** Mirrors `TrackerHealth`: what a page can say about the watch. */
+export interface MailWatchHealth {
+    enabled: boolean;
+    /** One entry per watched mailbox, each with its own connection. */
+    mailboxes: WatchedMailbox[];
+}
+
+const watched = new Map<string, WatchedMailbox>();
 
 export function mailWatchHealth(): MailWatchHealth {
-    return health;
+    return { enabled: config.mailWatch, mailboxes: [...watched.values()] };
 }
 
 export function resetMailWatchHealth(): void {
-    health = { watching: false, mailbox: "", error: null, triggered: 0 };
+    watched.clear();
+}
+
+function mark(mailbox: string, patch: Partial<WatchedMailbox>): void {
+    const prev = watched.get(mailbox) ?? {
+        mailbox,
+        watching: false,
+        error: null,
+        triggered: 0,
+    };
+    watched.set(mailbox, { ...prev, ...patch });
+}
+
+/** Mailboxes written one per line or comma-separated. */
+export function parseMailboxes(raw: string): string[] {
+    const out: string[] = [];
+    for (const part of raw.split(/[\n,;]+/)) {
+        const m = part.trim();
+        if (m !== "" && !out.includes(m)) out.push(m);
+    }
+    return out;
 }
 
 /**
@@ -85,9 +106,10 @@ const COALESCE_MS = 2_000;
 const BACKOFF_MS = [5_000, 15_000, 60_000, 300_000];
 
 let stopped = false;
-let pending: NodeJS.Timeout | undefined;
-let running = false;
-let queued = false;
+const pending = new Map<string, NodeJS.Timeout>();
+/** Mailboxes with a run in flight, and those wanting one after it. */
+const running = new Set<string>();
+const queued = new Set<string>();
 
 /**
  * Start a run, or note that another is wanted once this one finishes.
@@ -97,18 +119,26 @@ let queued = false;
  * report the same message — the duplicate-report failure the dedupe window
  * exists to prevent, arrived at from the other direction.
  */
-async function trigger(): Promise<void> {
-    if (running) {
-        queued = true;
+async function trigger(mailbox: string): Promise<void> {
+    if (running.has(mailbox)) {
+        queued.add(mailbox);
         return;
     }
-    running = true;
+    running.add(mailbox);
     try {
         for (;;) {
-            queued = false;
-            health = { ...health, triggered: health.triggered + 1 };
+            queued.delete(mailbox);
+            mark(mailbox, { triggered: (watched.get(mailbox)?.triggered ?? 0) + 1 });
             try {
-                await runJob(readMail, "mail");
+                // The mailbox is passed as the run's input, not left to the
+                // job's default. Without it the watcher rang for a label and
+                // the job read INBOX — two settings that had to agree with
+                // nothing making them, and the mismatch was silent: a run that
+                // searched the wrong mailbox, found nothing, and reported a
+                // clean result. Watching a label is the *recommended* answer
+                // when a Gmail filter skips the inbox, so the documented
+                // configuration was the broken one.
+                await runJob(readMail, "mail", undefined, { mailbox });
             } catch (err) {
                 // Already recorded as a failed run by the runner. Swallowed
                 // here so a job that throws cannot take the watcher down with
@@ -117,10 +147,10 @@ async function trigger(): Promise<void> {
                     error: err instanceof Error ? err.message : String(err),
                 });
             }
-            if (!queued) return;
+            if (!queued.has(mailbox)) return;
         }
     } finally {
-        running = false;
+        running.delete(mailbox);
     }
 }
 
@@ -156,7 +186,7 @@ async function session(mailbox: string): Promise<void> {
     // more here, because this connection is held rather than momentary.
     await client.mailboxOpen(mailbox, { readOnly: true });
 
-    health = { watching: true, mailbox, error: null, triggered: health.triggered };
+    mark(mailbox, { watching: true, error: null });
     step("mail-watch-idle", {
         host: config.imapHost,
         mailbox,
@@ -166,12 +196,17 @@ async function session(mailbox: string): Promise<void> {
     client.on("exists", (data: { count: number; prevCount: number }) => {
         if (data.count <= data.prevCount) return;
         debug("mail-watch-exists", { count: data.count, prev: data.prevCount });
-        // Coalesced: a delivery of several messages is several events.
-        if (pending !== undefined) clearTimeout(pending);
-        pending = setTimeout(() => {
-            pending = undefined;
-            void trigger();
-        }, COALESCE_MS);
+        // Coalesced per mailbox: a delivery of several messages is several
+        // events, and two mailboxes are two independent streams of them.
+        const existing = pending.get(mailbox);
+        if (existing !== undefined) clearTimeout(existing);
+        pending.set(
+            mailbox,
+            setTimeout(() => {
+                pending.delete(mailbox);
+                void trigger(mailbox);
+            }, COALESCE_MS),
+        );
     });
 
     // Resolve when the connection goes, whichever way it goes. imapflow keeps
@@ -196,62 +231,72 @@ async function session(mailbox: string): Promise<void> {
 export function startMailWatch(): void {
     if (!config.mailWatch) return;
 
-    const mailbox = config.mailWatchMailbox;
-
-    if (secrets.read("gmailAppPassword") === undefined) {
-        health = { watching: false, mailbox, error: "no credential", triggered: 0 };
+    const mailboxes = parseMailboxes(config.mailWatchMailbox);
+    if (mailboxes.length === 0) {
         warn("mail-watch-not-started", {
-            reason: "the gmailAppPassword credential is not set",
+            reason: "no mailbox named",
             effect: "mail arrives on the read-mail schedule instead of immediately",
         });
         return;
     }
 
-    if (config.mailUser === "") {
-        health = { watching: false, mailbox, error: "no mail account configured", triggered: 0 };
+    const refuse = (reason: string): void => {
+        for (const m of mailboxes) mark(m, { watching: false, error: reason });
         warn("mail-watch-not-started", {
-            reason: "RN_MAIL_USER is not set",
+            reason,
             effect: "mail arrives on the read-mail schedule instead of immediately",
         });
+    };
+
+    if (secrets.read("gmailAppPassword") === undefined) {
+        refuse("the gmailAppPassword credential is not set");
+        return;
+    }
+    if (config.mailUser === "") {
+        refuse("RN_MAIL_USER is not set");
         return;
     }
 
     stopped = false;
-    let attempt = 0;
 
-    const loop = async (): Promise<void> => {
-        while (!stopped) {
-            try {
-                await session(mailbox);
-                // A clean close still means the watch is down. Reset the
-                // backoff, since this was not a failure.
-                attempt = 0;
-                health = { ...health, watching: false, error: "connection closed" };
-                step("mail-watch-closed", { mailbox });
-            } catch (err) {
-                const message = err instanceof Error ? err.message : String(err);
-                health = { ...health, watching: false, error: message };
-                warn("mail-watch-failed", {
-                    error: message,
-                    effect: "mail arrives on the read-mail schedule instead of immediately",
-                });
-                attempt = Math.min(attempt + 1, BACKOFF_MS.length - 1);
+    // One connection per mailbox, each reconnecting on its own. IMAP idles on
+    // a *selected* mailbox, so there is no way to watch two over one socket —
+    // and independent loops mean a label that goes away does not take INBOX's
+    // watch down with it.
+    for (const mailbox of mailboxes) {
+        mark(mailbox, { watching: false, error: null });
+        void (async () => {
+            let attempt = 0;
+            while (!stopped) {
+                try {
+                    await session(mailbox);
+                    // A clean close still means this watch is down. Reset the
+                    // backoff, since it was not a failure.
+                    attempt = 0;
+                    mark(mailbox, { watching: false, error: "connection closed" });
+                    step("mail-watch-closed", { mailbox });
+                } catch (err) {
+                    const message = err instanceof Error ? err.message : String(err);
+                    mark(mailbox, { watching: false, error: message });
+                    warn("mail-watch-failed", {
+                        mailbox,
+                        error: message,
+                        effect: "this mailbox falls back to the read-mail schedule",
+                    });
+                    attempt = Math.min(attempt + 1, BACKOFF_MS.length - 1);
+                }
+                if (stopped) return;
+                const wait = BACKOFF_MS[attempt] ?? BACKOFF_MS.at(-1) ?? 60_000;
+                await new Promise((r) => setTimeout(r, wait));
             }
-            if (stopped) return;
-            const wait = BACKOFF_MS[attempt] ?? BACKOFF_MS.at(-1) ?? 60_000;
-            await new Promise((r) => setTimeout(r, wait));
-        }
-    };
-
-    void loop();
+        })();
+    }
 }
 
 /** Stop watching. Tests, and a clean shutdown. */
 export function stopMailWatch(): void {
     stopped = true;
-    if (pending !== undefined) {
-        clearTimeout(pending);
-        pending = undefined;
-    }
-    health = { ...health, watching: false };
+    for (const t of pending.values()) clearTimeout(t);
+    pending.clear();
+    for (const m of watched.keys()) mark(m, { watching: false });
 }

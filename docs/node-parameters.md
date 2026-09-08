@@ -28,7 +28,7 @@ scales with installed RAM, so expect a different number elsewhere.
 | **Extra CA certificates** | `NODE_EXTRA_CA_CERTS` | unset (system default) | — | on restart |
 | **Mail account** | `RN_MAIL_USER` | unset (system default) | — | on restart |
 | **Read mail the moment it arrives** | `RN_MAIL_WATCH` | off | — | on restart |
-| **Mailbox to watch** | `RN_MAIL_WATCH_MAILBOX` | INBOX | — | on restart |
+| **Mailboxes to watch** | `RN_MAIL_WATCH_MAILBOX` | INBOX | — | on restart |
 | **Accept mail only from** | `RN_MAIL_ALLOWED_SENDERS` | unset (system default) | — | on restart |
 | **SMTP host** | `RN_SMTP_HOST` | smtp.gmail.com | — | on restart |
 | **SMTP port** | `RN_SMTP_PORT` | 465 | 1 … 65535 | on restart |
@@ -442,17 +442,19 @@ It needs the account and the credential at boot. Without either it does not star
 
 Default: off · Takes effect: on restart · Settings key: `mailWatch`
 
-### Mailbox to watch — `RN_MAIL_WATCH_MAILBOX`
+### Mailboxes to watch — `RN_MAIL_WATCH_MAILBOX`
 
 **What it does.** Which mailbox the held-open connection watches. INBOX is the answer almost every time — it is where mail lands before anything moves it, so it is what "has something arrived" actually means.
 
-One mailbox only. IMAP idles on a *selected* mailbox, so watching two would mean holding two connections; that is why this is a single name rather than a list.
+More than one is allowed — comma-separated or one per line — and each gets its own connection, because IMAP idles on a *selected* mailbox and there is no way to watch two over one socket. They reconnect independently, so a label that goes away does not take INBOX's watch down with it. Each fires a run scoped to the mailbox that changed.
+
+Two or three is unremarkable; Gmail allows about fifteen simultaneous IMAP connections per account, and every other client you own is spending from the same budget.
 
 A Gmail label is a mailbox too, spelled exactly as Gmail spells it. The separator is / — a nested label is "Projects/rn" — and case matters on most servers, so a name that reads fine in the web interface may need a different spelling here.
 
 **Why you would change it.** THE ONE CASE WHERE INBOX IS WRONG, AND IT IS WORTH CHECKING.
 
-If a Gmail filter on the sender has "Skip the Inbox (Archive it)" ticked, the message never touches INBOX at all. A watcher there sits connected and healthy and never fires — and the read-mail schedule does not save you, because it searches the same mailbox. Everything looks fine and nothing arrives. Put the label's own name here if that is your setup.
+If a Gmail filter on the sender has "Skip the Inbox (Archive it)" ticked, the message never touches INBOX at all. A watcher there sits connected and healthy and never fires — and the read-mail schedule does not save you, because it searches the same mailbox. Everything looks fine and nothing arrives. Add the label's own name here — alongside INBOX, not instead of it, since one filter rarely covers everything you want to hear about.
 
 Watching a label that a filter moves mail into has a smaller cost worth knowing: you are then waiting on Gmail's filters as well as on delivery. Usually seconds. Occasionally not.
 

@@ -270,7 +270,12 @@ export const config = {
      */
     mailWatch: process.env.RN_MAIL_WATCH === "1",
 
-    /** Which mailbox the watcher holds open. */
+    /**
+     * Which mailboxes the watcher holds open, comma- or newline-separated.
+     *
+     * One connection each: IMAP idles on a *selected* mailbox, so there is no
+     * way to watch two over one socket.
+     */
     mailWatchMailbox: process.env.RN_MAIL_WATCH_MAILBOX ?? "INBOX",
 
     /** IMAP host the read-mail job connects to. */

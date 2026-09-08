@@ -59,7 +59,7 @@ import {
 import { config, remoteBindRefusal } from "./config.ts";
 import { createHookApp, hooksHealth, startHooks } from "./hooks/server.ts";
 import { createTrackerApp, startTracker, trackerHealth } from "./tracker/server.ts";
-import { startMailWatch } from "./mail/watcher.ts";
+import { mailWatchHealth, startMailWatch } from "./mail/watcher.ts";
 import * as trackerStore from "./tracker/store.ts";
 import { sendTestDelivery } from "./hooks/test-delivery.ts";
 import { describeEnv } from "./env-file.ts";
@@ -369,12 +369,23 @@ export function createApp() {
             // reason: its one route is public, so a health endpoint on that
             // port would be a second thing a stranger can reach.
             const trackerState = trackerHealth();
+            // The mail watch is a client rather than a listener, and its
+            // failure is the quietest of the three: a dropped connection means
+            // mail stops arriving promptly with nothing red anywhere. Reported
+            // here so "is it actually watching" is answerable without reading
+            // the log.
+            const mailState = mailWatchHealth();
+            const mailDegraded =
+                mailState.enabled && mailState.mailboxes.some((m) => !m.watching);
             send(res, 200, {
                 status:
-                    hooksState.error === null && trackerState.error === null ? "ok" : "degraded",
+                    hooksState.error === null && trackerState.error === null && !mailDegraded
+                        ? "ok"
+                        : "degraded",
                 node: process.version,
                 hooks: hooksState,
                 tracker: trackerState,
+                mail: mailState,
             });
             return done(200);
         }

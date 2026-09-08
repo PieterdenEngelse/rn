@@ -80,7 +80,15 @@ with a backoff, and ringing a doorbell rather than reading anything itself. The
 schedule stays as the backstop for whatever arrives while the connection is
 down.
 
-Two things it cost, both found by talking to a server rather than reasoning:
+**One connection per watched mailbox**, because IMAP idles on a *selected*
+mailbox and there is no way to watch two over one socket. They reconnect
+independently, and each fires a run scoped to the mailbox that changed — which
+is not the default: the run has to be given the mailbox as its input, or it
+reads INBOX and finds nothing. That mismatch was silent, and it broke precisely
+the configuration this document recommends, since watching a label is the answer
+when a Gmail filter skips the inbox.
+
+Three things it cost, all found by talking to a server rather than reasoning:
 imapflow waits fifteen seconds of inactivity before entering IDLE, which is
 right for a client that issues commands and leaves a fifteen-second blind window
 after every reconnect for one that does not; and a burst of deliveries is a
