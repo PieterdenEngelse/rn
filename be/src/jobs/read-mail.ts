@@ -196,11 +196,30 @@ export const readMail: Job = {
                     "Addresses or domains, one per line or comma-separated. " +
                     "\"reports@example.com\" is that address exactly; \"example.com\" or " +
                     "\"@example.com\" is anybody at that domain.\n\n" +
-                    "Empty falls back to \"Accept mail only from\" on Config → Runtime, which " +
-                    "is where the standing answer belongs: a scheduled run carries no inputs, " +
-                    "so anything typed here applies only to a run you start by hand.",
+
+                    "THERE ARE TWO OF THESE, AND THIS IS THE ONE-OFF.\n\n" +
+
+                    "This field belongs to the single run you are about to start with Run " +
+                    "now, beside it on this card. It is blank every time and affects nothing " +
+                    "else.\n\n" +
+
+                    "The standing answer is \"Accept mail only from\", on Config → Runtime " +
+                    "in the Mail board. That one applies to every run, including the " +
+                    "automatic ones every thirty minutes. In ordinary use you set that and " +
+                    "never touch this.\n\n" +
+
+                    "Left blank, this falls back to that setting. Fill it in only to ask a " +
+                    "different question once — \"what came from this one address today\" — " +
+                    "without changing the policy.",
                 why:
-                    "It narrows the search on the server, so mail from anyone else is never " +
+                    "Because the two questions are different. A scheduled run carries no " +
+                    "inputs at all — the scheduler calls the job with none, so it uses the " +
+                    "declared defaults — which means anything typed here is invisible to " +
+                    "every automatic run. That is why the policy lives in a setting and this " +
+                    "is only an override.\n\n" +
+
+                    "What either of them buys is the same: it narrows the search on the " +
+                    "server, so mail from anyone else is never " +
                     "downloaded, never scanned, and never written to a run record. That is " +
                     "worth more than a tidier report: this job's output goes on a page and " +
                     "into the job history, so not fetching a message is the only way to be " +

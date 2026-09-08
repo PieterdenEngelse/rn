@@ -776,9 +776,20 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
             what:
                 "Addresses or domains the read-mail job will accept, one per line or " +
                 "comma-separated. \"reports@example.com\" is that address exactly; " +
-                "\"example.com\" or \"@example.com\" is anybody at that domain.\n\n" +
-                "Empty means every sender. The job's own \"Only from these senders\" field " +
-                "overrides this for a single run you start by hand.",
+                "\"example.com\" or \"@example.com\" is anybody at that domain. Empty " +
+                "means every sender.\n\n" +
+
+                "THERE ARE TWO OF THESE, AND THIS IS THE STANDING ONE.\n\n" +
+
+                "This setting applies to every run of the job, including the automatic ones " +
+                "every thirty minutes. It is the one to set, and in ordinary use it is the " +
+                "only one you touch.\n\n" +
+
+                "The other is \"Only from these senders\", on the job\'s card on " +
+                "Monitor → Jobs beside the Run now button. That field belongs to a single " +
+                "run you start by hand: it is blank every time, it overrides this setting " +
+                "for that one run, and it affects no scheduled run at all. It is there to " +
+                "ask a different question once without changing the policy.",
             why:
                 "It has to live here rather than only on the run form, because the scheduler " +
                 "supplies no inputs: an automatic run uses the job's declared defaults, so a " +
