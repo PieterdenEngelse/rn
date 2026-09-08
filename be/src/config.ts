@@ -261,6 +261,18 @@ export const config = {
     mailAllowedSenders: process.env.RN_MAIL_ALLOWED_SENDERS ?? "",
 
     /**
+     * The mail rules an install has made — which mailboxes to watch and what
+     * counts as interesting in each.
+     *
+     * Its own file rather than a section of settings.json, which holds scalar
+     * runtime parameters and has no shape for a list of records. Per worktree,
+     * like every other store here: a rule made while testing must not start
+     * watching a mailbox on the install somebody actually uses.
+     */
+    mailRulesPath:
+        process.env.RN_MAIL_RULES_PATH ?? `${process.env.HOME ?? "."}/.config/rn/mail-rules.json`,
+
+    /**
      * Recipients the read-mail job will accept mail to, install-wide.
      *
      * The counterpart of `mailAllowedSenders`, and what makes watching a sent

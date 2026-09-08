@@ -34,6 +34,8 @@ import type {
     JobConfigResponse,
     JobOverride,
     LinksResponse,
+    MailRuleSaveResponse,
+    MailRulesResponse,
     WebhookDef,
     WebhookSaveResponse,
     WebhooksResponse,
@@ -60,6 +62,7 @@ import { config, remoteBindRefusal } from "./config.ts";
 import { createHookApp, hooksHealth, startHooks } from "./hooks/server.ts";
 import { createTrackerApp, startTracker, trackerHealth } from "./tracker/server.ts";
 import { mailWatchHealth, startMailWatch } from "./mail/watcher.ts";
+import * as mailRules from "./mail/rules.ts";
 import * as trackerStore from "./tracker/store.ts";
 import { sendTestDelivery } from "./hooks/test-delivery.ts";
 import { describeEnv } from "./env-file.ts";
@@ -515,6 +518,58 @@ export function createApp() {
                         })),
                     })),
             } satisfies SendDetail);
+            return done(200);
+        }
+
+        // The rules behind Config → Mail. Read, written and deleted here
+        // rather than through the settings endpoint, for the reason webhooks
+        // are: a list of records is not a scalar setting, and validating one
+        // needs its own answers rather than a generic "rejected".
+        if (url.pathname === "/api/mail-rules" && req.method === "GET") {
+            const stored = mailRules.list();
+            const watch = mailWatchHealth();
+            const watchedNow = new Set(watch.mailboxes.map((m) => m.mailbox));
+            send(res, 200, {
+                rules: [...stored],
+                watchingEnabled: config.mailWatch,
+                watched: watch.mailboxes,
+                // Rules the running process is not watching for. The
+                // save-then-restart window, in which the page and the process
+                // disagree about what is being watched — which for a feature
+                // whose failure is silence is the one thing worth saying out
+                // loud on the page.
+                needsRestart:
+                    config.mailWatch &&
+                    stored.some((r) => r.enabled && !watchedNow.has(r.mailbox)),
+            } satisfies MailRulesResponse);
+            return done(200);
+        }
+
+        if (url.pathname === "/api/mail-rules" && req.method === "PUT") {
+            const body = await readJson(req);
+            const result = mailRules.put(body);
+            if (result.rule === undefined) {
+                send(res, 422, { ok: false, errors: result.errors } satisfies MailRuleSaveResponse);
+                return done(422);
+            }
+            send(res, 200, {
+                ok: true,
+                errors: [],
+                rule: result.rule,
+            } satisfies MailRuleSaveResponse);
+            return done(200);
+        }
+
+        if (url.pathname.startsWith("/api/mail-rules/") && req.method === "DELETE") {
+            const id = decodeURIComponent(url.pathname.slice("/api/mail-rules/".length));
+            if (!mailRules.remove(id)) {
+                send(res, 404, {
+                    ok: false,
+                    errors: [`no rule ${id}`],
+                } satisfies MailRuleSaveResponse);
+                return done(404);
+            }
+            send(res, 200, { ok: true, errors: [] } satisfies MailRuleSaveResponse);
             return done(200);
         }
 

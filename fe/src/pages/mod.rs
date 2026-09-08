@@ -1,6 +1,7 @@
 // src/pages/mod.rs
 pub mod config;
 pub mod config_connection;
+pub mod config_mail;
 pub mod config_jobs;
 pub mod home;
 pub mod monitor_connection;
@@ -11,6 +12,7 @@ pub mod not_found;
 
 pub use config::Config;
 pub use config_connection::ConfigConnection;
+pub use config_mail::ConfigMail;
 pub use config_jobs::ConfigJobs;
 pub use home::Home;
 pub use monitor_connection::MonitorConnection;

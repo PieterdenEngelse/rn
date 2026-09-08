@@ -41,6 +41,7 @@
 
 import { readFileSync } from "node:fs";
 import { config } from "../config.ts";
+import * as rules from "../mail/rules.ts";
 import {
     extractLinks,
     fallbackKey,
@@ -379,11 +380,37 @@ export const readMail: Job = {
         // install's standing setting applies. That order is what makes a
         // scheduled run — which carries no inputs at all — still filtered.
         const typed = String(ctx.input.from ?? "").trim();
-        const senders = parseSenders(typed === "" ? config.mailAllowedSenders : typed);
         const typedTo = String(ctx.input.to ?? "").trim();
-        const recipients = parseSenders(
-            typedTo === "" ? config.mailAllowedRecipients : typedTo,
-        );
+
+        // What counts as interesting in this mailbox, as a list of alternatives.
+        //
+        // Rules for the mailbox are ORed and the fields inside each are ANDed —
+        // which is the whole reason rules replaced three install-wide values.
+        // `from: her` and `to: her` as globals cannot both hold for one
+        // message, so "when she writes to me, or when I write to her" was
+        // unsayable; as two rules it needs no cleverness.
+        //
+        // The run form still wins when it is filled in, and the old settings
+        // are the fallback when no rule names this mailbox, so an install
+        // configured before rules existed goes on working unchanged.
+        const configured = rules.forMailbox(mailbox);
+        const alternatives: { from: string[]; to: string[] }[] =
+            typed !== "" || typedTo !== ""
+                ? [{ from: parseSenders(typed), to: parseSenders(typedTo) }]
+                : configured.length > 0
+                  ? configured.map((r) => ({ from: parseSenders(r.from), to: parseSenders(r.to) }))
+                  : [
+                        {
+                            from: parseSenders(config.mailAllowedSenders),
+                            to: parseSenders(config.mailAllowedRecipients),
+                        },
+                    ];
+
+        // Kept for the run record and the unapplied-filter guard, which both
+        // still speak in terms of "the sender filter" when there is one.
+        const senders = alternatives.length === 1 ? (alternatives[0]?.from ?? []) : [];
+        const recipients = alternatives.length === 1 ? (alternatives[0]?.to ?? []) : [];
+        const usingRules = typed === "" && typedTo === "" && configured.length > 0;
 
         // Fail closed on a filter that has been saved but not yet applied.
         //
@@ -397,7 +424,7 @@ export const readMail: Job = {
         // Checked against the saved file rather than a restart flag because the
         // question is not "is something pending" but "is *this* setting in
         // force", and only these two values answer that.
-        if (typed === "") {
+        if (typed === "" && !usingRules) {
             unappliedFilterGuard(
                 "mailAllowedSenders",
                 config.mailAllowedSenders,
@@ -405,7 +432,7 @@ export const readMail: Job = {
                 "sender",
             );
         }
-        if (typedTo === "") {
+        if (typedTo === "" && !usingRules) {
             unappliedFilterGuard(
                 "mailAllowedRecipients",
                 config.mailAllowedRecipients,
@@ -479,27 +506,39 @@ export const readMail: Job = {
                 // Narrowed on the server, so mail from anyone else is never
                 // fetched. IMAP has no "from is one of" — the OR is binary and
                 // nests — so a list becomes a right-leaning chain of them.
+                // IMAP has no "any of these" — OR is binary and nests — so a
+                // list of alternatives becomes a right-leaning chain of them.
                 type Criteria = { from?: string; to?: string; or?: Criteria[] };
-                const fromCriteria: Criteria | undefined =
-                    senders.length === 0
+                const anyOf = (parts: Criteria[]): Criteria | undefined =>
+                    parts.length === 0
                         ? undefined
-                        : senders
-                              .map((f): Criteria => ({ from: f }))
-                              .reduce((acc, one): Criteria => ({ or: [acc, one] }));
+                        : parts.reduce((acc, one): Criteria => ({ or: [acc, one] }));
 
-                const toCriteria: Criteria | undefined =
-                    recipients.length === 0
-                        ? undefined
-                        : recipients
-                              .map((t): Criteria => ({ to: t }))
-                              .reduce((acc, one): Criteria => ({ or: [acc, one] }));
+                // One alternative: its sender patterns ORed, its recipient
+                // patterns ORed, and the two ANDed by sitting in one object.
+                const forAlternative = (alt: {
+                    from: string[];
+                    to: string[];
+                }): Criteria | undefined => {
+                    const f = anyOf(alt.from.map((x): Criteria => ({ from: x })));
+                    const t = anyOf(alt.to.map((x): Criteria => ({ to: x })));
+                    if (f === undefined && t === undefined) return undefined;
+                    return { ...(f ?? {}), ...(t ?? {}) };
+                };
 
-                const narrowed = fromCriteria !== undefined || toCriteria !== undefined;
+                const perRule = alternatives
+                    .map(forAlternative)
+                    .filter((c): c is Criteria => c !== undefined);
+                // A single unnarrowed alternative means "everything", and an
+                // OR containing it would mean the same — so a rule set with one
+                // wide alternative widens the whole search, correctly.
+                const ruleCriteria =
+                    perRule.length === alternatives.length ? anyOf(perRule) : undefined;
+
                 const criteria = {
                     ...(unreadOnly ? { seen: false } : {}),
-                    ...(fromCriteria ?? {}),
-                    ...(toCriteria ?? {}),
-                    ...(unreadOnly || narrowed ? {} : { all: true }),
+                    ...(ruleCriteria ?? {}),
+                    ...(unreadOnly || ruleCriteria !== undefined ? {} : { all: true }),
                 };
                 const uids = await client.search(criteria, { uid: true });
                 if (uids === false) {
@@ -513,6 +552,7 @@ export const readMail: Job = {
                     matched: uids.length,
                     examining: recent.length,
                     unreadOnly,
+                    ...(usingRules ? { rules: alternatives.length } : {}),
                     ...(senders.length === 0 ? {} : { from: senders.join(", ") }),
                     ...(recipients.length === 0 ? {} : { to: recipients.join(", ") }),
                 });
@@ -554,33 +594,34 @@ export const readMail: Job = {
                     }
 
                     const sender = envelope?.from?.[0]?.address ?? "";
-                    if (!senderMatches(sender, senders)) {
+                    const recipientsOf = [...(envelope?.to ?? []), ...(envelope?.cc ?? [])]
+                        .map((a) => a.address ?? "")
+                        .filter((a) => a !== "");
+
+                    // Any one alternative matching is enough; within an
+                    // alternative both halves must hold.
+                    const matched = alternatives.some(
+                        (alt) =>
+                            senderMatches(sender, alt.from) &&
+                            recipientMatches(recipientsOf, alt.to),
+                    );
+                    if (!matched) {
                         // Reported, not silently dropped. The server's FROM
                         // search matches the display name too, so arriving here
                         // means either a substring coincidence or somebody
                         // putting a trusted address in the name field — and the
                         // second one is worth a person seeing.
+                        // Reported, not dropped. The server's FROM and TO
+                        // searches are substring matches over whole headers,
+                        // display names included, so arriving here means either
+                        // a coincidence or somebody putting a trusted address
+                        // in a name field — and the second is worth seeing.
                         mismatched += 1;
-                        ctx.step("sender-mismatch", {
+                        ctx.step("address-mismatch", {
                             from: sender === "" ? "(no address)" : sender,
+                            to: recipientsOf.join(", ") || "(none)",
                             subject: String(envelope?.subject ?? "").slice(0, 120),
-                            effect: "matched the server search but not the address filter",
-                        });
-                        continue;
-                    }
-
-                    const to = [
-                        ...(envelope?.to ?? []),
-                        ...(envelope?.cc ?? []),
-                    ]
-                        .map((a) => a.address ?? "")
-                        .filter((a) => a !== "");
-                    if (!recipientMatches(to, recipients)) {
-                        mismatched += 1;
-                        ctx.step("recipient-mismatch", {
-                            to: to.join(", ") || "(none)",
-                            subject: String(envelope?.subject ?? "").slice(0, 120),
-                            effect: "matched the server search but not the recipient filter",
+                            effect: "matched the server search but no rule's addresses",
                         });
                         continue;
                     }

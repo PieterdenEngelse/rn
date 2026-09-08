@@ -6,7 +6,8 @@
 
 use super::wire::{
     ConnectionResponse, EnvResponse, HealthResponse, JobConfigResponse, JobErrors, JobOverride,
-    JobRunResult, JobSource, JobsResponse, LinksResponse, NodeHistory, NodeMetrics, SendDetail,
+    JobRunResult, JobSource, JobsResponse, LinksResponse, MailRule, MailRuleSaveResponse,
+    MailRulesResponse, NodeHistory, NodeMetrics, SendDetail,
     ParamsResponse, RestartOutcome, RunsResponse, SaveResponse, StateResetResponse, StatusResponse,
     CredentialSaveResponse, CredentialsResponse, StopOutcome, TestDelivery, WebhookDef,
     WebhookSaveResponse, WebhooksResponse,
@@ -617,4 +618,43 @@ pub async fn delete_credential(name: &str) -> Result<CredentialSaveResponse, Str
     resp.json::<CredentialSaveResponse>()
         .await
         .map_err(|_| format!("the credential was not removed ({})", resp.status()))
+}
+
+/// The mail rules this install has made, and what is actually being watched.
+///
+/// One call rather than two, because the page's whole job is to show a rule
+/// beside whether its mailbox has a connection — and fetching those separately
+/// would let them disagree on screen for a moment, which on this page reads as
+/// a rule being broken.
+pub async fn fetch_mail_rules() -> Result<MailRulesResponse, String> {
+    let resp = gloo_net::http::Request::get(&format!("{API_BASE}/api/mail-rules"))
+        .send()
+        .await
+        .map_err(|e| format!("{e}"))?;
+    resp.json::<MailRulesResponse>().await.map_err(|e| format!("{e}"))
+}
+
+/// Add or replace one rule. The id in the body decides which.
+pub async fn save_mail_rule(rule: &MailRule) -> Result<MailRuleSaveResponse, String> {
+    let body = serde_json::to_string(rule).map_err(|e| format!("{e}"))?;
+    let resp = gloo_net::http::Request::put(&format!("{API_BASE}/api/mail-rules"))
+        .header("content-type", "application/json")
+        .body(body)
+        .map_err(|e| format!("{e}"))?
+        .send()
+        .await
+        .map_err(|e| format!("{e}"))?;
+    resp.json::<MailRuleSaveResponse>()
+        .await
+        .map_err(|_| format!("the save failed ({})", resp.status()))
+}
+
+pub async fn delete_mail_rule(id: &str) -> Result<MailRuleSaveResponse, String> {
+    let resp = gloo_net::http::Request::delete(&format!("{API_BASE}/api/mail-rules/{id}"))
+        .send()
+        .await
+        .map_err(|e| format!("{e}"))?;
+    resp.json::<MailRuleSaveResponse>()
+        .await
+        .map_err(|_| format!("the delete failed ({})", resp.status()))
 }

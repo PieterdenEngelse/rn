@@ -28,6 +28,12 @@ pub use shared::{
 // of, since an arrival at a tracked link cannot be attributed to a person.
 pub use shared::links::*;
 
+// The mail rules made on Config → Mail. Its own module in `shared/` because
+// what it encodes is a different document's argument — docs/link-tracking.md
+// §2 — and because a rule is a record rather than a setting: `settings.json`
+// holds scalars and has no shape for a list of these.
+pub use shared::mail::*;
+
 pub use shared::monitor::*;
 
 // The webhooks made on Config → Jobs. Deliberately the same crate as the job

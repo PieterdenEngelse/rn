@@ -1,7 +1,7 @@
 use crate::components::header::Header;
 use crate::components::SubNav;
 use crate::pages::{
-    Config, ConfigConnection, ConfigJobs, Home, MonitorConnection, MonitorJobs, MonitorLinks,
+    Config, ConfigConnection, ConfigJobs, ConfigMail, Home, MonitorConnection, MonitorJobs, MonitorLinks,
     MonitorLinksSend, MonitorRuntime, PageNotFound,
 };
 use dioxus::prelude::*;
@@ -45,6 +45,12 @@ pub enum Route {
         // read together and none of them is a runtime parameter.
         #[route("/config/connection")]
         ConfigConnection {},
+        // Mail rules: which mailboxes are watched and what counts in each. Its
+        // own page rather than a board on Config, because a rule is a record
+        // you make and delete rather than a value you set — the same reason
+        // webhooks are not a settings row.
+        #[route("/config/mail")]
+        ConfigMail {},
         // A second page under Config, not a tab inside the first: what a job
         // is configured to do is declared in code, and mixing it into a board
         // of editable settings would imply it is one.

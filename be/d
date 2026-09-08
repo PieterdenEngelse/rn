@@ -51,6 +51,10 @@ if [ "$worktree" != "rn" ]; then
     # nobody. The reverse is worse — a worktree that pruned or lost the file
     # could mail a list the real install had already sent to.
     export RN_TRACKER_SENT_PATH="$state/link-sends.jsonl"
+    # Mail rules, for the reason webhooks are here: a rule made while testing
+    # would otherwise start holding an IMAP connection open against the install
+    # somebody actually uses, and reporting their mail onto its pages.
+    export RN_MAIL_RULES_PATH="$state/mail-rules.json"
 fi
 
 echo "backend for $worktree on http://127.0.0.1:$BACKEND_PORT (hooks :$BACKEND_HOOKS_PORT, tracker :$BACKEND_TRACKER_PORT)"

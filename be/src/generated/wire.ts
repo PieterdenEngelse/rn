@@ -1039,6 +1039,76 @@ credential?: string | null, };
 
 export type LoopPercentile = { label: string, ms: number, };
 
+/**
+ * One rule: a mailbox, and what counts as interesting in it.
+ */
+export type MailRule = { 
+/**
+ * Stable id, minted by `be`. Appears in no URL a stranger can reach.
+ */
+id: string, 
+/**
+ * The IMAP mailbox this rule watches — `INBOX`, `[Gmail]/Sent Mail`,
+ * a label. Two rules naming the same mailbox share one connection.
+ */
+mailbox: string, 
+/**
+ * Addresses or domains the sender must match. Empty means any sender.
+ */
+from: string, 
+/**
+ * Addresses or domains a `To` or `Cc` must match. Empty means any.
+ *
+ * The field that makes a sent mailbox worth watching: there the sender
+ * is always you, so `from` matches everything and only this
+ * distinguishes one message from another.
+ */
+to: string, 
+/**
+ * Off keeps the rule and stops it doing anything — including holding
+ * its mailbox's connection open, when no other enabled rule names it.
+ */
+enabled: boolean, 
+/**
+ * What this rule is for, in the operator's words. Optional, and worth
+ * filling in: a list of address pairs is unreadable six months later.
+ */
+label: string, };
+
+/**
+ * PUT and DELETE /api/mail-rules/:id.
+ */
+export type MailRuleSaveResponse = { ok: boolean, 
+/**
+ * What was wrong, in the order a person would fix it. Empty when ok.
+ */
+errors: Array<string>, 
+/**
+ * The rule as stored, with its id and any normalisation applied.
+ */
+rule?: MailRule | null, };
+
+/**
+ * GET /api/mail-rules.
+ */
+export type MailRulesResponse = { rules: Array<MailRule>, 
+/**
+ * Whether the watcher is switched on at all. Rules exist and do
+ * nothing without it, which is worth saying on the page rather than
+ * leaving somebody to wonder why a correct-looking rule is silent.
+ */
+watchingEnabled: boolean, 
+/**
+ * One entry per mailbox a connection is held for.
+ */
+watched: Array<WatchedMailbox>, 
+/**
+ * True when rules exist but the running process has not loaded them —
+ * the save-then-restart window, in which the page and the process
+ * disagree about what is being watched.
+ */
+needsRestart: boolean, };
+
 export type NodeConcurrency = { threadpoolSize: number, activeResources: { [key in string]: number }, 
 /**
  * One entry per live handle, where the runtime can name them individually.
@@ -1595,6 +1665,23 @@ export type Trigger = "manual" | "schedule" | "failure" | "webhook" | "change" |
  * "not reported" for both would flatten two different next steps into one.
  */
 export type Unavailable = { id: string, kind: string, reason: string, };
+
+/**
+ * One watched mailbox and whether its connection is up.
+ *
+ * Reported rather than assumed, because a dropped IMAP connection is the
+ * quietest failure in this feature: mail simply stops arriving promptly,
+ * with nothing red anywhere.
+ */
+export type WatchedMailbox = { mailbox: string, watching: boolean, 
+/**
+ * Why it is not, when it is not.
+ */
+error: string | null, 
+/**
+ * Runs this mailbox has started since the process began.
+ */
+triggered: number, };
 
 /**
  * One webhook as the page sees it: its definition, plus what only the

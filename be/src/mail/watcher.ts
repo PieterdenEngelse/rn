@@ -41,6 +41,7 @@
 
 import { config } from "../config.ts";
 import { readMail } from "../jobs/read-mail.ts";
+import * as rules from "./rules.ts";
 import { runJob } from "../jobs/run.ts";
 import * as secrets from "../secrets.ts";
 import { debug, step, warn } from "../log.ts";
@@ -231,7 +232,12 @@ async function session(mailbox: string): Promise<void> {
 export function startMailWatch(): void {
     if (!config.mailWatch) return;
 
-    const mailboxes = parseMailboxes(config.mailWatchMailbox);
+    // The rules decide what is watched. The setting is the fallback for an
+    // install configured before rules existed, so upgrading changes nothing
+    // until somebody makes a rule.
+    const fromRules = rules.watchedMailboxes();
+    const mailboxes =
+        fromRules.length > 0 ? fromRules : parseMailboxes(config.mailWatchMailbox);
     if (mailboxes.length === 0) {
         warn("mail-watch-not-started", {
             reason: "no mailbox named",
