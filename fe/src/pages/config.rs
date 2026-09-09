@@ -151,6 +151,7 @@ fn category_title(cat: Category) -> &'static str {
         Category::Time => "Time",
         Category::Network => "Network",
         Category::Mail => "Mail",
+        Category::Links => "Links",
         Category::Diagnostics => "Diagnostics",
         Category::Output => "Output",
         Category::Runtime => "Runtime",
@@ -521,7 +522,8 @@ fn ParamBoards(
                         "mechanism carries them, because that distinction matters to the ",
                         "runtime and not to you. Memory is the heap ceiling. Concurrency is how ",
                         "many operations run at once. Time is the zone schedules are read in. ",
-                        "Network covers certificates. Mail is the account rn sends and reads with. ",
+                        "Network covers certificates. Mail is the account rn sends and reads with, ",
+                        "and Links is the tracking on what it sends. ",
                         "Diagnostics turn extra reporting on. ",
                         "Output is cosmetic.\n\n",
 

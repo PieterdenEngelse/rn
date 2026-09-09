@@ -26,6 +26,9 @@ scales with installed RAM, so expect a different number elsewhere.
 | **Unhandled rejection policy** | `--unhandled-rejections` (NODE_OPTIONS) | unset (system default) | — | on restart |
 | **Time zone** | `TZ` | unset (system default) | — | on restart |
 | **Extra CA certificates** | `NODE_EXTRA_CA_CERTS` | unset (system default) | — | on restart |
+| **Links point at** | `RN_TRACKER_BASE_URL` | unset (system default) | — | on restart |
+| **Accept a borrowed hostname** | `RN_TRACKER_ACCEPT_BORROWED_HOSTNAME` | off | — | on restart |
+| **Keep identity for** | `RN_TRACKER_RETENTION_DAYS` | 90 | 1 … 3650 | on restart |
 | **Mail account** | `RN_MAIL_USER` | unset (system default) | — | on restart |
 | **Only to these recipients** | `RN_MAIL_ALLOWED_RECIPIENTS` | unset (system default) | — | on restart |
 | **Read mail the moment it arrives** | `RN_MAIL_WATCH` | off | — | on restart |
@@ -406,6 +409,50 @@ A job that legitimately needs longer should set timeoutMs in its own definition 
 Too high and a hung job stays in flight for as long as the ceiling allows, blocking restarts the whole time. Note that the ceiling is per attempt: three retries of a five-minute job can occupy fifteen minutes plus the waits.
 
 Default: 1800000 ms · Takes effect: immediately · Settings key: `defaultTimeoutMs`
+
+## links
+
+### Links point at — `RN_TRACKER_BASE_URL`
+
+**What it does.** The origin rn writes into every tracked link — what a recipient's browser is actually sent to. Include the /t and no trailing slash: https://example.com/t.
+
+Unset, it is this machine's own tracker port, which is deliberately useless from anywhere else.
+
+**Why you would change it.** IT IS THE ONLY SETTING IN RN WHOSE MISTAKE CANNOT BE CORRECTED AFTERWARDS.
+
+A tracked link lives in a recipient's mailbox for as long as they keep the message. Change this and you change where *future* links point; the ones already sent go on pointing where they pointed. So this is not a setting that can be fixed later — it can only be fixed for mail not yet sent.
+
+rn refuses to mint against an origin it can tell is wrong: http, a bare IP, an explicit port, loopback, or a hostname under a suffix somebody lends out. Monitor → Links shows the verdict, and the refusal happens before the first id is generated so there is no half-rewritten message.
+
+**If it's wrong.** The loopback default fails visibly — every recipient sees a connection error the first time anybody clicks.
+
+A borrowed hostname is the dangerous one, because it works. A *.ts.net name resolves, serves a valid certificate and redirects correctly, and it is not yours: it follows the machine and the tailnet, so renaming this laptop or leaving the tailnet kills every link ever sent, all at once, with nothing to redirect them to. That is why it needs the setting below to say you meant it.
+
+Default: unset (system default) · Takes effect: on restart · Settings key: `trackerBaseUrl`
+
+### Accept a borrowed hostname — `RN_TRACKER_ACCEPT_BORROWED_HOSTNAME`
+
+**What it does.** Lets links be minted against a hostname somebody else owns — the *.ts.net name Tailscale Funnel gives this machine, a quick tunnel, an ngrok host. Off, rn refuses those outright.
+
+**Why you would change it.** It waives exactly one check and no others. A borrowed hostname over http, or with a port in it, is still refused: those are different mistakes and this says nothing about them, which is why the accepted set is a list rather than a switch.
+
+docs/link-tracking.md §3 option 3 is the case it exists for — free, no extra infrastructure, and permanent in the wrong direction. Defensible when every recipient already knows what rn is, and not otherwise.
+
+**If it's wrong.** What turning this on commits to, in one sentence: if this machine is renamed, replaced, or leaves the tailnet, every link already sent stops resolving at the same moment.
+
+The exit is to move to a domain you own *before* that happens. Links minted after the move are fine and links minted before it are not recoverable, so the cost of changing your mind grows with every send.
+
+Default: off · Takes effect: on restart · Settings key: `trackerAcceptBorrowedHostname`
+
+### Keep identity for — `RN_TRACKER_RETENTION_DAYS`
+
+**What it does.** How long the recipient recorded against a link is kept, in days. After it, the recipient is dropped and the link goes on resolving forever.
+
+**Why you would change it.** Links and identity have different right answers, and this is the setting that separates them. A link in a mailbox may be clicked years later, so expiring it would put a 404 in mail somebody kept — losing analytics is an annoyance, breaking a link you sent is a fault. What a person did with their mail is the half worth forgetting.
+
+**If it's wrong.** It bounds what rn knows and nothing else. The links themselves are already in mailboxes, so two recipients comparing their copies still learn the mail was individually tracked, however short this is set.
+
+Default: 90 · Takes effect: on restart · Settings key: `trackerRetentionDays`
 
 ## mail
 

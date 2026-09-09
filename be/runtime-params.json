@@ -427,6 +427,53 @@
       }
     },
     {
+      "id": "trackerBaseUrl",
+      "flag": "RN_TRACKER_BASE_URL",
+      "kind": "env",
+      "type": "string",
+      "default": null,
+      "appliesAt": "restart",
+      "category": "links",
+      "label": "Links point at",
+      "info": {
+        "what": "The origin rn writes into every tracked link — what a recipient's browser is actually sent to. Include the /t and no trailing slash: https://example.com/t.\n\nUnset, it is this machine's own tracker port, which is deliberately useless from anywhere else.",
+        "why": "IT IS THE ONLY SETTING IN RN WHOSE MISTAKE CANNOT BE CORRECTED AFTERWARDS.\n\nA tracked link lives in a recipient's mailbox for as long as they keep the message. Change this and you change where *future* links point; the ones already sent go on pointing where they pointed. So this is not a setting that can be fixed later — it can only be fixed for mail not yet sent.\n\nrn refuses to mint against an origin it can tell is wrong: http, a bare IP, an explicit port, loopback, or a hostname under a suffix somebody lends out. Monitor → Links shows the verdict, and the refusal happens before the first id is generated so there is no half-rewritten message.",
+        "ifWrong": "The loopback default fails visibly — every recipient sees a connection error the first time anybody clicks.\n\nA borrowed hostname is the dangerous one, because it works. A *.ts.net name resolves, serves a valid certificate and redirects correctly, and it is not yours: it follows the machine and the tailnet, so renaming this laptop or leaving the tailnet kills every link ever sent, all at once, with nothing to redirect them to. That is why it needs the setting below to say you meant it."
+      }
+    },
+    {
+      "id": "trackerAcceptBorrowedHostname",
+      "flag": "RN_TRACKER_ACCEPT_BORROWED_HOSTNAME",
+      "kind": "env",
+      "type": "bool",
+      "default": false,
+      "appliesAt": "restart",
+      "category": "links",
+      "label": "Accept a borrowed hostname",
+      "info": {
+        "what": "Lets links be minted against a hostname somebody else owns — the *.ts.net name Tailscale Funnel gives this machine, a quick tunnel, an ngrok host. Off, rn refuses those outright.",
+        "why": "It waives exactly one check and no others. A borrowed hostname over http, or with a port in it, is still refused: those are different mistakes and this says nothing about them, which is why the accepted set is a list rather than a switch.\n\ndocs/link-tracking.md §3 option 3 is the case it exists for — free, no extra infrastructure, and permanent in the wrong direction. Defensible when every recipient already knows what rn is, and not otherwise.",
+        "ifWrong": "What turning this on commits to, in one sentence: if this machine is renamed, replaced, or leaves the tailnet, every link already sent stops resolving at the same moment.\n\nThe exit is to move to a domain you own *before* that happens. Links minted after the move are fine and links minted before it are not recoverable, so the cost of changing your mind grows with every send."
+      }
+    },
+    {
+      "id": "trackerRetentionDays",
+      "flag": "RN_TRACKER_RETENTION_DAYS",
+      "kind": "env",
+      "type": "int",
+      "default": 90,
+      "min": 1,
+      "max": 3650,
+      "appliesAt": "restart",
+      "category": "links",
+      "label": "Keep identity for",
+      "info": {
+        "what": "How long the recipient recorded against a link is kept, in days. After it, the recipient is dropped and the link goes on resolving forever.",
+        "why": "Links and identity have different right answers, and this is the setting that separates them. A link in a mailbox may be clicked years later, so expiring it would put a 404 in mail somebody kept — losing analytics is an annoyance, breaking a link you sent is a fault. What a person did with their mail is the half worth forgetting.",
+        "ifWrong": "It bounds what rn knows and nothing else. The links themselves are already in mailboxes, so two recipients comparing their copies still learn the mail was individually tracked, however short this is set."
+      }
+    },
+    {
       "id": "mailUser",
       "flag": "RN_MAIL_USER",
       "kind": "env",

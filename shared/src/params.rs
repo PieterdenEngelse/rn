@@ -85,6 +85,12 @@ wire! {
         /// filed them together showed two boards both titled "Network", one
         /// per tile, which is unreadable however correct each half is.
         Mail,
+        /// Click tracking on mail rn sends — where links point, and how long
+        /// identity is kept. Its own board rather than a corner of Network,
+        /// because the settings here are read together with Monitor → Links
+        /// and one of them is the only setting in rn whose mistake cannot be
+        /// corrected afterwards.
+        Links,
         Diagnostics,
         Output,
         Runtime,
@@ -396,6 +402,7 @@ mod tests {
         assert_eq!(one(&Category::Time), "\"time\"");
         assert_eq!(one(&Category::Network), "\"network\"");
         assert_eq!(one(&Category::Mail), "\"mail\"");
+        assert_eq!(one(&Category::Links), "\"links\"");
         assert_eq!(one(&Category::Diagnostics), "\"diagnostics\"");
         assert_eq!(one(&Category::Output), "\"output\"");
         assert_eq!(one(&Category::Runtime), "\"runtime\"");
