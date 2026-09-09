@@ -289,6 +289,31 @@ alternative — one port, with the tunnel configured to forward only certain
 paths — puts a security boundary in a third-party config file, one typo from
 open. This one is structural.
 
+**Since the click tracker, that port is no longer the only public one**, and the
+claim above needs its scope said out loud: it is about *the hooks port*, and it
+is still true of it. What changed is elsewhere.
+
+`GET /t/:id` on `BACKEND_TRACKER_PORT` is served to unauthenticated strangers
+deliberately — the caller is a recipient's mail client and there is no shared
+secret with one. It is the first thing rn has ever done that, and it is on its
+own listener precisely so this section keeps meaning what it says: putting a
+public GET namespace on 3011 would have turned "that server does not have the
+route" into "the routing is correct", a weaker claim about a larger surface, on
+the port a provider posts signed webhooks to.
+
+The tracker's own boundary is the same shape rather than a lesser one: one
+method pair, one path segment, everything else 404, and — the part that carries
+it — **the destination comes from the store and never from the request**. No
+query parameter, header or extra path segment is read as a URL, so it cannot be
+made into an open redirect on an HTTPS host carrying this machine's name.
+`docs/link-tracking.md` §3 argues that at length and `be/test/tracker.test.ts`
+checks it as a table.
+
+Two honest differences from the hooks port. Nothing there is signed, because a
+signature needs a secret the sender has and a recipient's browser does not. And
+its store grows with traffic from outside the machine, which no other store here
+does — see §3 on retention.
+
 `be/test/hooks.test.ts` and the boundary check in `docs/plan1.md` both exist to
 keep it that way.
 

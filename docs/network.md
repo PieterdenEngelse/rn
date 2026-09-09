@@ -107,6 +107,41 @@ makes it structural.
 The rest — signature verification, replay, what a rejection reveals — is in
 `docs/sec.md` → *Webhooks, and why they are on their own port*.
 
+### A second public port, and what it changed
+
+Everything above says "the public surface is one POST route". Since the click
+tracker was exposed that is one sentence short, and the missing half is not a
+detail: **`GET /t/:id` on `BACKEND_TRACKER_PORT` is served to unauthenticated
+strangers on purpose.** It is the first thing here that is, and it has to be —
+the caller is a recipient's mail client and there is no shared secret with one.
+
+What keeps it from undoing the argument above:
+
+- **Its own port, not a path on 3011.** The hooks listener still refuses
+  everything that is not `POST /api/hooks/…`, so the structural claim about
+  *that* port is unchanged and `docs/tunnel.md`'s 404 rows still hold. Adding a
+  public GET namespace there would have turned "the route does not exist" into
+  "the routing is correct", which is a weaker statement about a larger surface
+  — and a path-parsing bug would then sit on the port a provider posts signed
+  webhooks to.
+- **One route there too, by construction.** `GET`/`HEAD` under `/t/`, one path
+  segment, everything else 404. `be/src/tracker/server.ts` imports `node:http`,
+  the logger and its own store — no filesystem, no `fs` at all.
+- **The destination never comes from the request.** `/t/<opaque id>` is looked
+  up in a store and `Location` is that stored URL, with nothing from the query
+  string reflected into it. A tracker that appended `?next=` would be an open
+  redirect on an HTTPS host carrying this machine's name. That refusal is the
+  whole security of the feature and `docs/link-tracking.md` §3 argues it at
+  length.
+- **Separable.** The tracker can be unpublished without touching webhook
+  delivery, which matters because it is the only part of rn whose traffic
+  scales with how many people were mailed.
+
+What it costs, stated rather than implied: two public ports instead of one, a
+route that answers a stranger rather than only rejecting them, and a store that
+grows with traffic from outside the machine. The bind address is no longer the
+whole of the security position for this one port — the route shape is.
+
 This has been tried against a real public URL rather than only reasoned about;
 `docs/tunnel.md` records what that proved, and what it did not. What runs on
 this machine is Tailscale Funnel onto 3011 — `cloudflared` above is the generic
