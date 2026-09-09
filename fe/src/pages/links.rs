@@ -376,7 +376,16 @@ fn BaseUrlProblems(problems: Vec<BaseUrlProblem>, accepted: Vec<BaseUrlProblem>)
         problems.iter().filter(|p| !accepted.contains(p)).copied().collect();
 
     rsx! {
-        div { class: "border border-amber-600 rounded p-3 mt-2 space-y-2 max-w-3xl",
+        // Amber is a warning, and this box is only sometimes one. With every
+        // problem signed off it is a record of a decision rather than a thing
+        // to act on, and a warning border drawn around prose saying nothing is
+        // blocking is the chrome arguing with the text inside it.
+        div {
+            class: if blocking.is_empty() {
+                "border border-gray-600 rounded p-3 mt-2 space-y-2 max-w-3xl"
+            } else {
+                "border border-amber-600 rounded p-3 mt-2 space-y-2 max-w-3xl"
+            },
             if blocking.is_empty() {
                 // Everything wrong here has been signed off, so this is not a
                 // warning any more. It is still shown, because the decision
