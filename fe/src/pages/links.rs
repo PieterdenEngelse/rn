@@ -391,7 +391,7 @@ fn BaseUrlProblems(problems: Vec<BaseUrlProblem>, accepted: Vec<BaseUrlProblem>)
                 }
             }
             for p in problems.iter() {
-                div { key: "{problem_headline(p)}",
+                div { key: "{problem_headline(p)}", class: "space-y-1",
                     p { class: "text-gray-200 text-xs",
                         "{problem_headline(p)}"
                         if accepted.contains(p) {
@@ -399,6 +399,9 @@ fn BaseUrlProblems(problems: Vec<BaseUrlProblem>, accepted: Vec<BaseUrlProblem>)
                         }
                     }
                     p { class: "text-gray-300 text-xs", "{problem_detail(p)}" }
+                    if let Some(also) = problem_availability(p) {
+                        p { class: "text-gray-300 text-xs", "{also}" }
+                    }
                     if accepted.contains(p) {
                         p { class: "text-gray-400 text-xs italic", "{problem_accepted_note(p)}" }
                     }
@@ -421,9 +424,24 @@ fn BaseUrlProblems(problems: Vec<BaseUrlProblem>, accepted: Vec<BaseUrlProblem>)
 fn problem_accepted_note(p: &BaseUrlProblem) -> &'static str {
     match p {
         BaseUrlProblem::Borrowed => {
-            "RN_TRACKER_ACCEPT_BORROWED_HOSTNAME=1. What that commits to: if this machine is renamed, replaced, or leaves the tailnet, every link already sent stops resolving at the same moment, and there is nothing to redirect them to. It is a reasonable trade when the recipients are people who know what rn is."
+            "RN_TRACKER_ACCEPT_BORROWED_HOSTNAME=1. What that commits to: if this machine is renamed, replaced, or leaves the tailnet, every link already sent stops resolving at the same moment, and there is nothing to redirect them to. That is the whole of what it waives — it says nothing about the origin being awake, which is the cost above and is accepted nowhere. While that stands open in docs/todo.md, the only defensible send is a pilot to your own address."
         }
         _ => "Accepted in configuration.",
+    }
+}
+
+/// The cost that is about the machine rather than about the name.
+///
+/// Its own paragraph rather than more of [`problem_detail`], because the two
+/// are separate arguments and only the first is what
+/// `RN_TRACKER_ACCEPT_BORROWED_HOSTNAME` waives. The permanence cost arrives
+/// *if* something changes; this one is already here, every night.
+fn problem_availability(p: &BaseUrlProblem) -> Option<&'static str> {
+    match p {
+        BaseUrlProblem::Borrowed => Some(
+            "It also points at the machine that borrowed it, so the origin answers only while that machine is awake — on 2026-09-09 this one had been suspended for 25 of the previous 45 hours, in two blocks ending 07:07 and 05:54, the evening and early morning when mail is read. A tracked link sits in front of the content rather than beside it, so a sleeping origin does not cost you a click: it hands the recipient an error instead of the thing you sent them. docs/link-tracking.md §3 ranks the three origins on both axes.",
+        ),
+        _ => None,
     }
 }
 
@@ -461,7 +479,7 @@ fn problem_detail(p: &BaseUrlProblem) -> &'static str {
             "A port number inside a link in an email reads as phishing, to software and to the person deciding whether to click."
         }
         BaseUrlProblem::Borrowed => {
-            "It works today, which is what makes it the worst one. A *.ts.net name, a quick tunnel or an ngrok host is lent to you: it follows a machine, an account or a process, and when any of those changes every link ever sent stops resolving at once. A domain you own is the only kind you can still redirect in five years."
+            "A *.ts.net name, a quick tunnel or an ngrok host is lent to you: it follows a machine, an account or a process, and when any of those changes every link ever sent stops resolving at once. A domain you own is the only kind you can still redirect in five years."
         }
     }
 }
