@@ -211,6 +211,50 @@ same change. "The hooks port serves exactly one route" stops being true, and a
 security argument that has quietly become false is worse than one that was never
 made.
 
+#### What that rehearsal measured — 2026-09-09
+
+Run against a worktree's dev tracker on 3032 rather than the install's 3012, so
+the links exercised were a worktree's and the real store was never touched. The
+proxy behaviour is the same either way; the store is not, and it is the half
+worth keeping separate. Nothing was funnel-enabled at any point: `serve status
+--json` had `AllowFunnel` on `laptop.tail1e7abb.ts.net:443` alone, which is the
+precondition to check *before* trusting a rehearsal on 8443 rather than after.
+
+| Request through `https://laptop.tail1e7abb.ts.net:8443` | Answer |
+|---|---|
+| `GET /t/<minted id>` | **302** to the stored URL, HTTP/2, valid certificate |
+| `HEAD /t/<minted id>` | **302**, recorded with `method: HEAD` |
+| `GET /t/<minted id>?url=https://evil.example` | **302** to the *stored* URL — the query is not read |
+| `GET /t/<unminted id>` | 404 |
+| `GET /t/api/settings` | 404 — two segments, refused before the store |
+| `GET /t/` | 404 |
+
+Every 302 in that table was recorded — id, user agent and method — and reached
+`/api/links` and Monitor → Links, so the chain from a public-shaped URL to the
+board is whole. The three 404s recorded nothing, which is the other half of it:
+a probe cannot put a row in somebody's store.
+
+**What the 302 proves, and what it does not.** It proves the two behaviours
+§3 names compose to exactly one `/t`: had `--set-path` stripped without the
+target rejoining, `/t/<id>` would have arrived as `/<id>` — which this tracker
+also accepts, deliberately — and had neither happened the id would still have
+resolved. What a passing fetch cannot separate is which half did what. The
+failure it *would* have caught is the one worth catching: a target written
+`--set-path=/t 3012`, with no path on it, delivers `/<id>` to a tracker that did
+not accept the bare shape, and 404s on a recipient's first click.
+
+**`tailscale serve` needs root here, and that is worth keeping.** Without
+`sudo` the command parses fine and gets as far as `sending serve config` before
+`Access denied: serve config denied`; it then suggests `sudo tailscale set
+--operator=$USER` to make the sudo unnecessary. Don't. The same permission
+covers `tailscale funnel`, so taking it would make the one command in this
+feature that git cannot undo runnable without a password — and that prompt is
+the last thing standing between a mistyped port and a public endpoint.
+
+**Without `--bg` the mount is a foreground process** that holds the terminal and
+prints what it published; Ctrl+C withdraws it. The `... off` line above is for a
+backgrounded one, and running it against a foreground mount is not the teardown.
+
 ### The origin is never a name you borrowed
 
 The destination rule below is about what a link points *at*. This one is about
@@ -711,6 +755,10 @@ bisect when the click count is wrong.
 | 8 | Exposure and docs | The Funnel mapping, rehearsed on `--https=8443` first because a funnel-enabled port has no private path (§3), and the edits §3 promises to `docs/network.md` and `docs/sec.md`. `--set-path=/t` is confirmed against 1.102.3: it outranks the `/` catch-all, and it strips the prefix, so the target is `http://127.0.0.1:3012/t` and not `3012` — §3 has all three findings. |
 | 9 | The inbound job | IMAP, `seen()` dedupe, the window arithmetic on the run record. Read-only mailbox open, which is what makes `effectFree` honest — an ordinary fetch sets `\Seen` and would mark a person's unread mail as read while merely observing it. |
 | 10 | An inbound view | Only if the links need a page rather than the run summary. Skippable. |
+
+Steps 1 to 7 are landed, and so are the `docs/network.md` and `docs/sec.md`
+edits step 8 owes. **Of step 8 only the mapping itself is left** — the private
+rehearsal it was to be preceded by has been run, and §3 records what it found.
 
 Three properties of that order, all of them the reason for it:
 
