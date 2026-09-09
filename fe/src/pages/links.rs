@@ -382,8 +382,15 @@ fn BaseUrlProblems(problems: Vec<BaseUrlProblem>, accepted: Vec<BaseUrlProblem>)
                 // warning any more. It is still shown, because the decision
                 // outlives whoever made it and the next person to read this
                 // board should not have to find it in an environment variable.
+                //
+                // It reports the check's verdict rather than the system's.
+                // This board can see what `assertMintableBase` would allow and
+                // cannot see whether anything calls it, so "Links will be
+                // minted" was a promise made on behalf of a send path — which
+                // is not a thing a base-URL checker knows about, whether or not
+                // one exists yet.
                 p { class: "text-gray-200 text-sm",
-                    "Links will be minted. Something is still wrong with this base URL and somebody has accepted it."
+                    "Nothing here will stop a link being minted against this base URL. Something is still wrong with it, and somebody has accepted that."
                 }
             } else {
                 p { class: "text-amber-400 text-sm",
