@@ -66,6 +66,8 @@ pub fn export_all(cfg: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     WatchedMailbox::export_all(cfg)?;
     MailRulesResponse::export_all(cfg)?;
     MailRuleSaveResponse::export_all(cfg)?;
+    MailServer::export_all(cfg)?;
+    MailHealthResponse::export_all(cfg)?;
     BaseUrlProblem::export_all(cfg)?;
     LinkClick::export_all(cfg)?;
     TrackedLink::export_all(cfg)?;

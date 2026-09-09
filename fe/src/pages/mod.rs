@@ -7,6 +7,7 @@ pub mod home;
 pub mod monitor_connection;
 pub mod links;
 pub mod monitor_jobs;
+pub mod monitor_mail;
 pub mod monitor_runtime;
 pub mod not_found;
 
@@ -18,5 +19,6 @@ pub use home::Home;
 pub use monitor_connection::MonitorConnection;
 pub use links::{MonitorLinks, MonitorLinksSend};
 pub use monitor_jobs::MonitorJobs;
+pub use monitor_mail::MonitorMail;
 pub use monitor_runtime::MonitorRuntime;
 pub use not_found::PageNotFound;

@@ -34,6 +34,7 @@ import type {
     JobConfigResponse,
     JobOverride,
     LinksResponse,
+    MailHealthResponse,
     MailRuleSaveResponse,
     MailRulesResponse,
     WebhookDef,
@@ -542,6 +543,40 @@ export function createApp() {
                     config.mailWatch &&
                     stored.some((r) => r.enabled && !watchedNow.has(r.mailbox)),
             } satisfies MailRulesResponse);
+            return done(200);
+        }
+
+        // What each half of the mail account is doing, for Monitor → Mail.
+        // Separate from /api/mail-rules because the two answer different
+        // questions: that one is the rules a person edits, this one is the
+        // state of two connections, and the sending half has no rules at all.
+        if (url.pathname === "/api/mail-health" && req.method === "GET") {
+            const watch = mailWatchHealth();
+            send(res, 200, {
+                user: config.mailUser,
+                // Whether, never what. docs/token-sec.md.
+                credentialSet: secrets.read("gmailAppPassword") !== undefined,
+
+                imap: {
+                    host: config.imapHost,
+                    port: config.imapPort,
+                    // The same rule the client uses, not a second opinion on
+                    // it — see the note on MailServer.
+                    implicitTls: config.imapPort === 993,
+                },
+                watchingEnabled: config.mailWatch,
+                watched: watch.mailboxes,
+                rulesEnabled: mailRules.list().filter((r) => r.enabled).length,
+                allowedSenders: config.mailAllowedSenders,
+
+                smtp: {
+                    host: config.smtpHost,
+                    port: config.smtpPort,
+                    implicitTls: config.smtpPort === 465,
+                },
+                allowedRecipients: config.mailAllowedRecipients,
+                sends: trackerStore.sends().length,
+            } satisfies MailHealthResponse);
             return done(200);
         }
 

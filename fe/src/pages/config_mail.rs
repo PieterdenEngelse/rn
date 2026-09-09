@@ -22,8 +22,10 @@
 use crate::api::{
     delete_mail_rule, fetch_mail_rules, save_mail_rule, MailRule, MailRulesResponse,
 };
+use crate::app::Route;
 use crate::components::{InfoButton, Panel};
 use dioxus::prelude::*;
+use dioxus_router::Link;
 
 #[component]
 pub fn ConfigMail() -> Element {
@@ -67,7 +69,7 @@ pub fn ConfigMail() -> Element {
                                 "Watching is switched off, so these rules do nothing yet."
                             }
                             p { class: "text-gray-300 text-xs",
-                                "Turn on \"Read mail the moment it arrives\" in the Mail board on Config → Runtime. Until then mail is read on the read-mail job's schedule and these rules are only a filter."
+                                "Turn on \"Read mail the moment it arrives\" in the Mail — receiving (IMAP) board on Config → Runtime. Until then mail is read on the read-mail job's schedule and these rules are only a filter."
                             }
                         }
                     }
@@ -115,6 +117,16 @@ pub fn ConfigMail() -> Element {
                     NewRule {
                         on_changed: move |_| { errors.set(vec![]); reload += 1; },
                         on_errors: move |es: Vec<String>| errors.set(es),
+                    }
+
+                    // The connections themselves are somebody else's page. A
+                    // rule's own state is here, beside the rule it belongs to;
+                    // what the two servers are doing is not a property of any
+                    // rule, and the sending half has no rules at all.
+                    p { class: "text-gray-400 text-xs max-w-3xl",
+                        "What the connections behind these rules are doing — and the sending half, which has no rules — is on "
+                        Link { to: Route::MonitorMail {}, class: "text-blue-400 hover:text-blue-300", "Monitor → Mail" }
+                        "."
                     }
                 },
             }

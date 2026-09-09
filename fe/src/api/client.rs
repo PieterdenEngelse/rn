@@ -6,8 +6,8 @@
 
 use super::wire::{
     ConnectionResponse, EnvResponse, HealthResponse, JobConfigResponse, JobErrors, JobOverride,
-    JobRunResult, JobSource, JobsResponse, LinksResponse, MailRule, MailRuleSaveResponse,
-    MailRulesResponse, NodeHistory, NodeMetrics, SendDetail,
+    JobRunResult, JobSource, JobsResponse, LinksResponse, MailHealthResponse, MailRule,
+    MailRuleSaveResponse, MailRulesResponse, NodeHistory, NodeMetrics, SendDetail,
     ParamsResponse, RestartOutcome, RunsResponse, SaveResponse, StateResetResponse, StatusResponse,
     CredentialSaveResponse, CredentialsResponse, StopOutcome, TestDelivery, WebhookDef,
     WebhookSaveResponse, WebhooksResponse,
@@ -618,6 +618,20 @@ pub async fn delete_credential(name: &str) -> Result<CredentialSaveResponse, Str
     resp.json::<CredentialSaveResponse>()
         .await
         .map_err(|_| format!("the credential was not removed ({})", resp.status()))
+}
+
+/// What the two mail connections are doing, for Monitor → Mail.
+///
+/// A different call from [`fetch_mail_rules`] rather than more fields on it,
+/// because the two pages ask different questions of the same account: that one
+/// shows the rules a person edits, this one the state of two servers, and the
+/// sending half has no rules to show.
+pub async fn fetch_mail_health() -> Result<MailHealthResponse, String> {
+    let resp = gloo_net::http::Request::get(&format!("{API_BASE}/api/mail-health"))
+        .send()
+        .await
+        .map_err(|e| format!("{e}"))?;
+    resp.json::<MailHealthResponse>().await.map_err(|e| format!("{e}"))
 }
 
 /// The mail rules this install has made, and what is actually being watched.

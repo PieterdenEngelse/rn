@@ -480,104 +480,12 @@
       "type": "string",
       "default": null,
       "appliesAt": "restart",
-      "category": "mail",
+      "category": "mail-account",
       "label": "Mail account",
       "info": {
         "what": "The address rn sends from and reads with — the From line on every message the send job produces, and the username for both SMTP and IMAP.\n\nOne setting rather than two because it is one account. The password is not here: it is the gmailAppPassword credential, set on Config → Jobs and never shown back.",
         "why": "Nothing else identifies the sender. It is on the outside of every message that arrives, so it is not a secret and holding it as one would only hide it from the page that should say which account is in use.\n\ndocs/link-tracking.md §1 takes the app-password path precisely so a single opaque credential covers sending and reading; a pair of user fields that must always match is a pair that can disagree.",
         "ifWrong": "Empty and both mail jobs refuse before opening a connection, saying so rather than failing somewhere less legible. Wrong and SMTP rejects the login with a 535 — which rn classifies as permanent, so it fails once instead of three times.\n\nAn address that does not match the app password's account is the same 535: the credential is minted for one account and means nothing for another."
-      }
-    },
-    {
-      "id": "mailAllowedRecipients",
-      "flag": "RN_MAIL_ALLOWED_RECIPIENTS",
-      "kind": "env",
-      "type": "string",
-      "default": null,
-      "appliesAt": "restart",
-      "category": "mail",
-      "label": "Only to these recipients",
-      "info": {
-        "what": "Addresses or domains matched against a message's To and Cc, one per line or comma-separated. Same spellings as the sender filter: an exact address, or a bare domain for anybody at it. Empty means every recipient.\n\nTHERE ARE TWO OF THESE, AND THIS IS THE STANDING ONE. It applies to every run including the automatic ones; the job's own \"Only to these recipients\" field overrides it for one run started by hand.",
-        "why": "It is what makes watching a sent mailbox worth doing. In [Gmail]/Sent Mail the sender is always you, so a sender filter there matches everything or nothing and the recipient is the only thing that distinguishes one message from another. Watching INBOX and Sent Mail together, with the sender filter naming yourself and this naming the other person, is how \"tell me when I mail her\" is expressed.\n\nCc counts as well as To — a message copied to somebody is a message to them as far as any reader is concerned. Bcc is deliberately not consulted: a received message carries no Bcc in its envelope at all, so using it would work on sent mail and quietly not on anything else, which is the worst kind of half-working.",
-        "ifWrong": "Both filters must match when both are set. That is what makes \"from me to her\" expressible, and equally what makes it easy to write a pair that matches nothing — a sender filter naming her and a recipient filter naming her cannot both hold for the same message.\n\nThere is no OR between them. \"Anything either of us sent the other\" is two rules and this is one, so it needs either two mailboxes with the filters set for the direction each carries, or a filter naming only the correspondent and left off the other field.\n\nThe server's TO search matches display names too, so the parsed addresses are rechecked and a mismatch is reported rather than dropped."
-      }
-    },
-    {
-      "id": "mailWatch",
-      "flag": "RN_MAIL_WATCH",
-      "kind": "env",
-      "type": "bool",
-      "default": false,
-      "appliesAt": "restart",
-      "category": "mail",
-      "label": "Read mail the moment it arrives",
-      "info": {
-        "what": "Holds an IMAP connection open and starts a read-mail run within a couple of seconds of a message landing, instead of waiting for the job's thirty-minute schedule.\n\nThe schedule keeps running either way. It becomes the backstop that catches anything missed while the connection was down.",
-        "why": "Polling has a floor: a thirty-minute schedule reports mail up to thirty minutes late, and dropping the interval to fix that pays for the latency with a connection a minute, forever.\n\nThis is IMAP IDLE, which is not the kind of push docs/link-tracking.md §2 argued against. That was the Gmail API's push — a cloud project, a Pub/Sub topic, and a second public endpoint for Google to deliver to. IDLE is one outbound connection this machine opens and holds: nothing listens, nothing is exposed, and no third party is in the path.\n\nThe connection is opened read-only, like the job's. It is held all day, so an ordinary SELECT letting the server mark mail seen would matter more here rather than less.",
-        "ifWrong": "The failure that matters is silent: a dropped connection means mail simply stops arriving promptly, with nothing red anywhere. Wifi changing, a laptop suspending and a server recycling connections all do it, routinely. rn reconnects with a backoff and says so in the log each time, and Monitor reports whether the connection is up rather than assuming it — but the schedule is what guarantees the mail is eventually read.\n\nIt needs the account and the credential at boot. Without either it does not start, says why, and leaves the schedule to do the work."
-      }
-    },
-    {
-      "id": "mailWatchMailbox",
-      "flag": "RN_MAIL_WATCH_MAILBOX",
-      "kind": "env",
-      "type": "string",
-      "default": "INBOX",
-      "appliesAt": "restart",
-      "category": "mail",
-      "label": "Mailboxes to watch",
-      "info": {
-        "what": "Which mailbox the held-open connection watches. INBOX is the answer almost every time — it is where mail lands before anything moves it, so it is what \"has something arrived\" actually means.\n\nMore than one is allowed — comma-separated or one per line — and each gets its own connection, because IMAP idles on a *selected* mailbox and there is no way to watch two over one socket. They reconnect independently, so a label that goes away does not take INBOX's watch down with it. Each fires a run scoped to the mailbox that changed.\n\nTwo or three is unremarkable; Gmail allows about fifteen simultaneous IMAP connections per account, and every other client you own is spending from the same budget.\n\nA Gmail label is a mailbox too, spelled exactly as Gmail spells it. The separator is / — a nested label is \"Projects/rn\" — and case matters on most servers, so a name that reads fine in the web interface may need a different spelling here.",
-        "why": "THE ONE CASE WHERE INBOX IS WRONG, AND IT IS WORTH CHECKING.\n\nIf a Gmail filter on the sender has \"Skip the Inbox (Archive it)\" ticked, the message never touches INBOX at all. A watcher there sits connected and healthy and never fires — and the read-mail schedule does not save you, because it searches the same mailbox. Everything looks fine and nothing arrives. Add the label's own name here — alongside INBOX, not instead of it, since one filter rarely covers everything you want to hear about.\n\nWatching a label that a filter moves mail into has a smaller cost worth knowing: you are then waiting on Gmail's filters as well as on delivery. Usually seconds. Occasionally not.",
-        "ifWrong": "The failure here is the quiet one. A mailbox nothing is delivered to keeps the connection up and reports healthy, which looks exactly like no mail arriving — there is no error to see, because nothing has gone wrong.\n\nSo if this is on and never fires, suspect the mailbox name before suspecting the connection. The check is the read-mail job itself: run it by hand against the same mailbox, and if it finds the message the watcher should have caught it, while if it finds nothing either then the mail is somewhere else.\n\nA name that does not exist is the honest failure — the connection fails to open, says so, and retries with a backoff."
-      }
-    },
-    {
-      "id": "mailAllowedSenders",
-      "flag": "RN_MAIL_ALLOWED_SENDERS",
-      "kind": "env",
-      "type": "string",
-      "default": null,
-      "appliesAt": "restart",
-      "category": "mail",
-      "label": "Accept mail only from",
-      "info": {
-        "what": "Addresses or domains the read-mail job will accept, one per line or comma-separated. \"reports@example.com\" is that address exactly; \"example.com\" or \"@example.com\" is anybody at that domain. Empty means every sender.\n\nTHERE ARE TWO OF THESE, AND THIS IS THE STANDING ONE.\n\nThis setting applies to every run of the job, including the automatic ones every thirty minutes. It is the one to set, and in ordinary use it is the only one you touch.\n\nThe other is \"Only from these senders\", on the job's card on Monitor → Jobs beside the Run now button. That field belongs to a single run you start by hand: it is blank every time, it overrides this setting for that one run, and it affects no scheduled run at all. It is there to ask a different question once without changing the policy.",
-        "why": "It has to live here rather than only on the run form, because the scheduler supplies no inputs: an automatic run uses the job's declared defaults, so a filter typed on the form would be empty on every scheduled run — which is every run that matters. A filter that is decorative exactly where it counts is worse than none, because the form implies it is working.\n\nWhat it buys is not a tidier report. The filter narrows the search on the server, so mail from anyone else is never downloaded, never scanned and never written to a run record — and since this job's output goes on a page and into the job history, not fetching a message is the only way to be sure it is not stored.",
-        "ifWrong": "A domain here is matched against the parsed sender address and never the display name, and as a suffix on \"@domain\" rather than a substring — notexample.com contains example.com and anybody can register it. The server's own search is looser than both, so a message that satisfies the server and fails this check is reported as sender-mismatch rather than dropped: that is either a coincidence or somebody putting a trusted address in their display name.\n\nA typo means runs that report nothing, which looks exactly like a quiet inbox. The searched count on each run record tells the two apart."
-      }
-    },
-    {
-      "id": "smtpHost",
-      "flag": "RN_SMTP_HOST",
-      "kind": "env",
-      "type": "string",
-      "default": "smtp.gmail.com",
-      "appliesAt": "restart",
-      "category": "mail",
-      "label": "SMTP host",
-      "info": {
-        "what": "The server the send job hands outgoing mail to.",
-        "why": "Gmail's by default, because that is the account shape docs/link-tracking.md §1 recommends. Any SMTP server works — the job speaks the protocol, not Gmail.\n\nIt is also the host to add to the network allowlist on Config → Connection: under Deno the runtime denies everything not named there, and the failure message talks about permissions without mentioning that an allowlist exists.",
-        "ifWrong": "A host that does not resolve fails the run with the connection error and sends nothing — no half-send, because the connection is opened before the first recipient. A host that resolves but is not an SMTP server hangs until the job's timeout."
-      }
-    },
-    {
-      "id": "smtpPort",
-      "flag": "RN_SMTP_PORT",
-      "kind": "env",
-      "type": "int",
-      "default": 465,
-      "min": 1,
-      "max": 65535,
-      "appliesAt": "restart",
-      "category": "mail",
-      "label": "SMTP port",
-      "info": {
-        "what": "The port, and — because 465 means implicit TLS — also the choice of how the session is encrypted. Set to 465 the connection is TLS from the first byte; set to anything else it is not.",
-        "why": "587 is the common alternative and it is weaker in a specific way: it opens in plaintext and upgrades with STARTTLS, so a network that strips the upgrade leaves the whole session — credentials included — readable. 465 cannot be downgraded that way because there is no plaintext phase to strip.",
-        "ifWrong": "Point 465 at a server that only speaks STARTTLS and the handshake fails immediately, which is the honest failure. The dangerous direction is the other one: a port that quietly works without encryption looks identical to one that works with it, from here."
       }
     },
     {
@@ -587,7 +495,7 @@
       "type": "string",
       "default": "imap.gmail.com",
       "appliesAt": "restart",
-      "category": "mail",
+      "category": "mail-receiving",
       "label": "IMAP host",
       "info": {
         "what": "The server the read-mail job polls for arriving mail.",
@@ -604,12 +512,104 @@
       "min": 1,
       "max": 65535,
       "appliesAt": "restart",
-      "category": "mail",
+      "category": "mail-receiving",
       "label": "IMAP port",
       "info": {
         "what": "The port, and the encryption choice with it: 993 is implicit TLS, the IMAP counterpart of SMTP's 465, and anything else connects in the clear.",
         "why": "Mail bodies and the account password both cross this connection. 143 is the plaintext port and exists for STARTTLS, with the same downgrade weakness 587 has on the sending side.",
         "ifWrong": "A mismatch fails the handshake rather than silently reading your mail over an unencrypted socket — but only because the port decides TLS here. Changing this to a non-993 port turns encryption off, so it is not a setting to adjust while chasing a connection problem."
+      }
+    },
+    {
+      "id": "mailWatch",
+      "flag": "RN_MAIL_WATCH",
+      "kind": "env",
+      "type": "bool",
+      "default": false,
+      "appliesAt": "restart",
+      "category": "mail-receiving",
+      "label": "Read mail the moment it arrives",
+      "info": {
+        "what": "Holds an IMAP connection open and starts a read-mail run within a couple of seconds of a message landing, instead of waiting for the job's thirty-minute schedule.\n\nThe schedule keeps running either way. It becomes the backstop that catches anything missed while the connection was down.",
+        "why": "Polling has a floor: a thirty-minute schedule reports mail up to thirty minutes late, and dropping the interval to fix that pays for the latency with a connection a minute, forever.\n\nThis is IMAP IDLE, which is not the kind of push docs/link-tracking.md §2 argued against. That was the Gmail API's push — a cloud project, a Pub/Sub topic, and a second public endpoint for Google to deliver to. IDLE is one outbound connection this machine opens and holds: nothing listens, nothing is exposed, and no third party is in the path.\n\nThe connection is opened read-only, like the job's. It is held all day, so an ordinary SELECT letting the server mark mail seen would matter more here rather than less.",
+        "ifWrong": "The failure that matters is silent: a dropped connection means mail simply stops arriving promptly, with nothing red anywhere. Wifi changing, a laptop suspending and a server recycling connections all do it, routinely. rn reconnects with a backoff and says so in the log each time, and Monitor reports whether the connection is up rather than assuming it — but the schedule is what guarantees the mail is eventually read.\n\nIt needs the account and the credential at boot. Without either it does not start, says why, and leaves the schedule to do the work."
+      }
+    },
+    {
+      "id": "mailWatchMailbox",
+      "flag": "RN_MAIL_WATCH_MAILBOX",
+      "kind": "env",
+      "type": "string",
+      "default": "INBOX",
+      "appliesAt": "restart",
+      "category": "mail-receiving",
+      "label": "Mailboxes to watch",
+      "info": {
+        "what": "Which mailbox the held-open connection watches. INBOX is the answer almost every time — it is where mail lands before anything moves it, so it is what \"has something arrived\" actually means.\n\nMore than one is allowed — comma-separated or one per line — and each gets its own connection, because IMAP idles on a *selected* mailbox and there is no way to watch two over one socket. They reconnect independently, so a label that goes away does not take INBOX's watch down with it. Each fires a run scoped to the mailbox that changed.\n\nTwo or three is unremarkable; Gmail allows about fifteen simultaneous IMAP connections per account, and every other client you own is spending from the same budget.\n\nA Gmail label is a mailbox too, spelled exactly as Gmail spells it. The separator is / — a nested label is \"Projects/rn\" — and case matters on most servers, so a name that reads fine in the web interface may need a different spelling here.",
+        "why": "THE ONE CASE WHERE INBOX IS WRONG, AND IT IS WORTH CHECKING.\n\nIf a Gmail filter on the sender has \"Skip the Inbox (Archive it)\" ticked, the message never touches INBOX at all. A watcher there sits connected and healthy and never fires — and the read-mail schedule does not save you, because it searches the same mailbox. Everything looks fine and nothing arrives. Add the label's own name here — alongside INBOX, not instead of it, since one filter rarely covers everything you want to hear about.\n\nWatching a label that a filter moves mail into has a smaller cost worth knowing: you are then waiting on Gmail's filters as well as on delivery. Usually seconds. Occasionally not.",
+        "ifWrong": "The failure here is the quiet one. A mailbox nothing is delivered to keeps the connection up and reports healthy, which looks exactly like no mail arriving — there is no error to see, because nothing has gone wrong.\n\nSo if this is on and never fires, suspect the mailbox name before suspecting the connection. The check is the read-mail job itself: run it by hand against the same mailbox, and if it finds the message the watcher should have caught it, while if it finds nothing either then the mail is somewhere else.\n\nA name that does not exist is the honest failure — the connection fails to open, says so, and retries with a backoff."
+      }
+    },
+    {
+      "id": "mailAllowedSenders",
+      "flag": "RN_MAIL_ALLOWED_SENDERS",
+      "kind": "env",
+      "type": "string",
+      "default": null,
+      "appliesAt": "restart",
+      "category": "mail-receiving",
+      "label": "Accept mail only from",
+      "info": {
+        "what": "Addresses or domains the read-mail job will accept, one per line or comma-separated. \"reports@example.com\" is that address exactly; \"example.com\" or \"@example.com\" is anybody at that domain. Empty means every sender.\n\nTHERE ARE TWO OF THESE, AND THIS IS THE STANDING ONE.\n\nThis setting applies to every run of the job, including the automatic ones every thirty minutes. It is the one to set, and in ordinary use it is the only one you touch.\n\nThe other is \"Only from these senders\", on the job's card on Monitor → Jobs beside the Run now button. That field belongs to a single run you start by hand: it is blank every time, it overrides this setting for that one run, and it affects no scheduled run at all. It is there to ask a different question once without changing the policy.",
+        "why": "It has to live here rather than only on the run form, because the scheduler supplies no inputs: an automatic run uses the job's declared defaults, so a filter typed on the form would be empty on every scheduled run — which is every run that matters. A filter that is decorative exactly where it counts is worse than none, because the form implies it is working.\n\nWhat it buys is not a tidier report. The filter narrows the search on the server, so mail from anyone else is never downloaded, never scanned and never written to a run record — and since this job's output goes on a page and into the job history, not fetching a message is the only way to be sure it is not stored.",
+        "ifWrong": "A domain here is matched against the parsed sender address and never the display name, and as a suffix on \"@domain\" rather than a substring — notexample.com contains example.com and anybody can register it. The server's own search is looser than both, so a message that satisfies the server and fails this check is reported as sender-mismatch rather than dropped: that is either a coincidence or somebody putting a trusted address in their display name.\n\nA typo means runs that report nothing, which looks exactly like a quiet inbox. The searched count on each run record tells the two apart."
+      }
+    },
+    {
+      "id": "smtpHost",
+      "flag": "RN_SMTP_HOST",
+      "kind": "env",
+      "type": "string",
+      "default": "smtp.gmail.com",
+      "appliesAt": "restart",
+      "category": "mail-sending",
+      "label": "SMTP host",
+      "info": {
+        "what": "The server the send job hands outgoing mail to.",
+        "why": "Gmail's by default, because that is the account shape docs/link-tracking.md §1 recommends. Any SMTP server works — the job speaks the protocol, not Gmail.\n\nIt is also the host to add to the network allowlist on Config → Connection: under Deno the runtime denies everything not named there, and the failure message talks about permissions without mentioning that an allowlist exists.",
+        "ifWrong": "A host that does not resolve fails the run with the connection error and sends nothing — no half-send, because the connection is opened before the first recipient. A host that resolves but is not an SMTP server hangs until the job's timeout."
+      }
+    },
+    {
+      "id": "smtpPort",
+      "flag": "RN_SMTP_PORT",
+      "kind": "env",
+      "type": "int",
+      "default": 465,
+      "min": 1,
+      "max": 65535,
+      "appliesAt": "restart",
+      "category": "mail-sending",
+      "label": "SMTP port",
+      "info": {
+        "what": "The port, and — because 465 means implicit TLS — also the choice of how the session is encrypted. Set to 465 the connection is TLS from the first byte; set to anything else it is not.",
+        "why": "587 is the common alternative and it is weaker in a specific way: it opens in plaintext and upgrades with STARTTLS, so a network that strips the upgrade leaves the whole session — credentials included — readable. 465 cannot be downgraded that way because there is no plaintext phase to strip.",
+        "ifWrong": "Point 465 at a server that only speaks STARTTLS and the handshake fails immediately, which is the honest failure. The dangerous direction is the other one: a port that quietly works without encryption looks identical to one that works with it, from here."
+      }
+    },
+    {
+      "id": "mailAllowedRecipients",
+      "flag": "RN_MAIL_ALLOWED_RECIPIENTS",
+      "kind": "env",
+      "type": "string",
+      "default": null,
+      "appliesAt": "restart",
+      "category": "mail-sending",
+      "label": "Only to these recipients",
+      "info": {
+        "what": "Addresses or domains matched against a message's To and Cc, one per line or comma-separated. Same spellings as the sender filter: an exact address, or a bare domain for anybody at it. Empty means every recipient.\n\nTHERE ARE TWO OF THESE, AND THIS IS THE STANDING ONE. It applies to every run including the automatic ones; the job's own \"Only to these recipients\" field overrides it for one run started by hand.",
+        "why": "It is what makes watching a sent mailbox worth doing. In [Gmail]/Sent Mail the sender is always you, so a sender filter there matches everything or nothing and the recipient is the only thing that distinguishes one message from another. Watching INBOX and Sent Mail together, with the sender filter naming yourself and this naming the other person, is how \"tell me when I mail her\" is expressed.\n\nCc counts as well as To — a message copied to somebody is a message to them as far as any reader is concerned. Bcc is deliberately not consulted: a received message carries no Bcc in its envelope at all, so using it would work on sent mail and quietly not on anything else, which is the worst kind of half-working.",
+        "ifWrong": "Both filters must match when both are set. That is what makes \"from me to her\" expressible, and equally what makes it easy to write a pair that matches nothing — a sender filter naming her and a recipient filter naming her cannot both hold for the same message.\n\nThere is no OR between them. \"Anything either of us sent the other\" is two rules and this is one, so it needs either two mailboxes with the filters set for the direction each carries, or a filter naming only the correspondent and left off the other field.\n\nThe server's TO search matches display names too, so the parsed addresses are rechecked and a mismatch is reported rather than dropped."
       }
     },
     {

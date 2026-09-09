@@ -2,7 +2,7 @@ use crate::components::header::Header;
 use crate::components::SubNav;
 use crate::pages::{
     Config, ConfigConnection, ConfigJobs, ConfigMail, Home, MonitorConnection, MonitorJobs, MonitorLinks,
-    MonitorLinksSend, MonitorRuntime, PageNotFound,
+    MonitorLinksSend, MonitorMail, MonitorRuntime, PageNotFound,
 };
 use dioxus::prelude::*;
 use dioxus_router::{Outlet, Routable, Router};
@@ -30,6 +30,13 @@ pub enum Route {
         // happened, not something set. What can be configured about it — where
         // links point, how long identity is kept — is environment, and the page
         // reports it rather than editing it.
+        // Under Monitor because a connection is something that is happening,
+        // where a mail rule is something you made — Config → Mail keeps the
+        // rules. Before this the only live view of the IMAP watch was on that
+        // config page, which is where you go to change a thing rather than to
+        // see what it is doing, and the SMTP half had no view at all.
+        #[route("/monitor/mail")]
+        MonitorMail {},
         #[route("/monitor/links")]
         MonitorLinks {},
         // The arrivals on one send, addressable. A page whose whole job is

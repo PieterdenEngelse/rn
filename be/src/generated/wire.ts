@@ -181,8 +181,12 @@ overridden: JobOverride, };
 
 /**
  * The board a parameter is filed under on Config → Runtime.
+ *
+ * kebab-case rather than lowercase, which changes no existing spelling —
+ * every variant but the mail ones is a single word — and lets the three
+ * that are not spell themselves `mail-account` rather than `mailaccount`.
  */
-export type Category = "memory" | "concurrency" | "time" | "network" | "mail" | "links" | "diagnostics" | "output" | "runtime" | "security";
+export type Category = "memory" | "concurrency" | "time" | "network" | "mail-account" | "mail-receiving" | "mail-sending" | "links" | "diagnostics" | "output" | "runtime" | "security";
 
 /**
  * One entry in a command webhook's routing table: this action runs this
@@ -1040,6 +1044,56 @@ credential?: string | null, };
 export type LoopPercentile = { label: string, ms: number, };
 
 /**
+ * GET /api/mail-health. What each half of the mail account is doing.
+ *
+ * Two directions that share an account and nothing else. Reading is a
+ * held-open IMAP connection whose failure is silence; sending is an SMTP
+ * connection whose failure reaches somebody's inbox, or does not. They
+ * were one board on Config → Runtime and had no live surface at all —
+ * the watch state was rendered on a *config* page, which is where you go
+ * to change a thing rather than to see what it is doing.
+ */
+export type MailHealthResponse = { 
+/**
+ * The address both directions authenticate as, and put in a `From`.
+ */
+user: string, 
+/**
+ * Whether `gmailAppPassword` is set. Never the value — see
+ * `docs/token-sec.md`: a page reports that a secret exists and never
+ * what it is.
+ */
+credentialSet: boolean, imap: MailServer, 
+/**
+ * Whether the watcher is switched on at all.
+ */
+watchingEnabled: boolean, 
+/**
+ * One entry per mailbox a connection is held for. Empty with watching
+ * on means no enabled rule names a mailbox.
+ */
+watched: Array<WatchedMailbox>, 
+/**
+ * Enabled rules, which is what decides the list above.
+ */
+rulesEnabled: number, 
+/**
+ * Addresses arriving mail is narrowed to, as configured. Empty means
+ * the rules alone decide.
+ */
+allowedSenders: string, smtp: MailServer, 
+/**
+ * Addresses `send-mail` is allowed to send to. Empty means the job
+ * refuses to send at all, which is the shipped default.
+ */
+allowedRecipients: string, 
+/**
+ * Sends recorded in the link store. Zero is the ordinary state until
+ * the first send, and the page says so rather than showing a bare 0.
+ */
+sends: number, };
+
+/**
  * One rule: a mailbox, and what counts as interesting in it.
  */
 export type MailRule = { 
@@ -1108,6 +1162,24 @@ watched: Array<WatchedMailbox>,
  * disagree about what is being watched.
  */
 needsRestart: boolean, };
+
+/**
+ * One of the two servers the account talks to.
+ *
+ * Both ends are described by the same three facts, so they are one type
+ * rather than an `imapHost`/`smtpHost` pair of fields: the page draws the
+ * two boards from it and cannot accidentally render IMAP's port beside
+ * SMTP's host.
+ */
+export type MailServer = { host: string, port: number, 
+/**
+ * Whether this port is the implicit-TLS one — 993 for IMAP, 465 for
+ * SMTP. Derived from the port rather than configured, in `be`, by the
+ * same rule the two clients use: hardcoding `true` would have made the
+ * port setting a lie, and reporting it here from a second source would
+ * let the page disagree with the connection it describes.
+ */
+implicitTls: boolean, };
 
 export type NodeConcurrency = { threadpoolSize: number, activeResources: { [key in string]: number }, 
 /**

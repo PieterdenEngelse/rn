@@ -72,19 +72,38 @@ wire! {
 
 wire! {
     /// The board a parameter is filed under on Config → Runtime.
+    ///
+    /// kebab-case rather than lowercase, which changes no existing spelling —
+    /// every variant but the mail ones is a single word — and lets the three
+    /// that are not spell themselves `mail-account` rather than `mailaccount`.
     #[derive(Copy, Eq)]
-    #[serde(rename_all = "lowercase")]
+    #[serde(rename_all = "kebab-case")]
     pub enum Category {
         Memory,
         Concurrency,
         Time,
         Network,
-        /// The mail account rn sends and reads with, and the two servers it
-        /// uses. Its own board rather than a corner of Network, because these
-        /// are rn's own settings and Network is the *runtime's* — a page that
-        /// filed them together showed two boards both titled "Network", one
-        /// per tile, which is unreadable however correct each half is.
-        Mail,
+        /// The account both directions authenticate as. One board rather than
+        /// a row in each of the two below, because it is genuinely one fact:
+        /// `read-mail` opens IMAP with it, `send-mail` opens SMTP with it and
+        /// puts it in the `From`, and the same `gmailAppPassword` credential
+        /// answers for both. Filing it under one direction would say the other
+        /// does not use it.
+        MailAccount,
+        /// Reading mail: the IMAP server, and everything about how arriving
+        /// mail is noticed.
+        ///
+        /// Split from sending because the two share nothing but the account.
+        /// Different server, different port, different failure — the inbound
+        /// one is silence, the outbound one reaches a stranger — and a single
+        /// board interleaved them, so `imapPort` sat two rows from `smtpHost`
+        /// with nothing saying they were opposite directions.
+        MailReceiving,
+        /// Sending mail: the SMTP server, and who rn is allowed to send to.
+        ///
+        /// The allowlist lives here rather than with the account because it
+        /// bounds one direction only. Nothing it says can affect what arrives.
+        MailSending,
         /// Click tracking on mail rn sends — where links point, and how long
         /// identity is kept. Its own board rather than a corner of Network,
         /// because the settings here are read together with Monitor → Links
@@ -401,7 +420,9 @@ mod tests {
         assert_eq!(one(&Category::Concurrency), "\"concurrency\"");
         assert_eq!(one(&Category::Time), "\"time\"");
         assert_eq!(one(&Category::Network), "\"network\"");
-        assert_eq!(one(&Category::Mail), "\"mail\"");
+        assert_eq!(one(&Category::MailAccount), "\"mail-account\"");
+        assert_eq!(one(&Category::MailReceiving), "\"mail-receiving\"");
+        assert_eq!(one(&Category::MailSending), "\"mail-sending\"");
         assert_eq!(one(&Category::Links), "\"links\"");
         assert_eq!(one(&Category::Diagnostics), "\"diagnostics\"");
         assert_eq!(one(&Category::Output), "\"output\"");

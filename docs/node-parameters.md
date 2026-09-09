@@ -30,14 +30,14 @@ scales with installed RAM, so expect a different number elsewhere.
 | **Accept a borrowed hostname** | `RN_TRACKER_ACCEPT_BORROWED_HOSTNAME` | off | — | on restart |
 | **Keep identity for** | `RN_TRACKER_RETENTION_DAYS` | 90 | 1 … 3650 | on restart |
 | **Mail account** | `RN_MAIL_USER` | unset (system default) | — | on restart |
-| **Only to these recipients** | `RN_MAIL_ALLOWED_RECIPIENTS` | unset (system default) | — | on restart |
+| **IMAP host** | `RN_IMAP_HOST` | imap.gmail.com | — | on restart |
+| **IMAP port** | `RN_IMAP_PORT` | 993 | 1 … 65535 | on restart |
 | **Read mail the moment it arrives** | `RN_MAIL_WATCH` | off | — | on restart |
 | **Mailboxes to watch** | `RN_MAIL_WATCH_MAILBOX` | INBOX | — | on restart |
 | **Accept mail only from** | `RN_MAIL_ALLOWED_SENDERS` | unset (system default) | — | on restart |
 | **SMTP host** | `RN_SMTP_HOST` | smtp.gmail.com | — | on restart |
 | **SMTP port** | `RN_SMTP_PORT` | 465 | 1 … 65535 | on restart |
-| **IMAP host** | `RN_IMAP_HOST` | imap.gmail.com | — | on restart |
-| **IMAP port** | `RN_IMAP_PORT` | 993 | 1 … 65535 | on restart |
+| **Only to these recipients** | `RN_MAIL_ALLOWED_RECIPIENTS` | unset (system default) | — | on restart |
 | **Trace warnings** | `--trace-warnings` (NODE_OPTIONS) | off | — | on restart |
 | **Trace deprecations** | `--trace-deprecation` (NODE_OPTIONS) | off | — | on restart |
 | **Stack trace depth** | `--stack-trace-limit` (NODE_OPTIONS) | 10 | 0 … 200 | immediately |
@@ -454,7 +454,7 @@ Default: off · Takes effect: on restart · Settings key: `trackerAcceptBorrowed
 
 Default: 90 · Takes effect: on restart · Settings key: `trackerRetentionDays`
 
-## mail
+## mail-account
 
 ### Mail account — `RN_MAIL_USER`
 
@@ -472,23 +472,29 @@ An address that does not match the app password's account is the same 535: the c
 
 Default: unset (system default) · Takes effect: on restart · Settings key: `mailUser`
 
-### Only to these recipients — `RN_MAIL_ALLOWED_RECIPIENTS`
+## mail-receiving
 
-**What it does.** Addresses or domains matched against a message's To and Cc, one per line or comma-separated. Same spellings as the sender filter: an exact address, or a bare domain for anybody at it. Empty means every recipient.
+### IMAP host — `RN_IMAP_HOST`
 
-THERE ARE TWO OF THESE, AND THIS IS THE STANDING ONE. It applies to every run including the automatic ones; the job's own "Only to these recipients" field overrides it for one run started by hand.
+**What it does.** The server the read-mail job polls for arriving mail.
 
-**Why you would change it.** It is what makes watching a sent mailbox worth doing. In [Gmail]/Sent Mail the sender is always you, so a sender filter there matches everything or nothing and the recipient is the only thing that distinguishes one message from another. Watching INBOX and Sent Mail together, with the sender filter naming yourself and this naming the other person, is how "tell me when I mail her" is expressed.
+**Why you would change it.** The counterpart of the SMTP host, and the same app password authenticates against both — which is the whole reason §1 prefers an app password to OAuth.
 
-Cc counts as well as To — a message copied to somebody is a message to them as far as any reader is concerned. Bcc is deliberately not consulted: a received message carries no Bcc in its envelope at all, so using it would work on sent mail and quietly not on anything else, which is the worst kind of half-working.
+Needs adding to the network allowlist on Config → Connection alongside the SMTP host, for the same reason.
 
-**If it's wrong.** Both filters must match when both are set. That is what makes "from me to her" expressible, and equally what makes it easy to write a pair that matches nothing — a sender filter naming her and a recipient filter naming her cannot both hold for the same message.
+**If it's wrong.** The run fails on connect and changes nothing at all — this job never writes to the mailbox, so a wrong host costs a red run and no more.
 
-There is no OR between them. "Anything either of us sent the other" is two rules and this is one, so it needs either two mailboxes with the filters set for the direction each carries, or a filter naming only the correspondent and left off the other field.
+Default: imap.gmail.com · Takes effect: on restart · Settings key: `imapHost`
 
-The server's TO search matches display names too, so the parsed addresses are rechecked and a mismatch is reported rather than dropped.
+### IMAP port — `RN_IMAP_PORT`
 
-Default: unset (system default) · Takes effect: on restart · Settings key: `mailAllowedRecipients`
+**What it does.** The port, and the encryption choice with it: 993 is implicit TLS, the IMAP counterpart of SMTP's 465, and anything else connects in the clear.
+
+**Why you would change it.** Mail bodies and the account password both cross this connection. 143 is the plaintext port and exists for STARTTLS, with the same downgrade weakness 587 has on the sending side.
+
+**If it's wrong.** A mismatch fails the handshake rather than silently reading your mail over an unencrypted socket — but only because the port decides TLS here. Changing this to a non-993 port turns encryption off, so it is not a setting to adjust while chasing a connection problem.
+
+Default: 993 · Takes effect: on restart · Settings key: `imapPort`
 
 ### Read mail the moment it arrives — `RN_MAIL_WATCH`
 
@@ -552,6 +558,8 @@ A typo means runs that report nothing, which looks exactly like a quiet inbox. T
 
 Default: unset (system default) · Takes effect: on restart · Settings key: `mailAllowedSenders`
 
+## mail-sending
+
 ### SMTP host — `RN_SMTP_HOST`
 
 **What it does.** The server the send job hands outgoing mail to.
@@ -574,27 +582,23 @@ Default: smtp.gmail.com · Takes effect: on restart · Settings key: `smtpHost`
 
 Default: 465 · Takes effect: on restart · Settings key: `smtpPort`
 
-### IMAP host — `RN_IMAP_HOST`
+### Only to these recipients — `RN_MAIL_ALLOWED_RECIPIENTS`
 
-**What it does.** The server the read-mail job polls for arriving mail.
+**What it does.** Addresses or domains matched against a message's To and Cc, one per line or comma-separated. Same spellings as the sender filter: an exact address, or a bare domain for anybody at it. Empty means every recipient.
 
-**Why you would change it.** The counterpart of the SMTP host, and the same app password authenticates against both — which is the whole reason §1 prefers an app password to OAuth.
+THERE ARE TWO OF THESE, AND THIS IS THE STANDING ONE. It applies to every run including the automatic ones; the job's own "Only to these recipients" field overrides it for one run started by hand.
 
-Needs adding to the network allowlist on Config → Connection alongside the SMTP host, for the same reason.
+**Why you would change it.** It is what makes watching a sent mailbox worth doing. In [Gmail]/Sent Mail the sender is always you, so a sender filter there matches everything or nothing and the recipient is the only thing that distinguishes one message from another. Watching INBOX and Sent Mail together, with the sender filter naming yourself and this naming the other person, is how "tell me when I mail her" is expressed.
 
-**If it's wrong.** The run fails on connect and changes nothing at all — this job never writes to the mailbox, so a wrong host costs a red run and no more.
+Cc counts as well as To — a message copied to somebody is a message to them as far as any reader is concerned. Bcc is deliberately not consulted: a received message carries no Bcc in its envelope at all, so using it would work on sent mail and quietly not on anything else, which is the worst kind of half-working.
 
-Default: imap.gmail.com · Takes effect: on restart · Settings key: `imapHost`
+**If it's wrong.** Both filters must match when both are set. That is what makes "from me to her" expressible, and equally what makes it easy to write a pair that matches nothing — a sender filter naming her and a recipient filter naming her cannot both hold for the same message.
 
-### IMAP port — `RN_IMAP_PORT`
+There is no OR between them. "Anything either of us sent the other" is two rules and this is one, so it needs either two mailboxes with the filters set for the direction each carries, or a filter naming only the correspondent and left off the other field.
 
-**What it does.** The port, and the encryption choice with it: 993 is implicit TLS, the IMAP counterpart of SMTP's 465, and anything else connects in the clear.
+The server's TO search matches display names too, so the parsed addresses are rechecked and a mismatch is reported rather than dropped.
 
-**Why you would change it.** Mail bodies and the account password both cross this connection. 143 is the plaintext port and exists for STARTTLS, with the same downgrade weakness 587 has on the sending side.
-
-**If it's wrong.** A mismatch fails the handshake rather than silently reading your mail over an unencrypted socket — but only because the port decides TLS here. Changing this to a non-993 port turns encryption off, so it is not a setting to adjust while chasing a connection problem.
-
-Default: 993 · Takes effect: on restart · Settings key: `imapPort`
+Default: unset (system default) · Takes effect: on restart · Settings key: `mailAllowedRecipients`
 
 ## Output
 

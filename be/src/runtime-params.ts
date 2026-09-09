@@ -832,7 +832,7 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
         type: "string",
         default: null,
         appliesAt: "restart",
-        category: "mail",
+        category: "mail-account",
         label: "Mail account",
         info: {
             what:
@@ -858,45 +858,51 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
         },
     },
     {
-        id: "mailAllowedRecipients",
-        flag: "RN_MAIL_ALLOWED_RECIPIENTS",
+        id: "imapHost",
+        flag: "RN_IMAP_HOST",
         kind: "env",
         type: "string",
-        default: null,
+        default: "imap.gmail.com",
         appliesAt: "restart",
-        category: "mail",
-        label: "Only to these recipients",
+        category: "mail-receiving",
+        label: "IMAP host",
+        info: {
+            what: "The server the read-mail job polls for arriving mail.",
+            why:
+                "The counterpart of the SMTP host, and the same app password authenticates " +
+                "against both — which is the whole reason §1 prefers an app password to " +
+                "OAuth.\n\n" +
+                "Needs adding to the network allowlist on Config → Connection alongside the " +
+                "SMTP host, for the same reason.",
+            ifWrong:
+                "The run fails on connect and changes nothing at all — this job never writes " +
+                "to the mailbox, so a wrong host costs a red run and no more.",
+        },
+    },
+    {
+        id: "imapPort",
+        flag: "RN_IMAP_PORT",
+        kind: "env",
+        type: "int",
+        default: 993,
+        min: 1,
+        max: 65535,
+        appliesAt: "restart",
+        category: "mail-receiving",
+        label: "IMAP port",
         info: {
             what:
-                "Addresses or domains matched against a message\'s To and Cc, one per line " +
-                "or comma-separated. Same spellings as the sender filter: an exact address, " +
-                "or a bare domain for anybody at it. Empty means every recipient.\n\n" +
-                "THERE ARE TWO OF THESE, AND THIS IS THE STANDING ONE. It applies to every " +
-                "run including the automatic ones; the job\'s own \"Only to these " +
-                "recipients\" field overrides it for one run started by hand.",
+                "The port, and the encryption choice with it: 993 is implicit TLS, the IMAP " +
+                "counterpart of SMTP's 465, and anything else connects in the clear.",
             why:
-                "It is what makes watching a sent mailbox worth doing. In [Gmail]/Sent Mail " +
-                "the sender is always you, so a sender filter there matches everything or " +
-                "nothing and the recipient is the only thing that distinguishes one message " +
-                "from another. Watching INBOX and Sent Mail together, with the sender filter " +
-                "naming yourself and this naming the other person, is how \"tell me when I " +
-                "mail her\" is expressed.\n\n" +
-                "Cc counts as well as To — a message copied to somebody is a message to them " +
-                "as far as any reader is concerned. Bcc is deliberately not consulted: a " +
-                "received message carries no Bcc in its envelope at all, so using it would " +
-                "work on sent mail and quietly not on anything else, which is the worst kind " +
-                "of half-working.",
+                "Mail bodies and the account password both cross this connection. 143 is the " +
+                "plaintext port and exists for STARTTLS, with the same downgrade weakness " +
+                "587 has on the sending side.",
             ifWrong:
-                "Both filters must match when both are set. That is what makes \"from me to " +
-                "her\" expressible, and equally what makes it easy to write a pair that " +
-                "matches nothing — a sender filter naming her and a recipient filter naming " +
-                "her cannot both hold for the same message.\n\n" +
-                "There is no OR between them. \"Anything either of us sent the other\" is two " +
-                "rules and this is one, so it needs either two mailboxes with the filters set " +
-                "for the direction each carries, or a filter naming only the correspondent " +
-                "and left off the other field.\n\n" +
-                "The server\'s TO search matches display names too, so the parsed addresses " +
-                "are rechecked and a mismatch is reported rather than dropped.",
+                "A mismatch fails the handshake rather than silently reading your mail over " +
+                "an unencrypted socket — but only because the port decides TLS here. Changing " +
+                "this to a non-993 port turns encryption off, so it is not a setting to " +
+                "adjust while chasing a connection problem.",
         },
     },
     {
@@ -906,7 +912,7 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
         type: "bool",
         default: false,
         appliesAt: "restart",
-        category: "mail",
+        category: "mail-receiving",
         label: "Read mail the moment it arrives",
         info: {
             what:
@@ -945,7 +951,7 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
         type: "string",
         default: "INBOX",
         appliesAt: "restart",
-        category: "mail",
+        category: "mail-receiving",
         label: "Mailboxes to watch",
         info: {
             what:
@@ -994,7 +1000,7 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
         type: "string",
         default: null,
         appliesAt: "restart",
-        category: "mail",
+        category: "mail-receiving",
         label: "Accept mail only from",
         info: {
             what:
@@ -1044,7 +1050,7 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
         type: "string",
         default: "smtp.gmail.com",
         appliesAt: "restart",
-        category: "mail",
+        category: "mail-sending",
         label: "SMTP host",
         info: {
             what: "The server the send job hands outgoing mail to.",
@@ -1071,7 +1077,7 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
         min: 1,
         max: 65535,
         appliesAt: "restart",
-        category: "mail",
+        category: "mail-sending",
         label: "SMTP port",
         info: {
             what:
@@ -1091,51 +1097,45 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
         },
     },
     {
-        id: "imapHost",
-        flag: "RN_IMAP_HOST",
+        id: "mailAllowedRecipients",
+        flag: "RN_MAIL_ALLOWED_RECIPIENTS",
         kind: "env",
         type: "string",
-        default: "imap.gmail.com",
+        default: null,
         appliesAt: "restart",
-        category: "mail",
-        label: "IMAP host",
-        info: {
-            what: "The server the read-mail job polls for arriving mail.",
-            why:
-                "The counterpart of the SMTP host, and the same app password authenticates " +
-                "against both — which is the whole reason §1 prefers an app password to " +
-                "OAuth.\n\n" +
-                "Needs adding to the network allowlist on Config → Connection alongside the " +
-                "SMTP host, for the same reason.",
-            ifWrong:
-                "The run fails on connect and changes nothing at all — this job never writes " +
-                "to the mailbox, so a wrong host costs a red run and no more.",
-        },
-    },
-    {
-        id: "imapPort",
-        flag: "RN_IMAP_PORT",
-        kind: "env",
-        type: "int",
-        default: 993,
-        min: 1,
-        max: 65535,
-        appliesAt: "restart",
-        category: "mail",
-        label: "IMAP port",
+        category: "mail-sending",
+        label: "Only to these recipients",
         info: {
             what:
-                "The port, and the encryption choice with it: 993 is implicit TLS, the IMAP " +
-                "counterpart of SMTP's 465, and anything else connects in the clear.",
+                "Addresses or domains matched against a message\'s To and Cc, one per line " +
+                "or comma-separated. Same spellings as the sender filter: an exact address, " +
+                "or a bare domain for anybody at it. Empty means every recipient.\n\n" +
+                "THERE ARE TWO OF THESE, AND THIS IS THE STANDING ONE. It applies to every " +
+                "run including the automatic ones; the job\'s own \"Only to these " +
+                "recipients\" field overrides it for one run started by hand.",
             why:
-                "Mail bodies and the account password both cross this connection. 143 is the " +
-                "plaintext port and exists for STARTTLS, with the same downgrade weakness " +
-                "587 has on the sending side.",
+                "It is what makes watching a sent mailbox worth doing. In [Gmail]/Sent Mail " +
+                "the sender is always you, so a sender filter there matches everything or " +
+                "nothing and the recipient is the only thing that distinguishes one message " +
+                "from another. Watching INBOX and Sent Mail together, with the sender filter " +
+                "naming yourself and this naming the other person, is how \"tell me when I " +
+                "mail her\" is expressed.\n\n" +
+                "Cc counts as well as To — a message copied to somebody is a message to them " +
+                "as far as any reader is concerned. Bcc is deliberately not consulted: a " +
+                "received message carries no Bcc in its envelope at all, so using it would " +
+                "work on sent mail and quietly not on anything else, which is the worst kind " +
+                "of half-working.",
             ifWrong:
-                "A mismatch fails the handshake rather than silently reading your mail over " +
-                "an unencrypted socket — but only because the port decides TLS here. Changing " +
-                "this to a non-993 port turns encryption off, so it is not a setting to " +
-                "adjust while chasing a connection problem.",
+                "Both filters must match when both are set. That is what makes \"from me to " +
+                "her\" expressible, and equally what makes it easy to write a pair that " +
+                "matches nothing — a sender filter naming her and a recipient filter naming " +
+                "her cannot both hold for the same message.\n\n" +
+                "There is no OR between them. \"Anything either of us sent the other\" is two " +
+                "rules and this is one, so it needs either two mailboxes with the filters set " +
+                "for the direction each carries, or a filter naming only the correspondent " +
+                "and left off the other field.\n\n" +
+                "The server\'s TO search matches display names too, so the parsed addresses " +
+                "are rechecked and a mismatch is reported rather than dropped.",
         },
     },
     {

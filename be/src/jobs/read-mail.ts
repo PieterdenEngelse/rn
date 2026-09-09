@@ -247,7 +247,7 @@ export const readMail: Job = {
                     "else.\n\n" +
 
                     "The standing answer is \"Accept mail only from\", on Config → Runtime " +
-                    "in the Mail board. That one applies to every run, including the " +
+                    "in the Mail — receiving board. That one applies to every run, including the " +
                     "automatic ones every thirty minutes. In ordinary use you set that and " +
                     "never touch this.\n\n" +
 
