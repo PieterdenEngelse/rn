@@ -251,10 +251,14 @@ export const notify: Job = {
             "learns it can post to your phone. It is never written to a run record, never sent " +
             "to this page, and redacted out of any error message that happens to contain it.",
         ifWrong:
-            "Nothing names this job yet. Wiring it is one line — onChange: \"notify\" — in the " +
-            "job you want news from, and it is left undone on purpose: a declared credential is " +
-            "required, so a notifier wired before its URL exists would put a red failed run on " +
-            "the page of every fresh clone.\n\nWhile DRY_RUN is on this job sends nothing and " +
+            "No job file names this one, and none should. Which job's news you want, and where " +
+            "it goes, is a fact about your install rather than about the code — so it is wired " +
+            "on Config → Jobs, as an onChange override on the job you want news from, naming " +
+            "this job or notify-all for both notifiers at once. Declaring it in a file instead " +
+            "would put a red failed run on the page of every fresh clone: a declared credential " +
+            "is required, so a notifier wired before its URL exists refuses to start. A run row " +
+            "reading \"overridden: onChange\" is that wiring, showing up in the history.\n\n" +
+            "While DRY_RUN is on this job sends nothing and " +
             "reports exactly what it would have sent, which is the behaviour every job here " +
             "owes you and is worth checking on this one in particular — it is the job whose side " +
             "effect leaves the machine.\n\nIt retries three times, which means at-least-once: a " +
