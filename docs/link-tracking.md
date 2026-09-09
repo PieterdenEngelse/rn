@@ -243,6 +243,31 @@ failure it *would* have caught is the one worth catching: a target written
 `--set-path=/t 3012`, with no path on it, delivers `/<id>` to a tracker that did
 not accept the bare shape, and 404s on a recipient's first click.
 
+**Precedence, measured on a second mount.** The run above could not test the
+question §6 actually flagged — whether `/t` outranks the existing `/` — because
+a single-handler mount has no catch-all to outrank. Mounting both on 8443
+reproduces 443's exact shape, and `tailscale serve status` labels the result
+`(tailnet only)` beside the funnel-enabled origin, which is the `AllowFunnel`
+check confirmed a second way:
+
+    tailscale serve --bg --https=8443 http://127.0.0.1:3031            # the / catch-all
+    tailscale serve --bg --https=8443 --set-path=/t http://127.0.0.1:3032/t
+
+The two listeners answer a 404 differently — hooks `{"ok":false}`, tracker
+`Not found` — so each row below says which one was reached rather than only that
+something refused:
+
+| Request | Answer | Reached |
+|---|---|---|
+| `GET /` | 404 `{"ok":false}` | hooks — the catch-all still works |
+| `GET /t/` | 404 `Not found` | **the tracker**, for a path it rejects |
+| `GET /t/<minted id>` | 302 to the stored URL | **the tracker**, and a `tracker-click` in the log |
+| `GET /api/hooks/x` | 404 | hooks, which is POST-only |
+
+So `/t` wins, and it wins on the *mount* rather than on the response: `/t/` is a
+404 either way, and it is the tracker's 404. That is `getServeHandler` resolving
+per request as §3 describes, observed rather than read.
+
 **`tailscale serve` needs root here, and that is worth keeping.** Without
 `sudo` the command parses fine and gets as far as `sending serve config` before
 `Access denied: serve config denied`; it then suggests `sudo tailscale set
@@ -808,9 +833,9 @@ bisect when the click count is wrong.
 
 Steps 1 to 7 are landed, and so are the `docs/network.md` and `docs/sec.md`
 edits step 8 owes. **Of step 8 only the mapping itself is left** — the private
-rehearsal it was to be preceded by has been run, and §3 records what it found,
-including the one claim it could not test: a single-handler mount has no
-catch-all to outrank, so precedence needs 8443 carrying both handlers.
+rehearsal it was to be preceded by has been run — twice, the second time with
+both handlers mounted so that precedence had something to outrank — and §3
+records what both found.
 
 That is no longer the last question, though, and step 8 was the wrong place to
 look for it. "The origin has to be awake" in §3 is a step 0 that nobody wrote
