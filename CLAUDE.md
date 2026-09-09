@@ -144,6 +144,24 @@ gives you http://localhost:8080 instead.
 never hand-edit `output.css`. Re-run `npm run css:build` after adding class
 names Tailwind hasn't seen yet, or keep `npm run css:watch` running.
 
+**Prose in a scanned file mints CSS too.** `index.css` sets
+`@source "../../src"`, and Tailwind v4 reads those files as a bag of bare
+candidate strings rather than as Rust — it does not know what a comment is. So
+a word that happens to be a class name is a class name wherever it appears. It
+cost a failed `check.sh` on 2026-09-09: the word *alert*, in a code comment in
+`fe/src/pages/links.rs` describing an amber border, matched daisyUI's `.alert`
+component and put four rules and 1.1KB into `output.css`. The rewritten comment
+explaining the trap contained the word as well, and put them straight back.
+
+The failure is legible, at least — the stylesheet step compares a clean build
+against the committed file and names the byte counts — but the cause is not,
+because nothing in the diff points at a comment. Two things follow. Reach for a
+synonym in a `fe/src` comment when the obvious word is also a daisyUI component
+(`alert`, `badge`, `card`, `drawer`, `hero`, `modal`, `navbar`, `toast` are the
+ones to watch), and write the explanation somewhere outside `@source` — this
+file, or the commit message. Both can say the word plainly, which is why it is
+written out here and nowhere in `links.rs`.
+
 **Upgrading a package that contributes CSS means restarting the dev server**,
 not just `npm install`. A long-running `css:watch` accumulates and never prunes:
 swap daisyUI underneath it and its next write is the *union* of both versions —
