@@ -10,7 +10,32 @@ item.
 
 ---
 
-**Nothing is open right now.** The item that stood here — the hooks listener
+## The link tracker has no home for its redirector — 2026-09-09
+
+`docs/link-tracking.md` §7 has steps 1 to 7 landed and step 8 down to one
+command. What §3 now says, and what the plan never asked, is **where the thing
+answering that URL should live**.
+
+A tracked link sits in front of the content rather than beside it: nothing the
+recipient was sent is reachable unless the redirector answers. This machine was
+suspended for 25h49m of the 44h53m before 2026-09-09 — two blocks of about
+thirteen hours, ending 07:07 and 05:54 — so an origin here is dead through
+every evening and early morning, which is when mail is read.
+
+**What goes wrong while this is open:** nothing, as long as nothing is sent.
+The failure arrives the first time a tracked message reaches somebody else, and
+it arrives as *their* broken link rather than as a missing statistic. §3's
+option 2 — a small always-on host with a domain you own, proxying over the
+tailnet — is the only one of the three that fixes it; options 1 and 3 both keep
+the redirector on this laptop. Until one of those is chosen and running, the
+only defensible send is a pilot to your own address.
+
+Not blocking the mapping, which is reversible and exposes an empty store. It
+blocks the send.
+
+---
+
+**Nothing else is open right now.** The item that stood here before it — the hooks listener
 refusing form-encoded deliveries it had just authenticated, and rejecting
 Stripe's and Slack's signature schemes outright — was closed by building
 `docs/n8n.md` §7 steps 1 to 3. Steps 4 to 6 there are not open work: each waits

@@ -284,7 +284,10 @@ provider suffixes, so a clean verdict means "no known problem" and never
 "checked and owned"; a free subdomain from a provider not on the list passes and
 should not.
 
-**How to actually have one.** Three shapes, in the order I would try them:
+**How to actually have one.** Three shapes. They are ordered here by how
+permanent the *name* is, which is the axis this section is about — and that
+is not the only axis. "The origin has to be awake" below reorders them, and
+the two readings disagree about which one comes first:
 
 1. **A named Cloudflare Tunnel on your own domain.** `cloudflared` on this
    machine, `links.yourdomain.com` routed to `127.0.0.1:3012`. No VPS, no open
@@ -296,6 +299,10 @@ should not.
    tunnel — a `trycloudflare.com` quick tunnel is a borrowed hostname and is
    refused.
 
+   It fixes the name and nothing else. `cloudflared` runs *on this machine*, so
+   a click while the machine is asleep reaches a tunnel with no origin behind
+   it — see below.
+
 2. **A small host you own, joined to the tailnet.** Caddy or nginx on it,
    `links.yourdomain.com` proxying to `100.x.y.z:3012` over Tailscale. Costs a
    few euros a month and some ops, and buys the strongest property available:
@@ -303,6 +310,9 @@ should not.
    the tracker never spends the argument `docs/network.md` §4 and `docs/sec.md`
    make about the hooks port, and the only thing reachable from the internet is
    a box whose whole job is to forward one path.
+
+   It is also the only one of the three that answers when this laptop does not,
+   which is the second property and, on the numbers below, the deciding one.
 
 3. **Funnel on the `.ts.net` name.** Free, no extra infrastructure, and
    permanently borrowed. Defensible when every recipient already knows what rn
@@ -335,6 +345,46 @@ base so the domain can host other things later, and **the domain is now a
 dependency of mail already sent** — put it on auto-renew, because letting it
 lapse breaks links in messages you no longer control and hands the name to
 whoever registers it next.
+
+### The origin has to be awake
+
+The section above is about what the origin *is called*. This one is about
+whether anything answers there, and it was found by measuring this machine
+rather than by reasoning about it — which is why it arrived after the three
+options were already ranked.
+
+A tracked link is not beside the content, it is **in front of** it. The
+recipient cannot reach the destination unless the redirector answers, so an
+origin that is down does not merely lose a click: the person you mailed gets an
+error instead of the thing you sent them. Every mitigation in §5 is about
+numbers being wrong. This one is about the mail not working.
+
+**Measured on this machine, 2026-09-09.** Suspended for 25h49m of the preceding
+44h53m — 18:29→07:07 and 16:43→05:54, two blocks of about thirteen hours, from
+`journalctl -b | grep 'PM: suspend'`. Mail is read in exactly those windows.
+Links minted here are therefore dead for roughly half of every day, in the
+evening and early morning, which is when somebody actually opens their mail.
+
+That is a property of a laptop and not of Tailscale, so it survives changing
+the hostname. Options 1 and 3 both put the redirector on this machine and both
+inherit it; only option 2 moves it somewhere that stays up. Read for the name
+alone the order is 1, 2, 3. Read for whether the link works when it is clicked,
+**option 2 is first and the other two are the same answer**.
+
+Two consequences worth stating plainly. **Nothing should be sent to anyone else
+from an origin that sleeps** — a pilot to your own address is fine, because a
+dead link at midnight costs you nothing and tells you the same thing a live one
+would. And **the fix is not a longer retention or a retry**: the store is on
+the machine that is asleep, so there is nothing here to make more patient. The
+redirector has to move.
+
+Unmeasured, and worth knowing before it matters: what a click *gets* while the
+node is offline has not been checked here. Funnel's edge answers something —
+presumably a Tailscale error page rather than a connection refusal — and
+whether that reads to a recipient as "broken link" or as "this site is down" is
+the difference between them forwarding your mail to someone and not. Check it
+by clicking a tracked link with the laptop suspended, before deciding this is
+acceptable for a pilot.
 
 ### The destination is never in the URL
 
@@ -758,7 +808,15 @@ bisect when the click count is wrong.
 
 Steps 1 to 7 are landed, and so are the `docs/network.md` and `docs/sec.md`
 edits step 8 owes. **Of step 8 only the mapping itself is left** — the private
-rehearsal it was to be preceded by has been run, and §3 records what it found.
+rehearsal it was to be preceded by has been run, and §3 records what it found,
+including the one claim it could not test: a single-handler mount has no
+catch-all to outrank, so precedence needs 8443 carrying both handlers.
+
+That is no longer the last question, though, and step 8 was the wrong place to
+look for it. "The origin has to be awake" in §3 is a step 0 that nobody wrote
+down: **where the redirector lives** decides whether a link works when it is
+clicked, and this machine is asleep for about half of each day. The mapping is
+a small reversible act; sending mail through an origin that sleeps is not.
 
 Three properties of that order, all of them the reason for it:
 
