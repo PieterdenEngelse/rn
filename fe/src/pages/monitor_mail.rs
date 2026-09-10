@@ -32,7 +32,8 @@
 //! thing rather than to see what it is doing.
 
 use crate::api::{
-    fetch_jobs, fetch_mail_health, JobsResponse, MailHealthResponse, MailServer, WatchedMailbox,
+    fetch_jobs, fetch_mail_health, test_mail, JobsResponse, MailHealthResponse, MailServer,
+    MailTestResponse, MailTestResult, WatchedMailbox,
 };
 use crate::app::Route;
 use crate::components::{Board, InfoButton, Metric, Panel};
@@ -59,7 +60,7 @@ pub fn MonitorMail() -> Element {
                 InfoButton {
                     title: "The two halves of the mail account".to_string(),
                     what: "rn reads mail over IMAP and sends it over SMTP. Two protocols, two servers, two ports, two clients — and one account, which is the only thing they share: the same address authenticates both and the same gmailAppPassword credential answers for both.\n\nReading is a connection held open on a selected mailbox, which reports a message the moment it lands. Sending is a connection opened for one run and closed again.".to_string(),
-                    why: "Because \"is mail working\" is two questions with two answers, and they fail in opposite ways.\n\nA dropped read connection is silent: mail simply stops arriving promptly, the half-hourly schedule keeps running, and the job history goes on looking healthy. A failed send is the reverse — loud, and already outside this machine. Anything that reaches a recipient cannot be taken back, which is why the sending half is switched off by default and has to be given a list of addresses before it will do anything.".to_string(),
+                    why: "Because \"is mail working\" is two questions with two answers, and they fail in opposite ways.\n\nA dropped read connection is silent: mail simply stops arriving promptly, the half-hourly schedule keeps running, and the job history goes on looking healthy. A failed send is the reverse — loud, and already outside this machine. Anything that reaches a recipient cannot be taken back, and there is no install-wide list of addresses standing in front of it: the recipients of a send are the ones typed into that run, and DRY_RUN plus the credential are what stop a half-configured install from mailing anybody.".to_string(),
                     if_wrong: "If the password is missing both halves refuse before opening a connection, saying so plainly rather than failing at the protocol. If the address is empty the same.\n\nThe quiet failure to watch for is a watched mailbox that reports healthy and never fires — a connection to a mailbox nothing is delivered to looks exactly like a connection to a mailbox that is working. The mailboxes below show how many runs each has actually started, which is the number that distinguishes them.".to_string(),
                 }
             }
@@ -83,6 +84,7 @@ pub fn MonitorMail() -> Element {
                         Receiving { data: d.clone() }
                         Sending { data: d.clone() }
                     }
+                    ConnectionTest {}
                     Mailboxes { data: d.clone() }
                     MailJobs {}
                 },
@@ -130,6 +132,11 @@ fn Receiving(data: MailHealthResponse) -> Element {
     } else {
         data.allowed_senders.clone()
     };
+    let recipients = if data.allowed_recipients.is_empty() {
+        "any".to_string()
+    } else {
+        data.allowed_recipients.clone()
+    };
 
     rsx! {
         Board { title: "Receiving — IMAP".to_string(),
@@ -162,6 +169,13 @@ fn Receiving(data: MailHealthResponse) -> Element {
                 if_wrong: "Zero with watching on means nothing is held open at all, which looks identical to a connection problem from anywhere except this row.".to_string(),
             }
             Metric {
+                label: "Recipient filter".to_string(),
+                value: recipients,
+                what: "Addresses a To or Cc must match for an arriving message to count — RN_MAIL_ALLOWED_RECIPIENTS, applied in the same server-side search as the sender filter. Both apply when both are set.".to_string(),
+                why: "It is what makes watching a sent mailbox worth doing. There the sender is always you, so a sender filter matches everything and only this distinguishes one message from another — \"from me to her\" needs both halves.".to_string(),
+                if_wrong: "Empty means any recipient. It is a filter on mail that arrives and has nothing to do with sending: nothing here bounds who a send may go to.\n\nSaving it and not restarting is the failure worth knowing. It takes effect at startup, so between the two the page says mail is narrowed and the process still has no filter — read-mail refuses to run rather than reading the whole mailbox while somebody believes otherwise.".to_string(),
+            }
+            Metric {
                 label: "Sender filter".to_string(),
                 value: senders,
                 what: "Addresses or domains arriving mail is narrowed to before anything is reported — RN_MAIL_ALLOWED_SENDERS, applied in the server-side search rather than after fetching.".to_string(),
@@ -175,10 +189,10 @@ fn Receiving(data: MailHealthResponse) -> Element {
 /// The SMTP half.
 #[component]
 fn Sending(data: MailHealthResponse) -> Element {
-    let recipients = if data.allowed_recipients.is_empty() {
-        "none — sending refused".to_string()
+    let from_name = if data.from_name.is_empty() {
+        "none — the address alone".to_string()
     } else {
-        data.allowed_recipients.clone()
+        data.from_name.clone()
     };
     let sends = if data.sends == 0 {
         "none yet".to_string()
@@ -203,11 +217,11 @@ fn Sending(data: MailHealthResponse) -> Element {
                 if_wrong: "Anything but 465 reports plain here. 587 with STARTTLS is a perfectly ordinary way to send mail and is not what this client does, so the port is not a free choice.".to_string(),
             }
             Metric {
-                label: "Allowed recipients".to_string(),
-                value: recipients,
-                what: "The addresses the sending job may send to — RN_MAIL_ALLOWED_RECIPIENTS. Empty is the shipped default and means the job refuses to send at all.".to_string(),
-                why: "It is a guard on the one action here that cannot be undone. A wrong address in a job input is a typo; a wrong address that gets sent to is a message in a stranger's mailbox, and the allowlist is what stands between a half-configured install and that.".to_string(),
-                if_wrong: "Empty and nothing is sent, which is a refusal rather than a fault — until the day it is a surprise, which is why the row says it in words rather than showing an empty value.".to_string(),
+                label: "From name".to_string(),
+                value: from_name,
+                what: "The name shown beside the address on mail this install sends — RN_MAIL_FROM_NAME, in the Mail — sending board on Config → Runtime. Empty sends the bare address.".to_string(),
+                why: "It is the only thing on either board that a stranger ever sees. Everything else here decides whether a connection works; this decides what is in the From column of somebody's mail client, next to a subject line, before they have opened anything.".to_string(),
+                if_wrong: "Nothing fails, and it changes nothing already sent — the same one-way property the tracker's base URL has, for the same reason. The address beside it is still the account that authenticated, which is what a receiving server checks.".to_string(),
             }
             Metric {
                 label: "Sends recorded".to_string(),
@@ -285,6 +299,73 @@ fn MailJobs() -> Element {
                 }
             },
         }
+    }
+}
+
+/// Prove both connections, without sending anything or reading anything.
+///
+/// The gap this fills is the one the sending board makes obvious: with no send
+/// on record, every value there is configuration that has never been
+/// exercised, and the only way to learn whether it works was to mail a person.
+/// Both clients can answer without that — IMAP by connecting and leaving,
+/// nodemailer by `verify()`, which authenticates and quits.
+///
+/// Deliberately a button and not something the page does on load. It
+/// authenticates against somebody else's server, and a page that did it every
+/// time it was opened would be a login attempt per refresh.
+#[component]
+fn ConnectionTest() -> Element {
+    let mut result = use_signal(|| Option::<Result<MailTestResponse, String>>::None);
+    let mut running = use_signal(|| false);
+
+    rsx! {
+        div { class: "flex items-baseline gap-3 flex-wrap",
+            button {
+                class: "cursor-pointer text-xs",
+                style: "color: #22d3ee;",
+                disabled: running(),
+                onclick: move |_| {
+                    running.set(true);
+                    result.set(None);
+                    spawn(async move {
+                        result.set(Some(test_mail().await));
+                        running.set(false);
+                    });
+                },
+                if running() { "Testing…" } else { "Test both connections" }
+            }
+            InfoButton {
+                title: "Testing the connections".to_string(),
+                what: "Opens each connection, completes TLS, authenticates with the account above, and closes it again. Nothing is sent, no mailbox is selected and no message is fetched — so nothing can be marked as read, which is the claim the reading half rests on.\n\nThe two are tried independently rather than one after the other, so a wrong password reports as both failing and an unreachable host reports as one.".to_string(),
+                why: "Because until a send has happened, the sending board is configuration nobody has exercised — and the only other way to find out whether it works is to mail somebody, which is the one thing here that cannot be taken back.\n\nThe duration is reported for a reason of its own: neither client sets a timeout, so both inherit their library's — five minutes of socket silence for IMAP, ten for SMTP. A connection that succeeds slowly is invisible everywhere else on this page.".to_string(),
+                if_wrong: "A refusal comes back with the server's own reason, redacted the way every message that leaves rn is. \"Invalid credentials\" against a Google account usually means an ordinary password where an app password is wanted.\n\nSuccess proves the account, the host, the port and TLS. It does not prove a mailbox exists, that a filter matches anything, or that mail you send will be accepted by the recipient's server — those fail later and elsewhere.".to_string(),
+            }
+            match result.read().as_ref() {
+                Some(Ok(r)) => rsx! {
+                    span { class: if r.imap.ok { "text-green-400 text-xs" } else { "text-amber-400 text-xs" },
+                        "IMAP {outcome_label(&r.imap)}"
+                    }
+                    span { class: if r.smtp.ok { "text-green-400 text-xs" } else { "text-amber-400 text-xs" },
+                        "SMTP {outcome_label(&r.smtp)}"
+                    }
+                },
+                Some(Err(e)) => rsx! { span { class: "text-red-400 text-xs", "{e}" } },
+                None => rsx! {},
+            }
+        }
+    }
+}
+
+/// One end's verdict, with the number that matters either way.
+///
+/// The duration is kept on success as well as failure: a connection that works
+/// in eight seconds is the case nothing else on the page can show, and the one
+/// that turns into a job sitting under a five- or ten-minute library timeout.
+fn outcome_label(r: &MailTestResult) -> String {
+    match r.error.as_ref() {
+        None if r.ok => format!("ok in {}ms", r.ms as i64),
+        Some(e) => format!("failed after {}ms — {e}", r.ms as i64),
+        None => format!("failed after {}ms", r.ms as i64),
     }
 }
 

@@ -222,6 +222,21 @@ export const config = {
         process.env.RN_TRACKER_SENT_PATH ??
         `${process.env.HOME ?? "."}/.config/rn/link-sends.jsonl`,
 
+    /**
+     * The name shown beside the address on outgoing mail, or empty for none.
+     *
+     * The only setting in the mail group whose effect is visible to somebody
+     * who is not running rn. Everything else here decides whether a connection
+     * works; this decides what a stranger reads in their client's From column,
+     * next to a subject line, before they have opened anything — and like the
+     * tracker's base URL, it cannot be corrected for mail already sent.
+     *
+     * Empty is a real answer and the default: a bare address is honest, and an
+     * install whose account already carries a name at the provider does not
+     * need this at all.
+     */
+    mailFromName: process.env.RN_MAIL_FROM_NAME ?? "",
+
     /** SMTP host the send job connects to. */
     smtpHost: process.env.RN_SMTP_HOST ?? "smtp.gmail.com",
 

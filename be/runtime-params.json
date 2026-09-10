@@ -566,6 +566,21 @@
       }
     },
     {
+      "id": "mailAllowedRecipients",
+      "flag": "RN_MAIL_ALLOWED_RECIPIENTS",
+      "kind": "env",
+      "type": "string",
+      "default": null,
+      "appliesAt": "restart",
+      "category": "mail-receiving",
+      "label": "Only to these recipients",
+      "info": {
+        "what": "Addresses or domains matched against a message's To and Cc, one per line or comma-separated. Same spellings as the sender filter: an exact address, or a bare domain for anybody at it. Empty means every recipient.\n\nTHERE ARE TWO OF THESE, AND THIS IS THE STANDING ONE. It applies to every run including the automatic ones; the job's own \"Only to these recipients\" field overrides it for one run started by hand.",
+        "why": "It is what makes watching a sent mailbox worth doing. In [Gmail]/Sent Mail the sender is always you, so a sender filter there matches everything or nothing and the recipient is the only thing that distinguishes one message from another. Watching INBOX and Sent Mail together, with the sender filter naming yourself and this naming the other person, is how \"tell me when I mail her\" is expressed.\n\nCc counts as well as To — a message copied to somebody is a message to them as far as any reader is concerned. Bcc is deliberately not consulted: a received message carries no Bcc in its envelope at all, so using it would work on sent mail and quietly not on anything else, which is the worst kind of half-working.",
+        "ifWrong": "Both filters must match when both are set. That is what makes \"from me to her\" expressible, and equally what makes it easy to write a pair that matches nothing — a sender filter naming her and a recipient filter naming her cannot both hold for the same message.\n\nThere is no OR between them. \"Anything either of us sent the other\" is two rules and this is one, so it needs either two mailboxes with the filters set for the direction each carries, or a filter naming only the correspondent and left off the other field.\n\nThe server's TO search matches display names too, so the parsed addresses are rechecked and a mismatch is reported rather than dropped."
+      }
+    },
+    {
       "id": "smtpHost",
       "flag": "RN_SMTP_HOST",
       "kind": "env",
@@ -598,18 +613,18 @@
       }
     },
     {
-      "id": "mailAllowedRecipients",
-      "flag": "RN_MAIL_ALLOWED_RECIPIENTS",
+      "id": "mailFromName",
+      "flag": "RN_MAIL_FROM_NAME",
       "kind": "env",
       "type": "string",
       "default": null,
       "appliesAt": "restart",
       "category": "mail-sending",
-      "label": "Only to these recipients",
+      "label": "From name",
       "info": {
-        "what": "Addresses or domains matched against a message's To and Cc, one per line or comma-separated. Same spellings as the sender filter: an exact address, or a bare domain for anybody at it. Empty means every recipient.\n\nTHERE ARE TWO OF THESE, AND THIS IS THE STANDING ONE. It applies to every run including the automatic ones; the job's own \"Only to these recipients\" field overrides it for one run started by hand.",
-        "why": "It is what makes watching a sent mailbox worth doing. In [Gmail]/Sent Mail the sender is always you, so a sender filter there matches everything or nothing and the recipient is the only thing that distinguishes one message from another. Watching INBOX and Sent Mail together, with the sender filter naming yourself and this naming the other person, is how \"tell me when I mail her\" is expressed.\n\nCc counts as well as To — a message copied to somebody is a message to them as far as any reader is concerned. Bcc is deliberately not consulted: a received message carries no Bcc in its envelope at all, so using it would work on sent mail and quietly not on anything else, which is the worst kind of half-working.",
-        "ifWrong": "Both filters must match when both are set. That is what makes \"from me to her\" expressible, and equally what makes it easy to write a pair that matches nothing — a sender filter naming her and a recipient filter naming her cannot both hold for the same message.\n\nThere is no OR between them. \"Anything either of us sent the other\" is two rules and this is one, so it needs either two mailboxes with the filters set for the direction each carries, or a filter naming only the correspondent and left off the other field.\n\nThe server's TO search matches display names too, so the parsed addresses are rechecked and a mismatch is reported rather than dropped."
+        "what": "The name shown beside the address on mail rn sends — \"Pieter <you@example.com>\" rather than \"you@example.com\" on its own. It is set here and nowhere else: the address comes from the account board and the two are combined per message.\n\nEmpty is the default and means no name, which is what every send has done so far.",
+        "why": "It is the only setting in this group a stranger ever sees. The rest decide whether a connection works; this one decides what is in the From column of somebody's mail client, beside a subject line, before they have opened anything — and a bare address is the shape of mail people have been taught to be careful with.\n\nIt is also on the short list of settings that cannot be corrected afterwards. Changing it fixes the next send and nothing already in a mailbox, which is the same reason the tracker's base URL is checked before a link is minted rather than after.",
+        "ifWrong": "Nothing fails. An empty value sends the address alone, exactly as before, and any value at all is passed to the mail library as a name rather than pasted into a header — so a comma, a quote or an accent is encoded correctly instead of splitting the field.\n\nWhat it cannot do is make mail arrive as somebody else. The address is still the account that authenticated, and a receiving server checks that and not this; a name that disagrees with the address is a thing spam filters have opinions about."
       }
     },
     {

@@ -35,6 +35,8 @@ import type {
     JobOverride,
     LinksResponse,
     MailHealthResponse,
+    MailTestResponse,
+    MailTestResult,
     RunsDeleteResponse,
     MailRuleSaveResponse,
     MailRulesResponse,
@@ -523,6 +525,95 @@ export function createApp() {
             return done(200);
         }
 
+        // Prove both connections without doing anything with them.
+        //
+        // POST rather than GET, though it reads nothing and changes nothing
+        // here: it opens two connections and authenticates against somebody
+        // else's server, and a GET is the sort of thing a browser, a preview
+        // or a link checker will do on its own. Repeated failed authentication
+        // is noticed by providers.
+        if (url.pathname === "/api/mail-test" && req.method === "POST") {
+            const password = secrets.read("gmailAppPassword");
+
+            // Refused here rather than at the protocol, so the answer names
+            // the thing to fix instead of an authentication failure that reads
+            // like a wrong password.
+            const missing =
+                password === undefined
+                    ? "the gmailAppPassword credential is not set"
+                    : config.mailUser === ""
+                      ? "RN_MAIL_USER is not set"
+                      : undefined;
+            if (missing !== undefined) {
+                const refused = { ok: false, ms: 0, error: missing };
+                send(res, 200, { imap: refused, smtp: refused } satisfies MailTestResponse);
+                return done(200);
+            }
+
+            const attempt = async (run: () => Promise<void>): Promise<MailTestResult> => {
+                const started = Date.now();
+                try {
+                    await run();
+                    // Explicitly null rather than absent: the wire type says
+                    // every result carries the field, and "absent" and
+                    // "present but null" are the same question asked twice.
+                    return { ok: true, ms: Date.now() - started, error: null };
+                } catch (err) {
+                    return {
+                        ok: false,
+                        ms: Date.now() - started,
+                        // Redacted like everything else that leaves here: a
+                        // server's refusal can quote what it was sent.
+                        error: secrets.redact(err instanceof Error ? err.message : String(err)),
+                    };
+                }
+            };
+
+            // Connect, greet, authenticate, leave. No mailbox is selected and
+            // no message is fetched, so nothing can be marked as read — the
+            // one thing read-mail's whole safety claim rests on, and not a
+            // claim worth weakening for a test button.
+            const imap = await attempt(async () => {
+                const { ImapFlow } = await import("imapflow");
+                const client = new ImapFlow({
+                    host: config.imapHost,
+                    port: config.imapPort,
+                    secure: config.imapPort === 993,
+                    auth: { user: config.mailUser, pass: password ?? "" },
+                    logger: false,
+                });
+                client.on("error", () => {});
+                await client.connect();
+                await client.logout().catch(() => client.close());
+            });
+
+            // verify() is nodemailer's own: it opens the connection, completes
+            // TLS, authenticates and quits. No message is composed and nothing
+            // is queued, which is what makes this safe to offer on a page —
+            // the alternative way to learn this is to mail a person.
+            const smtp = await attempt(async () => {
+                const { createTransport } = await import("nodemailer");
+                const tx = createTransport({
+                    host: config.smtpHost,
+                    port: config.smtpPort,
+                    secure: config.smtpPort === 465,
+                    auth: { user: config.mailUser, pass: password ?? "" },
+                });
+                try {
+                    await tx.verify();
+                } finally {
+                    tx.close();
+                }
+            });
+
+            step("mail-tested", {
+                imap: imap.ok ? `ok in ${imap.ms}ms` : "failed",
+                smtp: smtp.ok ? `ok in ${smtp.ms}ms` : "failed",
+            });
+            send(res, 200, { imap, smtp } satisfies MailTestResponse);
+            return done(200);
+        }
+
         // The rules behind Config → Mail. Read, written and deleted here
         // rather than through the settings endpoint, for the reason webhooks
         // are: a list of records is not a scalar setting, and validating one
@@ -570,12 +661,14 @@ export function createApp() {
                 rulesEnabled: mailRules.list().filter((r) => r.enabled).length,
                 allowedSenders: config.mailAllowedSenders,
 
+                allowedRecipients: config.mailAllowedRecipients,
+
                 smtp: {
                     host: config.smtpHost,
                     port: config.smtpPort,
                     implicitTls: config.smtpPort === 465,
                 },
-                allowedRecipients: config.mailAllowedRecipients,
+                fromName: config.mailFromName,
                 sends: trackerStore.sends().length,
             } satisfies MailHealthResponse);
             return done(200);

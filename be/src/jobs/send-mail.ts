@@ -165,12 +165,35 @@ export function isPermanentSmtp(code: number | undefined): boolean {
 /** What a mail transport has to do, so a test can supply one without a server. */
 export interface Transport {
     send(message: {
-        from: string;
+        /**
+         * A bare address, or a name and address the library encodes into one.
+         *
+         * The object form rather than a string this file assembles: a display
+         * name containing a comma, a quote or anything outside ASCII has to be
+         * quoted or RFC 2047 encoded, and a header built by concatenation gets
+         * that wrong in a way that shows up in somebody else's mail client.
+         */
+        from: string | { name: string; address: string };
         to: string;
         subject: string;
         html: string;
         text: string;
     }): Promise<{ accepted: string[] }>;
+}
+
+/**
+ * Who the mail is from, as the library wants it.
+ *
+ * The address is always the account that authenticated — a receiving server
+ * checks that and nothing here can change it. What this adds is the name
+ * beside it, and only when one is set: an empty setting sends the bare address
+ * rather than an empty name, which would render as `<> you@example.com` in
+ * some clients and as a quoted empty string in others.
+ */
+export function fromAddress(): string | { name: string; address: string } {
+    return config.mailFromName === ""
+        ? config.mailUser
+        : { name: config.mailFromName, address: config.mailUser };
 }
 
 /**
@@ -570,7 +593,7 @@ export const sendMail: Job = {
 
                 try {
                     const info = await tx.send({
-                        from: config.mailUser,
+                        from: fromAddress(),
                         to,
                         subject,
                         html: body.html,

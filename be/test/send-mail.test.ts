@@ -29,6 +29,7 @@ const mutable = config as unknown as {
     trackerSentPath: string;
     trackerBaseUrl: string;
     mailUser: string;
+    mailFromName: string;
 };
 mutable.trackerStorePath = LINKS;
 mutable.trackerSentPath = SENT;
@@ -37,9 +38,8 @@ mutable.mailUser = "sender@example.com";
 
 const links = await import("../src/tracker/store.ts");
 const sent = await import("../src/tracker/sent.ts");
-const { deriveSendId, parseRecipients, plainTextFrom, isPermanentSmtp } = await import(
-    "../src/jobs/send-mail.ts"
-);
+const { deriveSendId, fromAddress, parseRecipients, plainTextFrom, isPermanentSmtp } =
+    await import("../src/jobs/send-mail.ts");
 
 after(() => {
     rmSync(LINKS, { force: true });
@@ -60,6 +60,19 @@ test("recipients are split on lines, commas and semicolons, and deduplicated", (
         "c@x.com",
     ]);
     assert.deepEqual(parseRecipients("   "), []);
+});
+
+test("a From name is handed over as a name, and its absence sends the bare address", () => {
+    // The object form is the whole point: a name is not concatenated into a
+    // header here, so a comma in it cannot split the field. What is checked is
+    // that the address is never the thing that changes — a receiving server
+    // authenticates that, and no setting on any page may touch it.
+    mutable.mailFromName = "";
+    assert.equal(fromAddress(), "sender@example.com");
+
+    mutable.mailFromName = "Pieter, of rn";
+    assert.deepEqual(fromAddress(), { name: "Pieter, of rn", address: "sender@example.com" });
+    mutable.mailFromName = "";
 });
 
 test("the send id is stable across attempts and independent of list order", () => {

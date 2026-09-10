@@ -7,8 +7,8 @@
 use super::wire::{
     ConnectionResponse, EnvResponse, HealthResponse, JobConfigResponse, JobErrors, JobOverride,
     JobRunResult, JobSource, JobsResponse, LinksResponse, MailHealthResponse, MailRule,
-    MailRuleSaveResponse, MailRulesResponse, NodeHistory, NodeMetrics, RunsDeleteResponse,
-    SendDetail,
+    MailRuleSaveResponse, MailRulesResponse, MailTestResponse, MailTestResult, NodeHistory,
+    NodeMetrics, RunsDeleteResponse, SendDetail,
     ParamsResponse, RestartOutcome, RunsResponse, SaveResponse, StateResetResponse, StatusResponse,
     CredentialSaveResponse, CredentialsResponse, StopOutcome, TestDelivery, WebhookDef,
     WebhookSaveResponse, WebhooksResponse,
@@ -715,6 +715,22 @@ pub async fn delete_credential(name: &str) -> Result<CredentialSaveResponse, Str
     resp.json::<CredentialSaveResponse>()
         .await
         .map_err(|_| format!("the credential was not removed ({})", resp.status()))
+}
+
+/// Open both mail connections, authenticate, and close them again.
+///
+/// POST because it acts on somebody else's server, though it changes nothing
+/// here: two connections and two authentications is not a thing a browser, a
+/// preview or a link checker should be able to start by fetching a URL.
+pub async fn test_mail() -> Result<MailTestResponse, String> {
+    let resp = gloo_net::http::Request::post(&format!("{API_BASE}/api/mail-test"))
+        .send()
+        .await
+        .map_err(|e| format!("{e}"))?;
+    if !resp.ok() {
+        return Err(format!("the test could not be run ({})", resp.status()));
+    }
+    resp.json::<MailTestResponse>().await.map_err(|e| format!("{e}"))
 }
 
 /// What the two mail connections are doing, for Monitor → Mail.

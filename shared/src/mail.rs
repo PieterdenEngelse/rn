@@ -154,13 +154,59 @@ wire! {
         #[serde(default)]
         pub allowed_senders: String,
 
-        pub smtp: MailServer,
-        /// Addresses `send-mail` is allowed to send to. Empty means the job
-        /// refuses to send at all, which is the shipped default.
+        /// Addresses a `To` or `Cc` must match for arriving mail to count.
+        /// Empty means any.
+        ///
+        /// An *inbound* filter, beside `allowed_senders` and applied in the
+        /// same search — despite the name, which reads like a send guard and
+        /// was misfiled as one here for exactly that reason. There is no
+        /// install-wide list bounding who a send may go to; a send's
+        /// recipients are the ones given to that run.
         #[serde(default)]
         pub allowed_recipients: String,
+
+        pub smtp: MailServer,
+        /// The name shown beside the address on outgoing mail. Empty sends the
+        /// bare address, which is the default.
+        #[serde(default)]
+        pub from_name: String,
         /// Sends recorded in the link store. Zero is the ordinary state until
         /// the first send, and the page says so rather than showing a bare 0.
         pub sends: u32,
+    }
+}
+
+wire! {
+    /// One end's answer to "does this actually work", from POST /api/mail-test.
+    ///
+    /// A duration as well as a verdict, because the interesting failure here is
+    /// not a refusal — that arrives with a reason — but a connection that takes
+    /// twenty seconds to succeed. Neither client sets a timeout, so both
+    /// inherit their library's, and nothing else on any page would show you
+    /// that the server is answering slowly.
+    #[serde(rename_all = "camelCase")]
+    pub struct MailTestResult {
+        pub ok: bool,
+        /// How long the attempt took, whether it worked or not.
+        pub ms: f64,
+        /// Why it did not, when it did not. Redacted like every other message
+        /// that leaves `be` — see `docs/token-sec.md`.
+        #[serde(default)]
+        pub error: Option<String>,
+    }
+}
+
+wire! {
+    /// POST /api/mail-test. Both ends, tried independently.
+    ///
+    /// Independently on purpose: they share an account, so the useful answer
+    /// when a password is wrong is that *both* failed, and the useful answer
+    /// when one host is unreachable is which one. Stopping at the first
+    /// failure would report the second as untested and read as a consequence
+    /// of the first.
+    #[serde(rename_all = "camelCase")]
+    pub struct MailTestResponse {
+        pub imap: MailTestResult,
+        pub smtp: MailTestResult,
     }
 }
