@@ -16,13 +16,19 @@
 
 import { test, beforeEach, after } from "node:test";
 import assert from "node:assert/strict";
-import { appendFileSync, rmSync } from "node:fs";
+import { appendFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { config } from "../src/config.ts";
 
 const LINKS = join(tmpdir(), `rn-send-links-test-${process.pid}.jsonl`);
 const SENT = join(tmpdir(), `rn-send-sent-test-${process.pid}.jsonl`);
+// The allowlist guard reads the *saved* settings to catch a value changed on a
+// page and not yet applied, so a test that leaves this pointing at the real
+// ~/.config/rn/settings.json passes or fails according to what the developer
+// running it has configured. It did: setting the allowlist on a live install
+// turned two green tests red without a line of source changing.
+const SETTINGS = join(tmpdir(), `rn-send-settings-test-${process.pid}.json`);
 
 const mutable = config as unknown as {
     trackerStorePath: string;
@@ -37,6 +43,7 @@ mutable.trackerStorePath = LINKS;
 mutable.trackerSentPath = SENT;
 mutable.trackerBaseUrl = "https://links.example.com/t";
 mutable.mailUser = "sender@example.com";
+mutable.settingsPath = SETTINGS;
 
 const links = await import("../src/tracker/store.ts");
 const sent = await import("../src/tracker/sent.ts");
@@ -52,11 +59,13 @@ const {
 after(() => {
     rmSync(LINKS, { force: true });
     rmSync(SENT, { force: true });
+    rmSync(SETTINGS, { force: true });
 });
 
 beforeEach(() => {
     rmSync(LINKS, { force: true });
     rmSync(SENT, { force: true });
+    rmSync(SETTINGS, { force: true });
     links.reset();
     sent.reset();
 });
@@ -103,6 +112,31 @@ test("an address outside the allowlist refuses the whole list, not just itself",
         () => assertAllowedRecipients(["her@notexample.com"]),
         /not covered/,
     );
+    mutable.sendAllowedRecipients = "";
+});
+
+test("a list saved but not applied refuses, rather than sending to the old one", () => {
+    // The window that matters: the operator has just taken somebody off the
+    // list, the page shows the narrower one, and this process still holds the
+    // wider one because the setting is read at startup. Sending then would
+    // write to the person who was just removed.
+    mutable.sendAllowedRecipients = "her@example.com, him@example.com";
+    writeFileSync(SETTINGS, JSON.stringify({ sendAllowedRecipients: "her@example.com" }));
+
+    assert.throws(
+        () => assertAllowedRecipients(["her@example.com"]),
+        /saved but not applied/,
+        "even a recipient on both lists is refused — the process cannot be trusted about any of them",
+    );
+
+    // Agreement is not a pending change.
+    writeFileSync(
+        SETTINGS,
+        JSON.stringify({ sendAllowedRecipients: "her@example.com, him@example.com" }),
+    );
+    assert.doesNotThrow(() => assertAllowedRecipients(["him@example.com"]));
+
+    rmSync(SETTINGS, { force: true });
     mutable.sendAllowedRecipients = "";
 });
 

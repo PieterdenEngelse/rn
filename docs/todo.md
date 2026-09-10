@@ -12,9 +12,9 @@ item.
 
 ## The link tracker has no home for its redirector — 2026-09-09
 
-`docs/link-tracking.md` §7 has steps 1 to 7 landed and step 8 down to one
-command. What §3 now says, and what the plan never asked, is **where the thing
-answering that URL should live**.
+`docs/link-tracking.md` §7 is now landed in full, step 8 included. What §3
+says, and what the plan never asked, is **where the thing answering that URL
+should live**.
 
 A tracked link sits in front of the content rather than beside it: nothing the
 recipient was sent is reachable unless the redirector answers. This machine was
@@ -22,16 +22,48 @@ suspended for 25h49m of the 44h53m before 2026-09-09 — two blocks of about
 thirteen hours, ending 07:07 and 05:54 — so an origin here is dead through
 every evening and early morning, which is when mail is read.
 
-**What goes wrong while this is open:** nothing, as long as nothing is sent.
-The failure arrives the first time a tracked message reaches somebody else, and
-it arrives as *their* broken link rather than as a missing statistic. §3's
-option 2 — a small always-on host with a domain you own, proxying over the
-tailnet — is the only one of the three that fixes it; options 1 and 3 both keep
-the redirector on this laptop. Until one of those is chosen and running, the
-only defensible send is a pilot to your own address.
+**What goes wrong while this is open:** nothing yet, because the only mail sent
+so far went to the address that runs rn. The failure arrives the first time a
+tracked message reaches somebody else, and it arrives as *their* broken link
+rather than as a missing statistic. §3's option 2 — a small always-on host with
+a domain you own, proxying over the tailnet — is the only one of the three that
+fixes it; options 1 and 3 both keep the redirector on this laptop.
 
 Not blocking the mapping, which is reversible and exposes an empty store. It
-blocks the send.
+blocks a send to anybody else.
+
+**The pilot has happened, and the whole path works.** Two sends to
+denengelse@gmail.com on 2026-09-10, `53b9aeb125f29490` and `446411276e557664`,
+four tracked links between them. What each stage proved, since "it works" on
+its own is not a record:
+
+- The mount. `tailscale funnel --bg --set-path=/t` was missing when the first
+  send went out, so `/` was the only mount and two clicks reached the *hooks*
+  listener and took its 404. Nothing recorded them, and nothing could — the
+  clicks are gone. The page showing 0 was the store being accurate.
+- `--set-path` strips the prefix, and the tracker tolerates that: `idFrom` in
+  `be/src/tracker/server.ts` accepts `/t/<id>` and a bare `/<id>` alike, so the
+  mount as actually made — target `http://127.0.0.1:3012/`, no path on it —
+  works as well as the documented `.../t`. §7 says both things and one
+  sentence in it says only the first: "a bare `--set-path=/t 3012` delivers
+  `/<id>` to the tracker and every real click 404s", which is true of a
+  tracker that rejects the bare shape and not of this one. Two lines later it
+  says so. That sentence read alone produced a confident wrong diagnosis on
+  2026-09-10 and is worth narrowing.
+- The 302 and `no-store` hold up: three clicks on one link counted three,
+  where a 301 would have been served from the browser's cache and stopped at
+  one — silently, which is the whole reason the status code was chosen.
+- No scanner prefetched either message. Both links sat untouched for seven and
+  eight minutes until a person asked for them. Worth knowing because it is what
+  makes a click count readable, and it is a fact about this provider on this
+  delivery rather than a guarantee.
+
+**What the pilot could not test is the thing this item is about.** Every click
+above happened while the laptop was awake. What a recipient gets from a
+suspended origin — whether it reads as "broken link" or as "site is down",
+which decides whether somebody forwards your mail — is still unmeasured, and it
+is one click from a phone after this machine goes to sleep. The links stay
+valid; only the machine goes away.
 
 ---
 
