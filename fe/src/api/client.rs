@@ -324,6 +324,46 @@ pub async fn fetch_node_history() -> Result<NodeHistory, String> {
     resp.json::<NodeHistory>().await.map_err(|e| format!("{e}"))
 }
 
+/// The most recent runs of several jobs at once.
+///
+/// `/api/runs` filters on a single job id, and asking it for two is not a
+/// limitation worth widening the endpoint for: any run in the most recent N of
+/// a set is necessarily in the most recent N of its own job, so N per job,
+/// merged and cut back to N, is exactly the same list the endpoint would
+/// return if it took a set.
+///
+/// `matched` adds up, because the two filters cannot match the same run.
+/// `retained` does not: it is how much record exists at all, the same figure
+/// in every response, so summing it would report a store several times its own
+/// size.
+pub async fn fetch_runs_for(
+    jobs: &[String],
+    outcome: &str,
+    since_ms: Option<f64>,
+    limit: u32,
+) -> Result<RunsResponse, String> {
+    match jobs {
+        [] => fetch_runs("", outcome, since_ms, limit).await,
+        [one] => fetch_runs(one, outcome, since_ms, limit).await,
+        many => {
+            let mut runs = Vec::new();
+            let mut matched = 0;
+            let mut retained = 0;
+            for id in many {
+                let r = fetch_runs(id, outcome, since_ms, limit).await?;
+                runs.extend(r.runs);
+                matched += r.matched;
+                retained = retained.max(r.retained);
+            }
+            runs.sort_by(|a, b| {
+                b.started_at.partial_cmp(&a.started_at).unwrap_or(std::cmp::Ordering::Equal)
+            });
+            runs.truncate(limit as usize);
+            Ok(RunsResponse { runs, matched, retained })
+        }
+    }
+}
+
 /// Run one job now.
 ///
 /// The backend answers 404 for an unknown id and 500 when the job threw; both

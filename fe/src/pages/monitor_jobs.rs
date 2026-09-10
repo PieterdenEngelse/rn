@@ -1,11 +1,12 @@
 use crate::api::{
-    fetch_job_errors, fetch_job_source, fetch_jobs, fetch_runs, reset_job_state, run_job,
+    fetch_job_errors, fetch_job_source, fetch_jobs, fetch_runs_for, reset_job_state, run_job,
     HandlerOverride, RetryOverride, ScheduleOverride,
     save_one_setting, send_test_delivery, CatalogueJob, JobErrors, JobRun, JobInput, JobInputType,
     JobRunResult, JobSource, JobStep, JobsResponse, Outcome, ScheduledJob, StateResetResponse,
     TestDelivery, Trigger, WebhookAuth, WebhookInfo, WebhookScheme,
 };
 use crate::app::Route;
+use crate::pages::MAIL_JOB_IDS;
 use crate::components::param::{param_toggle_style, PARAM_INPUT_ROW_CLASS, PARAM_TOGGLE_CLASS};
 use crate::components::{InfoButton, Panel};
 use dioxus::prelude::*;
@@ -62,6 +63,16 @@ pub fn MonitorJobs() -> Element {
                             title: "Jobs".to_string(),
                             subtitle: Some("automations this install can run".to_string()),
                             Catalogue { jobs: j.clone(), on_ran: move |_| jobs.restart() }
+                            // Their absence has no shape — a grid of cards
+                            // looks complete whatever is missing from it — so
+                            // the page says where they went rather than
+                            // leaving somebody to conclude the catalogue lost
+                            // them. Their runs are still in the log below.
+                            p { class: "text-gray-400 text-xs mt-3 max-w-3xl",
+                                "read-mail and send-mail are on "
+                                Link { to: Route::MonitorMail {}, class: "text-blue-400 hover:text-blue-300", "Monitor → Mail" }
+                                ", beside the connections they use. Their runs are still in Recent runs below."
+                            }
                         }
                         Panel {
                             title: "Recent runs".to_string(),
@@ -353,8 +364,37 @@ fn DryRunBanner(dry_run: bool, on_changed: EventHandler<()>) -> Element {
     }
 }
 
+/// The catalogue cards, for whichever half of the catalogue the page owns.
+///
+/// One component and one list, for the reason `PerJob` is: with a filter per
+/// page the two could overlap, or leave a job runnable from neither.
 #[component]
-fn Catalogue(jobs: JobsResponse, on_ran: EventHandler<()>) -> Element {
+pub fn Catalogue(
+    jobs: JobsResponse,
+    /// Draw only the mail jobs — Monitor → Mail — rather than everything else,
+    /// which is this page.
+    #[props(default = false)] mail_only: bool,
+    on_ran: EventHandler<()>,
+) -> Element {
+    let shown: Vec<CatalogueJob> = jobs
+        .catalogue
+        .iter()
+        .filter(|j| MAIL_JOB_IDS.contains(&j.id.as_str()) == mail_only)
+        .cloned()
+        .collect();
+
+    if shown.is_empty() && mail_only {
+        return rsx! {
+            p { class: "text-gray-400", "No mail jobs are registered." }
+            p { class: "text-gray-300 mt-1 max-w-3xl",
+                "They are read-mail and send-mail, declared in "
+                code { "be/src/jobs/" }
+                " and listed in that directory's "
+                code { "index.ts" }
+                "."
+            }
+        };
+    }
     if jobs.catalogue.is_empty() {
         return rsx! {
             p { class: "text-gray-400", "No jobs are registered." }
@@ -387,7 +427,7 @@ fn Catalogue(jobs: JobsResponse, on_ran: EventHandler<()>) -> Element {
         // carry `whitespace-nowrap`.
         div { class: "@container",
             div { class: "grid grid-cols-1 @5xl:grid-cols-2 gap-3 items-start",
-                for job in jobs.catalogue.iter() {
+                for job in shown.iter() {
                     JobRow {
                         job: job.clone(),
                         running: jobs.running.iter().any(|r| r.name == job.id),
@@ -1133,18 +1173,34 @@ fn trigger_cell(run: &JobRun) -> String {
 /// the point the feature starts to matter, which is a bad place to discover a
 /// design.
 #[component]
-fn RunLog(catalogue: Vec<CatalogueJob>) -> Element {
+pub fn RunLog(
+    catalogue: Vec<CatalogueJob>,
+    /// The jobs this log is about. Empty is every job, which is the jobs page.
+    /// Monitor → Mail passes its two, so "any mail job" means those and not
+    /// the whole record — the filter above the list and the request under it
+    /// then agree, which is the property the empty string already buys for a
+    /// single id.
+    #[props(default = vec![])] only: Vec<String>,
+) -> Element {
     let mut job = use_signal(String::new);
     let mut outcome = use_signal(String::new);
     // Hours; 0 is "all of the record".
     let mut window_hours = use_signal(|| 0_u32);
 
-    let runs = use_resource(move || async move {
-        let since = match window_hours() {
-            0 => None,
-            h => Some(js_sys::Date::now() - f64::from(h) * 3_600_000.0),
-        };
-        fetch_runs(&job(), &outcome(), since, 25).await
+    let scoped = !only.is_empty();
+    let only_ids = only.clone();
+    let runs = use_resource(move || {
+        let only_ids = only_ids.clone();
+        async move {
+            let since = match window_hours() {
+                0 => None,
+                h => Some(js_sys::Date::now() - f64::from(h) * 3_600_000.0),
+            };
+            // A picked job wins over the scope, and is always one of the
+            // scope's own — the control only offers what was passed in.
+            let ids = if job().is_empty() { only_ids } else { vec![job()] };
+            fetch_runs_for(&ids, &outcome(), since, 25).await
+        }
     });
 
     rsx! {
@@ -1153,7 +1209,7 @@ fn RunLog(catalogue: Vec<CatalogueJob>) -> Element {
                 FilterSelect {
                     label: "Job".to_string(),
                     value: job(),
-                    all: "every job".to_string(),
+                    all: if scoped { "any mail job".to_string() } else { "every job".to_string() },
                     options: catalogue.iter().map(|c| (c.id.clone(), c.label.clone())).collect(),
                     on_pick: move |v| job.set(v),
                 }

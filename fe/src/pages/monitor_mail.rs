@@ -31,9 +31,13 @@
 //! state was rendered only on a config page, which is where you go to change a
 //! thing rather than to see what it is doing.
 
-use crate::api::{fetch_mail_health, MailHealthResponse, MailServer, WatchedMailbox};
+use crate::api::{
+    fetch_jobs, fetch_mail_health, JobsResponse, MailHealthResponse, MailServer, WatchedMailbox,
+};
 use crate::app::Route;
 use crate::components::{Board, InfoButton, Metric, Panel};
+use crate::pages::monitor_jobs::{Catalogue, RunLog};
+use crate::pages::MAIL_JOB_IDS;
 use dioxus::prelude::*;
 use dioxus_router::Link;
 
@@ -80,6 +84,7 @@ pub fn MonitorMail() -> Element {
                         Sending { data: d.clone() }
                     }
                     Mailboxes { data: d.clone() }
+                    MailJobs {}
                 },
             }
         }
@@ -211,6 +216,74 @@ fn Sending(data: MailHealthResponse) -> Element {
                 why: "It is the sending half's only evidence of ever having worked. The receiving half has watched mailboxes and a run history; until a send happens this side has nothing but configuration, and configuration that has never been exercised is not the same as configuration that works.".to_string(),
                 if_wrong: "None yet is the ordinary state and not a problem to fix. It does mean everything on this board is untested on this machine, including the parts that look settled.".to_string(),
             }
+        }
+    }
+}
+
+/// The two jobs, and what they have been doing.
+///
+/// The cards are here rather than on Monitor → Jobs because a card is about
+/// one job and this is where that job's connection is: the Run button sits
+/// beside the mailbox the run will read, and the schedule beside the watch
+/// that decides whether the schedule is what you are waiting on.
+///
+/// The run log is a *second view*, not a move. The one on Monitor → Jobs still
+/// holds every run, which is what makes it evidence — a chronological list has
+/// no shape to say what is missing from it, and `caused_by` renders as "change
+/// of read-mail" on the `notify-all` rows there, naming a run that has to be
+/// findable in the same list. This one asks the same store the same question
+/// with the scope already set.
+#[component]
+fn MailJobs() -> Element {
+    let mut jobs = use_resource(fetch_jobs);
+    let ids: Vec<String> = MAIL_JOB_IDS.iter().map(|s| (*s).to_string()).collect();
+
+    rsx! {
+        match &*jobs.read_unchecked() {
+            Some(Ok(j)) => {
+                let j: JobsResponse = j.clone();
+                let mail_catalogue: Vec<_> = j
+                    .catalogue
+                    .iter()
+                    .filter(|c| MAIL_JOB_IDS.contains(&c.id.as_str()))
+                    .cloned()
+                    .collect();
+                rsx! {
+                    Panel {
+                        title: "Jobs".to_string(),
+                        subtitle: Some("the two that use the connections above".to_string()),
+                        Catalogue {
+                            jobs: j.clone(),
+                            mail_only: true,
+                            on_ran: move |_| jobs.restart(),
+                        }
+                    }
+                    Panel {
+                        title: "Recent runs".to_string(),
+                        subtitle: Some("read-mail and send-mail only".to_string()),
+                        info: Some(rsx! {
+                            InfoButton {
+                                title: "This log and the one on Monitor → Jobs".to_string(),
+                                what: "The same run record, asked with the scope already set to these two jobs. Every run here is also in Recent runs on Monitor → Jobs; nothing was moved out of it.\n\nThe filters work as they do there. \"Any mail job\" means these two rather than the whole record, and picking one narrows to it.".to_string(),
+                                why: "Because the question this page answers is about mail, and setting the same filter by hand every time is how a person stops looking. The full log stays whole because it is the only thing that can answer \"what did this machine do\" — a chronological list has no shape to show what is missing from it, so a gap there would be invisible in a way a missing card is not.".to_string(),
+                                if_wrong: "It asks for the last 25 of each job and keeps the newest 25 of the result, which is exactly what one query for both would return: a run in the most recent 25 of the pair is necessarily in the most recent 25 of its own job.\n\nThe counts under the filters read the same way as elsewhere — how many matched, out of how much record is kept at all. The kept figure is the whole store's, not these two jobs' share of it.".to_string(),
+                            }
+                        }),
+                        RunLog { catalogue: mail_catalogue, only: ids.clone() }
+                    }
+                }
+            }
+            Some(Err(e)) => rsx! {
+                Panel { title: "Jobs".to_string(),
+                    p { class: "text-red-400 text-sm", "Backend unreachable" }
+                    p { class: "text-gray-300 text-sm mt-1", "{e}" }
+                }
+            },
+            None => rsx! {
+                Panel { title: "Jobs".to_string(),
+                    p { class: "text-gray-400 text-sm", "Loading…" }
+                }
+            },
         }
     }
 }

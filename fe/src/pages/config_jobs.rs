@@ -10,6 +10,7 @@ use crate::components::param::{
 use crate::app::Route;
 use crate::components::{InfoButton, Panel, WebhookTile};
 use crate::pages::monitor_jobs::duration;
+use crate::pages::MAIL_JOB_IDS;
 use dioxus::prelude::*;
 use dioxus_router::Link;
 
@@ -540,18 +541,6 @@ fn remembered(config: &JobsConfig) -> String {
         config.state_cursors, config.state_jobs,
     )
 }
-
-/// The jobs whose configuration lives on Config → Mail instead of here.
-///
-/// A written list rather than something derived. The obvious derivation is
-/// "wants the gmailAppPassword credential", and it is a coincidence: a future
-/// job could want that credential without belonging on the mail page, and a
-/// mail job could arrive without wanting it. Nothing on the wire says which
-/// page configures a job, so this says it, in one place, for both readers.
-///
-/// A third mail job not added here still appears on Config → Jobs, which is
-/// the right failure — visible, and configurable while nobody has noticed.
-pub const MAIL_JOB_IDS: [&str; 2] = ["read-mail", "send-mail"];
 
 /// The per-job cards, for whichever half of the catalogue the page owns.
 ///
