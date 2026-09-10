@@ -97,26 +97,39 @@ pub fn ConfigMail() -> Element {
                         }
                     }
 
-                    Panel { title: "Rules".to_string(),
-                        if resp.rules.is_empty() {
-                            p { class: "text-gray-300 text-sm max-w-3xl",
-                                "No rules yet. Add one below — a mailbox, and a sender or a recipient to look for in it."
+                    // Side by side rather than stacked. Both are narrow — a
+                    // rule is four short lines and the form is four fields —
+                    // so on a wide display each was a strip of content with
+                    // two thirds of the row empty beside it, and adding a rule
+                    // meant scrolling past the list to a form that could have
+                    // been in view the whole time. flex-wrap puts them back in
+                    // a column when there is no room for two.
+                    div { class: "flex flex-wrap gap-4 items-start",
+                        Panel { title: "Rules".to_string(), class: "flex-1 min-w-96".to_string(),
+                            if resp.rules.is_empty() {
+                                p { class: "text-gray-300 text-sm max-w-3xl",
+                                    // No "below" or "beside": the form is one
+                                    // or the other depending on how wide the
+                                    // window is, and a sentence that names a
+                                    // direction is wrong half the time.
+                                    "No rules yet. Add one — a mailbox, and a sender or a recipient to look for in it."
+                                }
+                            }
+                            for rule in resp.rules.iter() {
+                                RuleRow {
+                                    key: "{rule.id}",
+                                    rule: rule.clone(),
+                                    watching: watching_state(&resp, &rule.mailbox),
+                                    on_changed: move |_| { errors.set(vec![]); reload += 1; },
+                                    on_errors: move |es: Vec<String>| errors.set(es),
+                                }
                             }
                         }
-                        for rule in resp.rules.iter() {
-                            RuleRow {
-                                key: "{rule.id}",
-                                rule: rule.clone(),
-                                watching: watching_state(&resp, &rule.mailbox),
-                                on_changed: move |_| { errors.set(vec![]); reload += 1; },
-                                on_errors: move |es: Vec<String>| errors.set(es),
-                            }
-                        }
-                    }
 
-                    NewRule {
-                        on_changed: move |_| { errors.set(vec![]); reload += 1; },
-                        on_errors: move |es: Vec<String>| errors.set(es),
+                        NewRule {
+                            on_changed: move |_| { errors.set(vec![]); reload += 1; },
+                            on_errors: move |es: Vec<String>| errors.set(es),
+                        }
                     }
 
                     // The connections themselves are somebody else's page. A
@@ -252,7 +265,7 @@ fn NewRule(on_changed: EventHandler<()>, on_errors: EventHandler<Vec<String>>) -
     };
 
     rsx! {
-        Panel { title: "Add a rule".to_string(),
+        Panel { title: "Add a rule".to_string(), class: "flex-1 min-w-96".to_string(),
             div { class: "space-y-3 max-w-3xl",
                 Field {
                     label: "Mailbox".to_string(),
