@@ -833,7 +833,10 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
         default: null,
         appliesAt: "restart",
         category: "mail-account",
-        label: "Mail account",
+        // "Address" and not "Mail account": the board is now called that, and a
+        // board whose only row repeats its own title says the word twice and
+        // the useful part once. It matches the row on Monitor → Mail.
+        label: "Address",
         info: {
             what:
                 "The address rn sends from and reads with — the From line on every message " +

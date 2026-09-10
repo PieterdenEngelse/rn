@@ -481,7 +481,7 @@
       "default": null,
       "appliesAt": "restart",
       "category": "mail-account",
-      "label": "Mail account",
+      "label": "Address",
       "info": {
         "what": "The address rn sends from and reads with — the From line on every message the send job produces, and the username for both SMTP and IMAP.\n\nOne setting rather than two because it is one account. The password is not here: it is the gmailAppPassword credential, set on Config → Jobs and never shown back.",
         "why": "Nothing else identifies the sender. It is on the outside of every message that arrives, so it is not a secret and holding it as one would only hide it from the page that should say which account is in use.\n\ndocs/link-tracking.md §1 takes the app-password path precisely so a single opaque credential covers sending and reading; a pair of user fields that must always match is a pair that can disagree.",

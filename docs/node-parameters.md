@@ -29,7 +29,7 @@ scales with installed RAM, so expect a different number elsewhere.
 | **Links point at** | `RN_TRACKER_BASE_URL` | unset (system default) | — | on restart |
 | **Accept a borrowed hostname** | `RN_TRACKER_ACCEPT_BORROWED_HOSTNAME` | off | — | on restart |
 | **Keep identity for** | `RN_TRACKER_RETENTION_DAYS` | 90 | 1 … 3650 | on restart |
-| **Mail account** | `RN_MAIL_USER` | unset (system default) | — | on restart |
+| **Address** | `RN_MAIL_USER` | unset (system default) | — | on restart |
 | **IMAP host** | `RN_IMAP_HOST` | imap.gmail.com | — | on restart |
 | **IMAP port** | `RN_IMAP_PORT` | 993 | 1 … 65535 | on restart |
 | **Read mail the moment it arrives** | `RN_MAIL_WATCH` | off | — | on restart |
@@ -456,7 +456,7 @@ Default: 90 · Takes effect: on restart · Settings key: `trackerRetentionDays`
 
 ## mail-account
 
-### Mail account — `RN_MAIL_USER`
+### Address — `RN_MAIL_USER`
 
 **What it does.** The address rn sends from and reads with — the From line on every message the send job produces, and the username for both SMTP and IMAP.
 

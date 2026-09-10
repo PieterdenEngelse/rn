@@ -3,7 +3,7 @@
 //! One account, two protocols, and almost nothing shared between them. rn
 //! reads over IMAP and sends over SMTP: different server, different port,
 //! different client, different failure. The only thing both use is the address
-//! and the password, which is why those sit in a board of their own above the
+//! and the password, which is why those sit in a board of their own beside the
 //! two rather than being repeated in each.
 //!
 //! ## Why the two directions are drawn apart
@@ -68,8 +68,14 @@ pub fn MonitorMail() -> Element {
                     }
                 },
                 Some(Ok(d)) => rsx! {
-                    Account { data: d.clone() }
+                    // All three in one wrapping row. The account was on a row
+                    // of its own to say it belongs to both directions, and on
+                    // a wide display that read as a gap rather than as a
+                    // hierarchy — a short board alone with two thirds of the
+                    // window empty beside it. Left to right says the same
+                    // thing and uses the room.
                     div { class: "flex flex-wrap gap-4 items-start",
+                        Account { data: d.clone() }
                         Receiving { data: d.clone() }
                         Sending { data: d.clone() }
                     }
@@ -96,7 +102,7 @@ fn Account(data: MailHealthResponse) -> Element {
                 label: "Address".to_string(),
                 value: user,
                 what: "The mailbox rn authenticates as, on both servers. It is also the From on anything the sending job puts out — RN_MAIL_USER on Config → Runtime, in the Mail account board.".to_string(),
-                why: "One address for both directions is what makes the two halves halves of one thing rather than two unrelated integrations. It is also why the account board is above both and not inside either.".to_string(),
+                why: "One address for both directions is what makes the two halves halves of one thing rather than two unrelated integrations. It is also why the account is a board of its own rather than a row inside each of the other two — repeated, it would read as two accounts, and changing it would look like a change to one direction.".to_string(),
                 if_wrong: "Empty and both mail jobs refuse before opening a connection, which is the good failure: it happens here rather than as an authentication error against somebody's server. A wrong address fails at authentication instead, which reads the same as a wrong password.".to_string(),
             }
             Metric {
