@@ -358,6 +358,17 @@ export const config = {
         process.env.RN_MAIL_RULES_PATH ?? `${process.env.HOME ?? "."}/.config/rn/mail-rules.json`,
 
     /**
+     * Where the last connection test is remembered.
+     *
+     * Its own small file rather than a corner of settings.json, which holds
+     * things a person chose. This holds something that happened, and rewriting
+     * the settings file to record an observation would put the two on the same
+     * footing — and make a failed test a settings write.
+     */
+    mailTestPath:
+        process.env.RN_MAIL_TEST_PATH ?? `${process.env.HOME ?? "."}/.config/rn/mail-test.json`,
+
+    /**
      * Recipients the read-mail job will accept mail to, install-wide.
      *
      * The counterpart of `mailAllowedSenders`, and what makes watching a sent

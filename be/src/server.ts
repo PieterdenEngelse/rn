@@ -37,6 +37,7 @@ import type {
     MailHealthResponse,
     MailTestResponse,
     MailTestResult,
+    TransientRefusals,
     RunsDeleteResponse,
     MailRuleSaveResponse,
     MailRulesResponse,
@@ -67,7 +68,36 @@ import { createHookApp, hooksHealth, startHooks } from "./hooks/server.ts";
 import { createTrackerApp, startTracker, trackerHealth } from "./tracker/server.ts";
 import { mailWatchHealth, startMailWatch } from "./mail/watcher.ts";
 import * as mailRules from "./mail/rules.ts";
+import * as mailTest from "./mail/test-record.ts";
 import * as trackerStore from "./tracker/store.ts";
+import * as sent from "./tracker/sent.ts";
+
+/**
+ * How far back the sending board counts transient refusals.
+ *
+ * A week, because the question is "is this provider pushing back at me now"
+ * and a greylist from a month ago answers a different one. Named here rather
+ * than inline so the number the page prints and the number it counts over
+ * cannot drift apart.
+ */
+const TRANSIENT_WINDOW_DAYS = 7;
+
+/**
+ * The refusal count in the shape the wire declares.
+ *
+ * Explicit nulls rather than absent keys: the wire type says every response
+ * carries the fields, and "absent" and "present but null" are the same
+ * question asked twice — the same normalisation the mail test's `error` needs.
+ */
+function transientRefusals(): TransientRefusals {
+    const r = sent.transientRefusals(TRANSIENT_WINDOW_DAYS);
+    return {
+        count: r.count,
+        windowDays: TRANSIENT_WINDOW_DAYS,
+        lastAt: r.lastAt ?? null,
+        lastCode: r.lastCode ?? null,
+    };
+}
 import { sendTestDelivery } from "./hooks/test-delivery.ts";
 import { describeEnv } from "./env-file.ts";
 import * as webhooks from "./webhooks.ts";
@@ -606,6 +636,11 @@ export function createApp() {
                 }
             });
 
+            // Remembered before the reply goes out, so a page that reloads
+            // straight afterwards sees the same answer the button showed.
+            mailTest.record("imap", { ...imap, at: Date.now() });
+            mailTest.record("smtp", { ...smtp, at: Date.now() });
+
             step("mail-tested", {
                 imap: imap.ok ? `ok in ${imap.ms}ms` : "failed",
                 smtp: smtp.ok ? `ok in ${smtp.ms}ms` : "failed",
@@ -644,6 +679,7 @@ export function createApp() {
         // state of two connections, and the sending half has no rules at all.
         if (url.pathname === "/api/mail-health" && req.method === "GET") {
             const watch = mailWatchHealth();
+            const remembered = mailTest.last();
             send(res, 200, {
                 user: config.mailUser,
                 // Whether, never what. docs/token-sec.md.
@@ -657,6 +693,12 @@ export function createApp() {
                     implicitTls: config.imapPort === 993,
                 },
                 imapTimeoutMs: config.imapTimeoutMs,
+                imapLastTest: remembered.imap ?? null,
+                maxMessages: config.mailMaxMessages,
+                // The other half of the dedupe arithmetic, from the runner
+                // that owns it rather than from the setting — an override
+                // applied at runtime would make the setting the wrong answer.
+                seenCapacity: jobState.seenCapacity(),
                 watchingEnabled: config.mailWatch,
                 watched: watch.mailboxes,
                 rulesEnabled: mailRules.list().filter((r) => r.enabled).length,
@@ -670,6 +712,8 @@ export function createApp() {
                     implicitTls: config.smtpPort === 465,
                 },
                 smtpTimeoutMs: config.smtpTimeoutMs,
+                smtpLastTest: remembered.smtp ?? null,
+                transient: transientRefusals(),
                 replyTo: config.mailReplyTo,
                 sendAllowedRecipients: config.sendAllowedRecipients,
                 fromName: config.mailFromName,

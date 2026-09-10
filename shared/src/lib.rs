@@ -71,6 +71,8 @@ pub fn export_all(cfg: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     MailHealthResponse::export_all(cfg)?;
     MailTestResult::export_all(cfg)?;
     MailTestResponse::export_all(cfg)?;
+    MailTestRecord::export_all(cfg)?;
+    TransientRefusals::export_all(cfg)?;
     BaseUrlProblem::export_all(cfg)?;
     LinkClick::export_all(cfg)?;
     TrackedLink::export_all(cfg)?;

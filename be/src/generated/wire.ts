@@ -1070,6 +1070,20 @@ credentialSet: boolean, imap: MailServer,
  */
 imapTimeoutMs: number, 
 /**
+ * The last test of this connection, if one has ever been run.
+ */
+imapLastTest: MailTestRecord | null, 
+/**
+ * How many of the newest messages one run examines.
+ */
+maxMessages: number, 
+/**
+ * How many recently-seen ids a job keeps. Read *with* `max_messages`
+ * and not alone: the two are the halves of one piece of arithmetic,
+ * and the failure they produce together is silent.
+ */
+seenCapacity: number, 
+/**
  * Whether the watcher is switched on at all.
  */
 watchingEnabled: boolean, 
@@ -1102,6 +1116,14 @@ allowedRecipients: string, smtp: MailServer,
  * How long an SMTP socket may sit silent, in ms.
  */
 smtpTimeoutMs: number, 
+/**
+ * The last test of this connection, if one has ever been run.
+ */
+smtpLastTest: MailTestRecord | null, 
+/**
+ * Recipients a server refused with a transient code recently.
+ */
+transient: TransientRefusals, 
 /**
  * Where replies are directed, or empty for the sending account.
  */
@@ -1213,6 +1235,20 @@ export type MailServer = { host: string, port: number,
  * let the page disagree with the connection it describes.
  */
 implicitTls: boolean, };
+
+/**
+ * A connection test that already happened, kept so the page can say when.
+ *
+ * The result of `POST /api/mail-test` lives only in the reply that
+ * carries it, which means a reload erases the one piece of evidence the
+ * sending half has before its first send. Recorded so "SMTP last answered
+ * on Tuesday" is a thing the board can say.
+ */
+export type MailTestRecord = { ok: boolean, ms: number, 
+/**
+ * Epoch ms.
+ */
+at: number, error: string | null, };
 
 /**
  * POST /api/mail-test. Both ends, tried independently.
@@ -1805,6 +1841,33 @@ identified: boolean,
  * page must not report as "nobody", hence `identified` beside it.
  */
 recipients: number, };
+
+/**
+ * Recipients a server refused *transiently*, over a recent window.
+ *
+ * The signal that a send should be paced. An SMTP 4xx is a greylist or a
+ * rate limit — the provider being polite about a burst — and rn reads it
+ * correctly as retryable, so nothing is lost and nothing is duplicated.
+ * What it costs is a send that takes three attempts instead of one, and
+ * until now that was visible only inside a run's steps.
+ */
+export type TransientRefusals = { 
+/**
+ * How many in the window.
+ */
+count: number, 
+/**
+ * How many days the window covers, so the count can be read.
+ */
+windowDays: number, 
+/**
+ * When the most recent one was, epoch ms.
+ */
+lastAt: number | null, 
+/**
+ * The SMTP code it carried.
+ */
+lastCode: number | null, };
 
 /**
  * How a run was started.

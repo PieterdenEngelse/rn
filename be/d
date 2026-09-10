@@ -55,6 +55,10 @@ if [ "$worktree" != "rn" ]; then
     # would otherwise start holding an IMAP connection open against the install
     # somebody actually uses, and reporting their mail onto its pages.
     export RN_MAIL_RULES_PATH="$state/mail-rules.json"
+    # The last connection test. Shared, a worktree pressing the button would
+    # rewrite what the real install last proved — and a test against a bench
+    # server would read on that install's page as its own account working.
+    export RN_MAIL_TEST_PATH="$state/mail-test.json"
 fi
 
 echo "backend for $worktree on http://127.0.0.1:$BACKEND_PORT (hooks :$BACKEND_HOOKS_PORT, tracker :$BACKEND_TRACKER_PORT)"

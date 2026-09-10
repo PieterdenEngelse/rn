@@ -144,6 +144,15 @@ wire! {
         /// How long a run's IMAP socket may sit silent, in ms. Not applied to
         /// the held-open watch connection — see the setting.
         pub imap_timeout_ms: f64,
+        /// The last test of this connection, if one has ever been run.
+        #[serde(default)]
+        pub imap_last_test: Option<MailTestRecord>,
+        /// How many of the newest messages one run examines.
+        pub max_messages: f64,
+        /// How many recently-seen ids a job keeps. Read *with* `max_messages`
+        /// and not alone: the two are the halves of one piece of arithmetic,
+        /// and the failure they produce together is silent.
+        pub seen_capacity: f64,
         /// Whether the watcher is switched on at all.
         pub watching_enabled: bool,
         /// One entry per mailbox a connection is held for. Empty with watching
@@ -171,6 +180,11 @@ wire! {
         pub smtp: MailServer,
         /// How long an SMTP socket may sit silent, in ms.
         pub smtp_timeout_ms: f64,
+        /// The last test of this connection, if one has ever been run.
+        #[serde(default)]
+        pub smtp_last_test: Option<MailTestRecord>,
+        /// Recipients a server refused with a transient code recently.
+        pub transient: TransientRefusals,
         /// Where replies are directed, or empty for the sending account.
         #[serde(default)]
         pub reply_to: String,
@@ -224,5 +238,46 @@ wire! {
     pub struct MailTestResponse {
         pub imap: MailTestResult,
         pub smtp: MailTestResult,
+    }
+}
+
+wire! {
+    /// A connection test that already happened, kept so the page can say when.
+    ///
+    /// The result of `POST /api/mail-test` lives only in the reply that
+    /// carries it, which means a reload erases the one piece of evidence the
+    /// sending half has before its first send. Recorded so "SMTP last answered
+    /// on Tuesday" is a thing the board can say.
+    #[serde(rename_all = "camelCase")]
+    pub struct MailTestRecord {
+        pub ok: bool,
+        pub ms: f64,
+        /// Epoch ms.
+        pub at: f64,
+        #[serde(default)]
+        pub error: Option<String>,
+    }
+}
+
+wire! {
+    /// Recipients a server refused *transiently*, over a recent window.
+    ///
+    /// The signal that a send should be paced. An SMTP 4xx is a greylist or a
+    /// rate limit — the provider being polite about a burst — and rn reads it
+    /// correctly as retryable, so nothing is lost and nothing is duplicated.
+    /// What it costs is a send that takes three attempts instead of one, and
+    /// until now that was visible only inside a run's steps.
+    #[serde(rename_all = "camelCase")]
+    pub struct TransientRefusals {
+        /// How many in the window.
+        pub count: u32,
+        /// How many days the window covers, so the count can be read.
+        pub window_days: u32,
+        /// When the most recent one was, epoch ms.
+        #[serde(default)]
+        pub last_at: Option<f64>,
+        /// The SMTP code it carried.
+        #[serde(default)]
+        pub last_code: Option<u32>,
     }
 }

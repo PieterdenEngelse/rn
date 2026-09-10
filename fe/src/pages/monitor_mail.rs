@@ -33,7 +33,7 @@
 
 use crate::api::{
     fetch_jobs, fetch_mail_health, test_mail, JobsResponse, MailHealthResponse, MailServer,
-    MailTestResponse, MailTestResult, WatchedMailbox,
+    MailTestRecord, MailTestResponse, MailTestResult, TransientRefusals, WatchedMailbox,
 };
 use crate::app::Route;
 use crate::components::{Board, InfoButton, Metric, Panel};
@@ -169,6 +169,20 @@ fn Receiving(data: MailHealthResponse) -> Element {
                 if_wrong: "Off, and the rules below still filter but nothing is prompt. The schedule is what guarantees mail is eventually read either way, which is the point: this is an improvement on the floor, never the only path.".to_string(),
             }
             Metric {
+                label: "Last proved".to_string(),
+                value: proved_label(data.imap_last_test.as_ref()),
+                what: "When this connection last answered a test — the button below, which connects, authenticates and leaves without selecting a mailbox or fetching anything.".to_string(),
+                why: "A test result used to live only in the reply that carried it, so a reload erased the one piece of evidence there was. Remembered in a small file instead, because a restart is not evidence that anything changed about the servers.".to_string(),
+                if_wrong: "\"Never\" is the ordinary state until somebody presses the button; it does not mean the connection is broken. A success here proves the account, the host, the port and TLS, and nothing about whether a mailbox exists or a filter matches.".to_string(),
+            }
+            Metric {
+                label: "Window headroom".to_string(),
+                value: headroom_label(data.max_messages, data.seen_capacity),
+                what: "How many messages one run examines, against how many recently-seen ids the job keeps — RN_MAIL_MAX_MESSAGES and \"Remembered ids per job\" on Config → Runtime.".to_string(),
+                why: "These two are the halves of one piece of arithmetic and they live on different pages, so nothing ever put them side by side. A run that examines more messages than the window holds pushes out ids it recorded in the same run, and the same mail is reported again weeks later — the failure this whole page is shaped around, because nothing goes red when it happens.".to_string(),
+                if_wrong: "Comfortable is the ordinary reading and wants no action. If it says the window is smaller than a run, raise the remembered-ids setting or lower the messages-per-run one — and the answer for a busy mailbox is to run more often rather than to examine more each time.".to_string(),
+            }
+            Metric {
                 label: "Enabled rules".to_string(),
                 value: format!("{}", data.rules_enabled),
                 what: "How many mail rules are switched on. Each names one mailbox and what counts as interesting in it; rules on the same mailbox share one connection.".to_string(),
@@ -239,6 +253,20 @@ fn Sending(data: MailHealthResponse) -> Element {
                 what: "How long an SMTP connection may sit silent, and how long it may take to open — RN_SMTP_TIMEOUT_MS, one setting for both.".to_string(),
                 why: "nodemailer's default is ten minutes, and send-mail's own ceiling is ten minutes, so a silent socket consumes the whole run and reports as the job timing out rather than as the server having gone quiet. A minute is enough for any one message; a long list needs time overall, which is the ceiling, not time per silence.".to_string(),
                 if_wrong: "Lowering it is safe to try: a recipient already attempted carries a marker, so the retry after a timeout resumes rather than sending to anyone twice.".to_string(),
+            }
+            Metric {
+                label: "Last proved".to_string(),
+                value: proved_label(data.smtp_last_test.as_ref()),
+                what: "When this connection last answered a test — nodemailer's verify(), which opens the connection, authenticates and quits without composing a message.".to_string(),
+                why: "It matters more on this side than on the other. Reading has watched mailboxes, a schedule and a run history, so \"is it working\" has several answers; sending has none at all until a message has gone out, and the only other way to find out is to mail somebody.".to_string(),
+                if_wrong: "A success proves the account, the host, the port and TLS. It does not prove a recipient's server will accept what you send — that fails later, and shows up as a refusal rather than here.".to_string(),
+            }
+            Metric {
+                label: "Refused, transiently".to_string(),
+                value: transient_label(&data.transient),
+                what: "Recipients a server refused with a 4xx over the last week — a greylist or a rate limit. Counted from the send markers, which already recorded each one to lift the block for the retry.".to_string(),
+                why: "It is the signal that \"Pause between messages\" should stop being zero. Nothing is lost when this happens: 4xx is read as transient, the whole run is retried, and the markers stop that becoming a second delivery. What it costs is a send that takes three attempts instead of one, and until now that was visible only inside a run's steps.".to_string(),
+                if_wrong: "None is the ordinary state and the one to expect on a short list. A number that grows across sends means the provider is pushing back — pace the send rather than raising the retry count, which asks the same question faster.".to_string(),
             }
             Metric {
                 label: "Reply to".to_string(),
@@ -461,6 +489,54 @@ fn MailboxRow(mailbox: WatchedMailbox) -> Element {
                 span { class: "text-gray-300 text-xs", "{err}" }
             }
         }
+    }
+}
+
+/// When a connection last answered, or that it never has.
+///
+/// "Never" rather than a blank, because an empty value on a board reads as a
+/// thing that failed to load rather than as a button nobody has pressed.
+fn proved_label(r: Option<&MailTestRecord>) -> String {
+    let Some(r) = r else { return "never tested".to_string() };
+    let ago = ago_label(js_sys::Date::now() - r.at);
+    if r.ok {
+        format!("{ago} ago, in {}ms", r.ms as i64)
+    } else {
+        format!("failed {ago} ago")
+    }
+}
+
+/// The two halves of the dedupe arithmetic, and what they mean together.
+///
+/// The numbers alone are the thing that has always been available and never
+/// read: two figures on two pages that only mean something as a ratio.
+fn headroom_label(per_run: f64, window: f64) -> String {
+    if per_run > window {
+        return format!("{per_run:.0} per run exceeds a {window:.0}-id window");
+    }
+    format!("{per_run:.0} per run, {window:.0}-id window")
+}
+
+/// How many transient refusals, and how recently.
+fn transient_label(t: &TransientRefusals) -> String {
+    if t.count == 0 {
+        return format!("none in {} days", t.window_days);
+    }
+    let code = t.last_code.map_or(String::new(), |c| format!(", last {c}"));
+    format!("{} in {} days{code}", t.count, t.window_days)
+}
+
+/// A duration in the largest unit that still says something.
+fn ago_label(ms: f64) -> String {
+    let secs = ms / 1000.0;
+    if secs < 90.0 {
+        format!("{secs:.0}s")
+    } else if secs < 5400.0 {
+        format!("{:.0}m", secs / 60.0)
+    } else if secs < 172_800.0 {
+        format!("{:.0}h", secs / 3600.0)
+    } else {
+        format!("{:.0}d", secs / 86_400.0)
     }
 }
 

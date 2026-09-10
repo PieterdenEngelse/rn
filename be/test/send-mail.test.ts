@@ -231,6 +231,38 @@ test("markers survive a process that forgot everything", () => {
     assert.deepEqual(sent.unresolved("send-1", ["a@x.com", "b@x.com"]), ["b@x.com"]);
 });
 
+test("transient refusals are counted over a window, and survive a restart", () => {
+    // The signal that a send wants pacing, and it was write-only until now:
+    // release lines went into the file and were read back only as the absence
+    // of a block.
+    sent.markAttempt("send-1", "a@x.com");
+    sent.releaseAttempt("send-1", "a@x.com", 421);
+
+    const fresh = sent.transientRefusals(7);
+    assert.equal(fresh.count, 1);
+    assert.equal(fresh.lastCode, 421);
+
+    // A greylist from last month answers a different question than "is this
+    // provider pushing back at me now", so the window has to actually bound.
+    appendFileSync(
+        SENT,
+        `${JSON.stringify({
+            t: "release",
+            send: "send-old",
+            to: "b@x.com",
+            at: Date.now() - 30 * 86_400_000,
+            code: 450,
+        })}\n`,
+    );
+    sent.reset();
+
+    // Both are on disk; only one is inside seven days. And the read survives
+    // the process forgetting everything, which is the other half of the claim.
+    assert.equal(sent.transientRefusals(7).count, 1);
+    assert.equal(sent.transientRefusals(60).count, 2);
+    assert.equal(sent.transientRefusals(7).lastCode, 421);
+});
+
 test("markers are per send, so the same person can be mailed by two sends", () => {
     sent.markAttempt("send-1", "a@x.com");
     assert.equal(sent.wasAttempted("send-2", "a@x.com"), false);

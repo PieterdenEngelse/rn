@@ -88,6 +88,17 @@ function key(sendId: string, recipient: string): string {
 let attempted = new Set<string>();
 let delivered = new Set<string>();
 let rejected = new Set<string>();
+/**
+ * When each transient refusal happened, and what code it carried.
+ *
+ * Kept because it is the only signal that a send should be paced, and it was
+ * previously write-only: `release` lines went into the file and nothing ever
+ * read them back except as the absence of a block. Newest last, capped — this
+ * answers "recently", and a year of greylists is not a more useful answer than
+ * the last two hundred.
+ */
+let releases: { at: number; code: number }[] = [];
+const RELEASE_MEMORY = 200;
 let loaded = false;
 
 function path(): string {
@@ -106,6 +117,7 @@ export function load(): void {
     attempted = new Set();
     delivered = new Set();
     rejected = new Set();
+    releases = [];
     loaded = true;
 
     let raw: string;
@@ -136,7 +148,11 @@ export function load(): void {
         if (rec.t === "attempt") attempted.add(k);
         else if (rec.t === "sent") delivered.add(k);
         else if (rec.t === "rejected") rejected.add(k);
-        else if (rec.t === "release") attempted.delete(k);
+        else if (rec.t === "release") {
+            attempted.delete(k);
+            releases.push({ at: rec.at, code: rec.code ?? 0 });
+            if (releases.length > RELEASE_MEMORY) releases.shift();
+        }
     }
 
     debug("sent-store-loaded", {
@@ -201,7 +217,32 @@ export function markRejected(sendId: string, recipient: string, code: number): v
 export function releaseAttempt(sendId: string, recipient: string, code: number): void {
     ensureLoaded();
     attempted.delete(key(sendId, recipient));
-    append({ t: "release", send: sendId, to: recipient, at: Date.now(), code });
+    const at = Date.now();
+    releases.push({ at, code });
+    if (releases.length > RELEASE_MEMORY) releases.shift();
+    append({ t: "release", send: sendId, to: recipient, at, code });
+}
+
+/**
+ * Transient refusals in the last `days`, for the sending board.
+ *
+ * A count and the most recent one, rather than the list: the question this
+ * answers is "is this provider pushing back", and forty addresses do not
+ * answer it better than a number and a code do.
+ */
+export function transientRefusals(days: number): {
+    count: number;
+    lastAt?: number;
+    lastCode?: number;
+} {
+    ensureLoaded();
+    const since = Date.now() - days * 86_400_000;
+    const recent = releases.filter((r) => r.at >= since);
+    const last = recent[recent.length - 1];
+    return {
+        count: recent.length,
+        ...(last === undefined ? {} : { lastAt: last.at, lastCode: last.code }),
+    };
 }
 
 /**
@@ -252,5 +293,6 @@ export function reset(): void {
     attempted = new Set();
     delivered = new Set();
     rejected = new Set();
+    releases = [];
     loaded = false;
 }
