@@ -709,6 +709,23 @@ wire! {
 }
 
 wire! {
+    /// DELETE /api/runs — what a filtered delete actually removed.
+    ///
+    /// Two counts rather than one. A run and a failure are the same event in
+    /// two lists, and the second number is the one a reader would otherwise
+    /// have to guess at: deleting the failed runs empties a job's error log
+    /// too, and a page that reported only the first count would leave that
+    /// looking like a side effect nobody asked for.
+    #[serde(rename_all = "camelCase")]
+    pub struct RunsDeleteResponse {
+        /// Runs dropped from the log.
+        pub runs: u32,
+        /// Failures dropped from the per-job error lists.
+        pub failures: u32,
+    }
+}
+
+wire! {
     /// GET /api/jobs/:id/source.
     #[serde(rename_all = "camelCase")]
     pub struct JobSource {

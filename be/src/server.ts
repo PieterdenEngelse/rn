@@ -35,6 +35,7 @@ import type {
     JobOverride,
     LinksResponse,
     MailHealthResponse,
+    RunsDeleteResponse,
     MailRuleSaveResponse,
     MailRulesResponse,
     WebhookDef,
@@ -744,6 +745,51 @@ export function createApp() {
         // GET /api/jobs: that one answers "what exists and what is happening
         // now" and is polled for it, while this one is asked a question and
         // re-asked when the question changes.
+        // The same filters as the GET above, and deliberately the same
+        // parsing: a delete that read "outcome" one way while the list beside
+        // it read it another would remove a different set from the one the
+        // count on the button described.
+        if (url.pathname === "/api/runs" && req.method === "DELETE") {
+            const q = url.searchParams;
+            const jobId = q.get("job") ?? undefined;
+            const outcome = q.get("outcome") ?? undefined;
+            const since = q.get("since") ?? undefined;
+
+            const errors: string[] = [];
+            if (jobId !== undefined && !jobById(jobId)) {
+                errors.push(`no job with id "${jobId}"`);
+            }
+            if (outcome !== undefined && !jobHistory.OUTCOMES.includes(outcome as jobHistory.Outcome)) {
+                errors.push(`outcome must be one of ${jobHistory.OUTCOMES.join(", ")}`);
+            }
+            const sinceMs = since === undefined ? undefined : Number(since);
+            if (sinceMs !== undefined && !Number.isFinite(sinceMs)) {
+                errors.push("since must be epoch milliseconds");
+            }
+            if (errors.length > 0) {
+                send(res, 400, { message: errors.join("; "), errors });
+                return done(400);
+            }
+
+            const removed = jobHistory.remove({
+                ...(jobId === undefined ? {} : { jobId }),
+                ...(outcome === undefined ? {} : { outcome: outcome as jobHistory.Outcome }),
+                ...(sinceMs === undefined ? {} : { since: sinceMs }),
+            });
+            // Logged, because it is the one action on this page that destroys
+            // a record rather than reading one, and afterwards there is
+            // nothing left to say it happened.
+            step("runs-deleted", {
+                ...(jobId === undefined ? { job: "every job" } : { job: jobId }),
+                ...(outcome === undefined ? {} : { outcome }),
+                ...(sinceMs === undefined ? {} : { since: sinceMs }),
+                runs: removed.runs,
+                failures: removed.failures,
+            });
+            send(res, 200, removed satisfies RunsDeleteResponse);
+            return done(200);
+        }
+
         if (url.pathname === "/api/runs" && req.method === "GET") {
             const q = url.searchParams;
             const jobId = q.get("job") ?? undefined;

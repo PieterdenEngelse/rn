@@ -7,7 +7,8 @@
 use super::wire::{
     ConnectionResponse, EnvResponse, HealthResponse, JobConfigResponse, JobErrors, JobOverride,
     JobRunResult, JobSource, JobsResponse, LinksResponse, MailHealthResponse, MailRule,
-    MailRuleSaveResponse, MailRulesResponse, NodeHistory, NodeMetrics, SendDetail,
+    MailRuleSaveResponse, MailRulesResponse, NodeHistory, NodeMetrics, RunsDeleteResponse,
+    SendDetail,
     ParamsResponse, RestartOutcome, RunsResponse, SaveResponse, StateResetResponse, StatusResponse,
     CredentialSaveResponse, CredentialsResponse, StopOutcome, TestDelivery, WebhookDef,
     WebhookSaveResponse, WebhooksResponse,
@@ -322,6 +323,62 @@ pub async fn fetch_node_history() -> Result<NodeHistory, String> {
         .await
         .map_err(|e| format!("{e}"))?;
     resp.json::<NodeHistory>().await.map_err(|e| format!("{e}"))
+}
+
+/// Remove every run a filter matches, for one job or for all of them.
+///
+/// The counts come back rather than a bare ok, because the page's whole claim
+/// is "these N", and a delete that removed a different number than the button
+/// promised is worth seeing rather than assuming.
+pub async fn delete_runs(
+    job: &str,
+    outcome: &str,
+    since_ms: Option<f64>,
+) -> Result<RunsDeleteResponse, String> {
+    let mut url = format!("{API_BASE}/api/runs?");
+    if !job.is_empty() {
+        url.push_str(&format!("&job={job}"));
+    }
+    if !outcome.is_empty() {
+        url.push_str(&format!("&outcome={outcome}"));
+    }
+    if let Some(since) = since_ms {
+        url.push_str(&format!("&since={}", since as i64));
+    }
+
+    let resp = gloo_net::http::Request::delete(&url)
+        .send()
+        .await
+        .map_err(|e| format!("{e}"))?;
+    if !resp.ok() {
+        return Err(format!("the runs were not deleted ({})", resp.status()));
+    }
+    resp.json::<RunsDeleteResponse>().await.map_err(|e| format!("{e}"))
+}
+
+/// The same, for a set of jobs — the scoped log's delete.
+///
+/// One request per job, summed, for the reason [`fetch_runs_for`] makes one
+/// per job: the endpoint filters on a single id, and a set of ids is not a
+/// thing it needs to learn for two callers to work.
+pub async fn delete_runs_for(
+    jobs: &[String],
+    outcome: &str,
+    since_ms: Option<f64>,
+) -> Result<RunsDeleteResponse, String> {
+    match jobs {
+        [] => delete_runs("", outcome, since_ms).await,
+        [one] => delete_runs(one, outcome, since_ms).await,
+        many => {
+            let mut total = RunsDeleteResponse { runs: 0, failures: 0 };
+            for id in many {
+                let r = delete_runs(id, outcome, since_ms).await?;
+                total.runs += r.runs;
+                total.failures += r.failures;
+            }
+            Ok(total)
+        }
+    }
 }
 
 /// The most recent runs of several jobs at once.

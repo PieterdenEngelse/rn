@@ -1,5 +1,6 @@
 use crate::api::{
-    fetch_job_errors, fetch_job_source, fetch_jobs, fetch_runs_for, reset_job_state, run_job,
+    delete_runs_for, fetch_job_errors, fetch_job_source, fetch_jobs, fetch_runs_for,
+    reset_job_state, run_job, RunsDeleteResponse,
     HandlerOverride, RetryOverride, ScheduleOverride,
     save_one_setting, send_test_delivery, CatalogueJob, JobErrors, JobRun, JobInput, JobInputType,
     JobRunResult, JobSource, JobStep, JobsResponse, Outcome, ScheduledJob, StateResetResponse,
@@ -1188,8 +1189,16 @@ pub fn RunLog(
     let mut window_hours = use_signal(|| 0_u32);
 
     let scoped = !only.is_empty();
+    // Two clicks, the way forgetting a job's memory is: the first names what
+    // will go and the second does it. This is the only control on the page
+    // that destroys a record rather than reading one, and afterwards there is
+    // nothing left to say what was there.
+    let mut confirming = use_signal(|| false);
+    let mut deleted = use_signal(|| Option::<Result<RunsDeleteResponse, String>>::None);
+
     let only_ids = only.clone();
-    let runs = use_resource(move || {
+    let delete_ids = only.clone();
+    let mut runs = use_resource(move || {
         let only_ids = only_ids.clone();
         async move {
             let since = match window_hours() {
@@ -1211,7 +1220,7 @@ pub fn RunLog(
                     value: job(),
                     all: if scoped { "any mail job".to_string() } else { "every job".to_string() },
                     options: catalogue.iter().map(|c| (c.id.clone(), c.label.clone())).collect(),
-                    on_pick: move |v| job.set(v),
+                    on_pick: move |v| { deleted.set(None); confirming.set(false); job.set(v); },
                 }
                 FilterSelect {
                     label: "Outcome".to_string(),
@@ -1223,7 +1232,7 @@ pub fn RunLog(
                         ("skipped".to_string(), "skipped".to_string()),
                         ("failed".to_string(), "failed".to_string()),
                     ],
-                    on_pick: move |v| outcome.set(v),
+                    on_pick: move |v| { deleted.set(None); confirming.set(false); outcome.set(v); },
                 }
                 FilterSelect {
                     label: "Since".to_string(),
@@ -1235,6 +1244,8 @@ pub fn RunLog(
                         ("168".to_string(), "the last week".to_string()),
                     ],
                     on_pick: move |v: String| {
+                        deleted.set(None);
+                        confirming.set(false);
                         window_hours.set(v.parse().unwrap_or(0));
                     },
                 }
@@ -1242,10 +1253,80 @@ pub fn RunLog(
 
             match &*runs.read_unchecked() {
                 Some(Ok(r)) => rsx! {
-                    // Never a bare count. "12 runs" reads as a lifetime total,
-                    // and the record is capped, so a lifetime total is not
-                    // something this can offer.
-                    p { class: "text-gray-400 text-xs", "{run_counts(r.runs.len(), r.matched, r.retained)}" }
+                    div { class: "flex items-baseline gap-3 flex-wrap",
+                        // Never a bare count. "12 runs" reads as a lifetime
+                        // total, and the record is capped, so a lifetime total
+                        // is not something this can offer.
+                        p { class: "text-gray-400 text-xs", "{run_counts(r.runs.len(), r.matched, r.retained)}" }
+
+                        // Beside the count, not under the list: what it
+                        // removes is exactly what that count describes, and a
+                        // button somewhere else would be a promise about a
+                        // number the reader has to go and find.
+                        if r.matched > 0 && confirming() {
+                            span { class: "text-gray-300 text-xs", "{delete_prompt(r.matched)}" }
+                            button {
+                                class: "cursor-pointer text-xs",
+                                style: "color: #22d3ee;",
+                                onclick: move |_| {
+                                    confirming.set(false);
+                                    let ids = if job().is_empty() { delete_ids.clone() } else { vec![job()] };
+                                    let picked = outcome();
+                                    // Recomputed rather than remembered from
+                                    // the fetch. A window is relative to now,
+                                    // so a moment later it starts slightly
+                                    // later and matches slightly fewer runs —
+                                    // which is the safe direction: this can
+                                    // delete less than the count said, never
+                                    // more, and the result line says what went.
+                                    let since = match window_hours() {
+                                        0 => None,
+                                        h => Some(js_sys::Date::now() - f64::from(h) * 3_600_000.0),
+                                    };
+                                    spawn(async move {
+                                        deleted.set(Some(delete_runs_for(&ids, &picked, since).await));
+                                        runs.restart();
+                                    });
+                                },
+                                "Delete"
+                            }
+                            button {
+                                class: "text-gray-300 hover:text-gray-100 cursor-pointer text-xs",
+                                onclick: move |_| confirming.set(false),
+                                "Cancel"
+                            }
+                        } else if r.matched > 0 {
+                            button {
+                                class: "cursor-pointer text-xs",
+                                style: "color: #22d3ee;",
+                                onclick: move |_| {
+                                    deleted.set(None);
+                                    confirming.set(true);
+                                },
+                                "Delete these {r.matched}"
+                            }
+                            // Inline beside its control rather than in the
+                            // board's column, which is where a button belonging
+                            // to one control goes. Here rather than at either
+                            // call site, so both logs explain it the same way.
+                            InfoButton {
+                                title: "Deleting runs".to_string(),
+                                what: DELETE_WHAT.to_string(),
+                                why: DELETE_WHY.to_string(),
+                                if_wrong: DELETE_IF_WRONG.to_string(),
+                            }
+                        }
+
+                        match deleted.read().as_ref() {
+                            Some(Ok(d)) => rsx! {
+                                span { class: "text-gray-400 text-xs", "{deleted_label(d)}" }
+                            },
+                            Some(Err(e)) => rsx! {
+                                span { class: "text-red-400 text-xs", "{e}" }
+                            },
+                            None => rsx! {},
+                        }
+                    }
                     if r.matched == 0 && r.retained > 0 {
                         // Distinct from "nothing has run yet", which is what
                         // this said before filters existed and would now be a
@@ -1266,6 +1347,57 @@ pub fn RunLog(
             }
         }
     }
+}
+
+const DELETE_WHAT: &str =
+    "Removes exactly the runs the count beside it describes — whatever the job, outcome and \
+     window filters currently match — and, for any of them that failed, the copy in that job's \
+     error log as well.\n\nNothing else is touched. The jobs themselves, what they remember \
+     (cursors and seen ids, cleared per job from a card above) and everything they are \
+     configured to do are unaffected. This deletes the record of what happened, not the thing \
+     that made it happen.";
+
+const DELETE_WHY: &str =
+    "The log prunes itself already — it is capped, and the oldest run falls off as new ones \
+     arrive — so this is for when you want something gone now rather than in a couple of hundred \
+     runs' time. A burst of failures you have already fixed and would rather stop re-reading; \
+     the noise from testing a job by hand, before you look at something real.\n\nThere is a \
+     second reason worth knowing. A run record carries what a job was asked and what it did, so \
+     it is also the place a name, an address or a subject line can end up on a page. Deleting \
+     the run is what makes the page stop showing it.";
+
+const DELETE_IF_WRONG: &str =
+    "There is no undo. The file is rewritten, and a run is not derivable from anything else — a \
+     job's state holds cursors and seen ids, never a history.\n\nWith the filters set to every \
+     job, any outcome and all of the record, this deletes all of it. That is why the button \
+     carries the number rather than a word like \"all\": what it says is what the list beside it \
+     just counted.\n\nA relative window is recomputed at the moment you confirm, so \"the last \
+     hour\" an hour after you set it matches slightly fewer runs than the count said. It can \
+     delete less than promised, never more, and the line afterwards says what actually went.";
+
+/// What the second click will actually destroy.
+///
+/// Names the number rather than the filter, because the number is the thing on
+/// screen: whatever combination of job, outcome and window produced it, "47
+/// runs" is what is about to go.
+fn delete_prompt(matched: u32) -> String {
+    let runs = if matched == 1 { "run" } else { "runs" };
+    format!("Delete {matched} {runs} and any failures among them? There is no undo.")
+}
+
+/// What went, including the half nobody asked about.
+///
+/// A run that failed is in two lists — the log and its job's error log — and
+/// deleting it empties both. Reporting only the first would leave the second
+/// looking like a side effect, which is the kind of surprise that makes a
+/// person distrust the whole control.
+fn deleted_label(d: &RunsDeleteResponse) -> String {
+    let runs = if d.runs == 1 { "run" } else { "runs" };
+    if d.failures == 0 {
+        return format!("deleted {} {runs}", d.runs);
+    }
+    let failures = if d.failures == 1 { "failure" } else { "failures" };
+    format!("deleted {} {runs}, and {} {failures} with them", d.runs, d.failures)
 }
 
 /// How much of the record is on screen, said so it cannot be misread.

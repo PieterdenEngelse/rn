@@ -17,7 +17,8 @@ pub use shared::{
     HooksHealth, EnvResponse, CredentialRef, JobConfigResponse, JobErrors, JobInfo, JobInput,
     JobInputType, JobOverride, RetryOverride, ScheduleOverride,
     JobRun, JobRunResult, JobSource, JobStep, JobsConfig, JobsResponse, Outcome, RetryPolicy,
-    RunningJob, RunsResponse, Schedule, ScheduledJob, StateResetResponse, TestDelivery, Trigger,
+    RunningJob, RunsDeleteResponse, RunsResponse, Schedule, ScheduledJob, StateResetResponse,
+    TestDelivery, Trigger,
     WebhookAuth, WebhookInfo, WebhookScheme,
 };
 

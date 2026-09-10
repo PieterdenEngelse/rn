@@ -1441,6 +1441,25 @@ backoffMs: number, };
 export type RunningJob = { id: string, name: string, startedAt: number, };
 
 /**
+ * DELETE /api/runs — what a filtered delete actually removed.
+ *
+ * Two counts rather than one. A run and a failure are the same event in
+ * two lists, and the second number is the one a reader would otherwise
+ * have to guess at: deleting the failed runs empties a job's error log
+ * too, and a page that reported only the first count would leave that
+ * looking like a side effect nobody asked for.
+ */
+export type RunsDeleteResponse = { 
+/**
+ * Runs dropped from the log.
+ */
+runs: number, 
+/**
+ * Failures dropped from the per-job error lists.
+ */
+failures: number, };
+
+/**
  * GET /api/runs — the run list, filtered.
  *
  * Filtered on the backend rather than in the page. The record is capped, so

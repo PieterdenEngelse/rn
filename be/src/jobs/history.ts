@@ -233,6 +233,43 @@ export function query(q: RunQuery = {}): { runs: JobRun[]; matched: number; reta
     };
 }
 
+/**
+ * Drop every run a query matches, and every failure it matches too.
+ *
+ * Both lists, because they are two views of the same events and clearing one
+ * would leave the other holding records the run log no longer has — a "failed"
+ * filter emptied here while the same runs stayed under their job's error log
+ * would read as the delete not having worked.
+ *
+ * The predicate is `query`'s, minus the limit: what a person deletes has to be
+ * exactly what the list in front of them said matched, or the count they
+ * clicked was a different question from the one that ran.
+ *
+ * There is no undo. The file is rewritten, and a run record is not derivable
+ * from anything else — the job's own state has cursors and seen ids, not a
+ * history of what happened.
+ */
+export function remove(q: RunQuery = {}): { runs: number; failures: number } {
+    const matches = (r: JobRun): boolean => {
+        if (q.jobId !== undefined && r.jobId !== q.jobId) return false;
+        if (q.since !== undefined && r.startedAt < q.since) return false;
+        if (q.outcome !== undefined && outcome(r) !== q.outcome) return false;
+        return true;
+    };
+
+    const before = { runs: runs.length, failures: failures.length };
+    runs = runs.filter((r) => !matches(r));
+    failures = failures.filter((r) => !matches(r));
+    const removed = {
+        runs: before.runs - runs.length,
+        failures: before.failures - failures.length,
+    };
+    // Only when something went, so a delete that matched nothing does not
+    // rewrite a file it has no changes for.
+    if (removed.runs > 0 || removed.failures > 0) save();
+    return removed;
+}
+
 /** The most recent run of one job, which is what its row on the page shows. */
 export function lastFor(jobId: string): JobRun | undefined {
     for (let i = runs.length - 1; i >= 0; i -= 1) {

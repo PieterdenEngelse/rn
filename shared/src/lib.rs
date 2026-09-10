@@ -62,6 +62,7 @@ pub fn export_all(cfg: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     JobRun::export_all(cfg)?;
     JobsConfig::export_all(cfg)?;
     JobsResponse::export_all(cfg)?;
+    RunsDeleteResponse::export_all(cfg)?;
     MailRule::export_all(cfg)?;
     WatchedMailbox::export_all(cfg)?;
     MailRulesResponse::export_all(cfg)?;

@@ -562,6 +562,50 @@ test("a failed run keeps the steps that ran before it broke", async () => {
     assert.deepEqual(failure!.steps.map((s) => s.name), ["scanned"]);
 });
 
+test("deleting runs takes the failures with them, and leaves the rest alone", async () => {
+    // Two runs of one job and one of another, so a filtered delete has
+    // something to spare as well as something to remove.
+    await runJob(probe());
+    const failing = probe({
+        async run() {
+            throw new Error("boom");
+        },
+    });
+    await assert.rejects(runJob(failing));
+    const other = probe({ id: "other-probe" });
+    await runJob(other);
+
+    assert.equal(history.list().length, 3);
+    assert.equal(history.failuresFor("probe").length, 1);
+
+    // The failed one only. The point of the assertion is the second number:
+    // a failure lives in two lists and both have to lose it, or the job's
+    // error log goes on showing a run the log no longer has.
+    const removed = history.remove({ outcome: "failed" });
+    assert.deepEqual(removed, { runs: 1, failures: 1 });
+    assert.equal(history.failuresFor("probe").length, 0);
+
+    const left = history.list();
+    assert.equal(left.length, 2);
+    assert.ok(left.every((r) => r.error === undefined));
+});
+
+test("a delete removes exactly what the same filter matched, and nothing when it matches nothing", async () => {
+    await runJob(probe());
+    await runJob(probe({ id: "other-probe" }));
+
+    // The property the button on the page depends on: the number it shows
+    // comes from query() and the number it deletes comes from remove(), so a
+    // difference between the two predicates would delete a different set from
+    // the one the reader counted.
+    const matched = history.query({ jobId: "probe" }).matched;
+    assert.equal(matched, 1);
+    assert.deepEqual(history.remove({ jobId: "probe" }), { runs: 1, failures: 0 });
+
+    assert.deepEqual(history.remove({ jobId: "probe" }), { runs: 0, failures: 0 });
+    assert.equal(history.list().length, 1, "the other job is untouched");
+});
+
 test("a job that steps in a loop is capped, and says how many it dropped", async () => {
     const total = STEP_HEAD + STEP_TAIL + 500;
     const job = probe({
