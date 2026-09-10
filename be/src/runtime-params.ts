@@ -909,6 +909,40 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
         },
     },
     {
+        id: "imapTimeoutMs",
+        flag: "RN_IMAP_TIMEOUT_MS",
+        kind: "env",
+        type: "int",
+        default: 300000,
+        min: 5000,
+        max: 900000,
+        unit: "ms",
+        appliesAt: "restart",
+        category: "mail-receiving",
+        label: "Read timeout",
+        info: {
+            what:
+                "How long the connection a run opens may sit silent before the client gives up. " +
+                "The default is imapflow's own five minutes, so leaving it alone changes " +
+                "nothing.\n\nIt does not apply to the held-open watch connection. That one " +
+                "exists to sit silent for hours, and imapflow caps its auto-IDLE delay against " +
+                "this same number — a timeout short enough to be useful on a run is short " +
+                "enough to break the watch.",
+            why:
+                "Because five minutes is longer than it is useful to wait and, more to the " +
+                "point, it is the same as read-mail's own ceiling. A server that stops " +
+                "answering therefore presents as the job running out of time, which is a " +
+                "different fault with a different fix: one is the network or the provider, the " +
+                "other is a job doing too much. Something like 60000 separates them.",
+            ifWrong:
+                "Too low and a slow but working server looks broken — a large mailbox on a bad " +
+                "connection takes real seconds to search. Too high and it is the default, " +
+                "which is to say the failure above.\n\nA run that hits it fails and is " +
+                "retried; nothing is read twice as a result, because the dedupe window is " +
+                "committed per message rather than per run.",
+        },
+    },
+    {
         id: "mailWatch",
         flag: "RN_MAIL_WATCH",
         kind: "env",
@@ -1089,6 +1123,41 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
         },
     },
     {
+        id: "mailMaxMessages",
+        flag: "RN_MAIL_MAX_MESSAGES",
+        kind: "env",
+        type: "int",
+        default: 25,
+        min: 1,
+        max: 500,
+        unit: "messages",
+        appliesAt: "restart",
+        category: "mail-receiving",
+        label: "Messages per run",
+        info: {
+            what:
+                "How many of the newest matching messages one read-mail run examines. Ones it " +
+                "has already reported are skipped without being downloaded, so this bounds the " +
+                "work rather than the results.\n\nIt is the default for the job's own input: " +
+                "a run started by hand can say otherwise, and a scheduled run — which is nearly " +
+                "all of them — takes this.",
+            why:
+                "It is half of the arithmetic that decides whether the job can dedupe at all, " +
+                "and until now it was the half nobody could change. \"Remembered ids per job\" " +
+                "was always a setting; this was a literal in the job file.\n\nThey are read " +
+                "together. seen() keeps that many ids per job with the oldest falling off, so a " +
+                "run that examines more messages than the window holds pushes out ids it " +
+                "recorded in the same run — and the same mail is reported again weeks later " +
+                "with nothing red anywhere. The runner warns when the two cross.",
+            ifWrong:
+                "Too low and a burst of mail between two runs is missed outright: there is no " +
+                "cursor here, only a recently-seen window, so a message that falls past the " +
+                "newest N before a run is never examined at all.\n\nToo high and the run is " +
+                "slow and the window overflows. For a quiet mailbox 25 is generous; for a busy " +
+                "one the answer is to run more often rather than to raise this.",
+        },
+    },
+    {
         id: "smtpHost",
         flag: "RN_SMTP_HOST",
         kind: "env",
@@ -1139,6 +1208,71 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
                 "immediately, which is the honest failure. The dangerous direction is the " +
                 "other one: a port that quietly works without encryption looks identical to " +
                 "one that works with it, from here.",
+        },
+    },
+    {
+        id: "smtpTimeoutMs",
+        flag: "RN_SMTP_TIMEOUT_MS",
+        kind: "env",
+        type: "int",
+        default: 600000,
+        min: 5000,
+        max: 900000,
+        unit: "ms",
+        appliesAt: "restart",
+        category: "mail-sending",
+        label: "Send timeout",
+        info: {
+            what:
+                "How long an SMTP connection may sit silent before the client gives up, and " +
+                "how long it may take to establish in the first place. The default is " +
+                "nodemailer's own ten minutes, so leaving it alone changes nothing.",
+            why:
+                "That default is longer than the job that runs inside it. send-mail's ceiling " +
+                "is ten minutes too, so a socket that goes quiet eats the whole of it and the " +
+                "run is reported as the job timing out rather than as the server having " +
+                "stopped answering — two faults with two fixes, presented identically.\n\n" +
+                "A minute is enough for any single message. What a long list needs is time " +
+                "overall, which is the job's ceiling, not time per silence.",
+            ifWrong:
+                "Too low and a slow provider looks like an outage. Too high and it is the " +
+                "default.\n\nEither way nothing is sent twice: a recipient already attempted " +
+                "carries a marker, so the retry after a timeout resumes rather than repeats. " +
+                "That is what makes lowering this safe to try.",
+        },
+    },
+    {
+        id: "smtpGapMs",
+        flag: "RN_SMTP_GAP_MS",
+        kind: "env",
+        type: "int",
+        default: 0,
+        min: 0,
+        max: 60000,
+        unit: "ms",
+        appliesAt: "restart",
+        category: "mail-sending",
+        label: "Pause between messages",
+        info: {
+            what:
+                "How long to wait after each message before starting the next. Zero — the " +
+                "default — sends as fast as the loop and the server allow, which is right for " +
+                "the handful of recipients a personal install has.\n\nIt is per message and " +
+                "not per run, so a list of two hundred at 500ms adds a hundred seconds. The " +
+                "job's ceiling has to cover that.",
+            why:
+                "One send is one SMTP conversation per recipient, and the transport is not " +
+                "pooled, so a long list is that many connections opened as fast as they can " +
+                "be. A provider answering a burst with a 4xx is being polite about it, and " +
+                "rn reads 4xx as transient and retries the whole run.\n\nNothing is " +
+                "delivered twice — the sent markers see to that — so the cost is a send that " +
+                "takes three attempts instead of one. Pacing turns it back into one.",
+            ifWrong:
+                "Too high and a send takes longer than its own ceiling and is cut off part " +
+                "way, which resumes on the retry rather than repeating, but reports a partial " +
+                "send until it does.\n\nZero is not a wrong answer for a small list. It is " +
+                "the wrong answer for a provider that has started refusing you, and the run " +
+                "record's rejected count is where that shows up first.",
         },
     },
     {
@@ -1213,6 +1347,35 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
                 "else. The address is still the account that authenticated, and a receiving " +
                 "server checks that and not this; a name that disagrees with the address is a " +
                 "thing spam filters have opinions about.",
+        },
+    },
+    {
+        id: "mailReplyTo",
+        flag: "RN_MAIL_REPLY_TO",
+        kind: "env",
+        type: "string",
+        default: null,
+        appliesAt: "restart",
+        category: "mail-sending",
+        label: "Reply to",
+        info: {
+            what:
+                "Where replies should go, when that is not the account that sent. Empty — the " +
+                "default — sets no header at all and replies go to the account address, which " +
+                "is right whenever one account both sends and reads.",
+            why:
+                "It is the second of the two settings a recipient meets, and the only one that " +
+                "changes what happens when they act on the message rather than how it looks. " +
+                "Worth setting when a machine's account does the sending and a person should " +
+                "get the answers: a reply into a mailbox nobody opens is indistinguishable, " +
+                "from the sender's side, from no reply at all.",
+            ifWrong:
+                "It is a request rather than a rule — a mail client is free to ignore it, and " +
+                "a few do. It also does not change who the message is from: the address that " +
+                "authenticated is still on the outside of it, which is what a receiving " +
+                "server checks.\n\nAn address here that nobody reads is worse than leaving " +
+                "it empty, because the sender's own mailbox then looks quiet for the right " +
+                "reason and the wrong one at once.",
         },
     },
     {

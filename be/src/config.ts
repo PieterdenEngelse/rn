@@ -259,6 +259,54 @@ export const config = {
 
     mailFromName: process.env.RN_MAIL_FROM_NAME ?? "",
 
+    /**
+     * Where replies should go, when that is not the account that sent.
+     *
+     * The second of the two settings a recipient actually sees, and the only
+     * one that changes what happens when they act on the message rather than
+     * how it looks. Empty — the default — sets no header at all, and replies
+     * go to `mailUser`, which is right whenever one account both sends and
+     * reads.
+     *
+     * Worth setting when the sending account is a machine's and the answers
+     * should reach a person: a reply to a mailbox nobody opens is
+     * indistinguishable, from the sender's side, from no reply at all.
+     */
+    mailReplyTo: process.env.RN_MAIL_REPLY_TO ?? "",
+
+    /**
+     * How long to wait between one message and the next, in milliseconds.
+     *
+     * Zero — the default — sends as fast as the loop and the server allow,
+     * which is right for the handful of recipients a personal install has.
+     *
+     * It exists for the shape of the failure at the other end of the scale.
+     * `smtpTransport` does not pool, so a list of two hundred is two hundred
+     * connections as fast as they can be opened, and a provider answering a
+     * burst with a 4xx is doing the polite thing — `isPermanentSmtp` reads
+     * that as transient and the runner retries the whole run. The markers in
+     * `tracker/sent.ts` stop that becoming a second delivery, so the cost is
+     * a send that takes three attempts rather than duplicates; pacing is what
+     * turns it back into one.
+     */
+    smtpGapMs: Number(process.env.RN_SMTP_GAP_MS ?? 0),
+
+    /**
+     * How long an SMTP socket may sit silent before the client gives up.
+     *
+     * Passed to nodemailer as `socketTimeout` *and* `connectionTimeout`, and
+     * defaulted to nodemailer's own 10 minutes so that setting nothing changes
+     * nothing.
+     *
+     * That default is worth reading twice, because it is longer than the job
+     * that runs inside it. `send-mail` has a `timeoutMs` of 600_000, so a
+     * socket that goes quiet consumes the entire ceiling and the run is
+     * reported as *the job timing out* rather than as the server having
+     * stopped answering — two different faults with two different fixes,
+     * presented identically. Something like 60_000 makes them distinguishable.
+     */
+    smtpTimeoutMs: Number(process.env.RN_SMTP_TIMEOUT_MS ?? 600_000),
+
     /** SMTP host the send job connects to. */
     smtpHost: process.env.RN_SMTP_HOST ?? "smtp.gmail.com",
 
@@ -342,6 +390,39 @@ export const config = {
 
     /** IMAP port. 993 is implicit TLS, the counterpart of SMTP's 465. */
     imapPort: Number(process.env.RN_IMAP_PORT ?? 993),
+
+    /**
+     * How long an IMAP socket may sit silent before the client gives up.
+     *
+     * Applied to the connection `read-mail` opens for a run, and deliberately
+     * **not** to the one `mail/watcher.ts` holds open. That connection's whole
+     * job is to sit silent for hours, and imapflow caps its auto-IDLE delay
+     * against this same value — a timeout short enough to be useful on a run
+     * is short enough to break the watch, which fails as mail arriving late
+     * with nothing red anywhere.
+     *
+     * Defaulted to imapflow's own 5 minutes, so setting nothing changes
+     * nothing. Below `read-mail`'s 300_000 ceiling it is the difference
+     * between "the server stopped answering" and "the job ran out of time".
+     */
+    imapTimeoutMs: Number(process.env.RN_IMAP_TIMEOUT_MS ?? 300_000),
+
+    /**
+     * How many of the newest messages one `read-mail` run examines.
+     *
+     * The *default* for the job's own input rather than a hard limit: a run
+     * started by hand can say otherwise, and a scheduled run — which is nearly
+     * all of them — has no form to fill in and takes this.
+     *
+     * It was only the input's literal `25` before, which made it the one half
+     * of a piece of arithmetic that could not be configured. The other half,
+     * `stateSeenPerJob`, always could. They are read together: `seen()` keeps
+     * that many ids per job with the oldest falling off, so a run examining
+     * more messages than the window holds pushes out ids it recorded in the
+     * same run, and the same mail is reported again weeks later with nothing
+     * red. The runner warns when this crosses the line.
+     */
+    mailMaxMessages: Number(process.env.RN_MAIL_MAX_MESSAGES ?? 25),
 
     /**
      * Per-job settings changed from Config → Jobs, keyed by job id.

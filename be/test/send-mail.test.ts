@@ -36,6 +36,7 @@ const mutable = config as unknown as {
     trackerBaseUrl: string;
     mailUser: string;
     mailFromName: string;
+    mailReplyTo: string;
     sendAllowedRecipients: string;
     settingsPath: string;
 };
@@ -51,6 +52,7 @@ const {
     assertAllowedRecipients,
     deriveSendId,
     fromAddress,
+    replyToField,
     parseRecipients,
     plainTextFrom,
     isPermanentSmtp,
@@ -77,6 +79,19 @@ test("recipients are split on lines, commas and semicolons, and deduplicated", (
         "c@x.com",
     ]);
     assert.deepEqual(parseRecipients("   "), []);
+});
+
+test("no reply-to setting means no header, not an empty one", () => {
+    // The distinction is the point. A Reply-To with nothing in it is a
+    // statement that replies go nowhere, and some clients take it literally;
+    // an absent header lets a reply go to the From, which is what an install
+    // with one account wants.
+    mutable.mailReplyTo = "";
+    assert.deepEqual(replyToField(), {});
+
+    mutable.mailReplyTo = "someone@example.com";
+    assert.deepEqual(replyToField(), { replyTo: "someone@example.com" });
+    mutable.mailReplyTo = "";
 });
 
 test("an empty allowlist refuses the send rather than permitting it", () => {

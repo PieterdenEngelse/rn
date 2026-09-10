@@ -18,7 +18,8 @@ import {
     recipientMatches,
     parseSenders,
 } from "../src/mail/extract.ts";
-import { textPartNumbers } from "../src/jobs/read-mail.ts";
+import { readMail, textPartNumbers } from "../src/jobs/read-mail.ts";
+import { config } from "../src/config.ts";
 
 test("anchors in html and bare urls in text are both found", () => {
     const links = extractLinks(
@@ -200,4 +201,15 @@ test("a recipient display name cannot impersonate an address", () => {
     // Same hazard as the sender side: IMAP's SEARCH TO is a substring match
     // over the header, display names included.
     assert.equal(recipientMatches(["evil@attacker.example"], ["example.com"]), false);
+});
+
+test("the messages-per-run input defaults to the setting, so a scheduled run uses it", () => {
+    // A scheduled run has no form to fill in: it takes the input's declared
+    // default. While that default was a literal 25, the setting existed for
+    // the other half of the dedupe arithmetic and not for this one, so the
+    // number that decides whether the window overflows could not be changed
+    // at all on the runs that matter.
+    const field = readMail.inputs?.find((i) => i.id === "maxMessages");
+    assert.ok(field, "read-mail still declares a messages-per-run input");
+    assert.equal(field.default, config.mailMaxMessages);
 });

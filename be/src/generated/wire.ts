@@ -1065,6 +1065,11 @@ user: string,
  */
 credentialSet: boolean, imap: MailServer, 
 /**
+ * How long a run's IMAP socket may sit silent, in ms. Not applied to
+ * the held-open watch connection — see the setting.
+ */
+imapTimeoutMs: number, 
+/**
  * Whether the watcher is switched on at all.
  */
 watchingEnabled: boolean, 
@@ -1093,6 +1098,14 @@ allowedSenders: string,
  * recipients are the ones given to that run.
  */
 allowedRecipients: string, smtp: MailServer, 
+/**
+ * How long an SMTP socket may sit silent, in ms.
+ */
+smtpTimeoutMs: number, 
+/**
+ * Where replies are directed, or empty for the sending account.
+ */
+replyTo: string, 
 /**
  * The only addresses a send may go to. Empty refuses every send,
  * which is the default and not the same as "no limit".

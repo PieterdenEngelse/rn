@@ -32,14 +32,19 @@ scales with installed RAM, so expect a different number elsewhere.
 | **Address** | `RN_MAIL_USER` | unset (system default) | — | on restart |
 | **IMAP host** | `RN_IMAP_HOST` | imap.gmail.com | — | on restart |
 | **IMAP port** | `RN_IMAP_PORT` | 993 | 1 … 65535 | on restart |
+| **Read timeout** | `RN_IMAP_TIMEOUT_MS` | 300000 ms | 5000 … 900000 ms | on restart |
 | **Read mail the moment it arrives** | `RN_MAIL_WATCH` | off | — | on restart |
 | **Mailboxes to watch** | `RN_MAIL_WATCH_MAILBOX` | INBOX | — | on restart |
 | **Accept mail only from** | `RN_MAIL_ALLOWED_SENDERS` | unset (system default) | — | on restart |
 | **Only to these recipients** | `RN_MAIL_ALLOWED_RECIPIENTS` | unset (system default) | — | on restart |
+| **Messages per run** | `RN_MAIL_MAX_MESSAGES` | 25 messages | 1 … 500 messages | on restart |
 | **SMTP host** | `RN_SMTP_HOST` | smtp.gmail.com | — | on restart |
 | **SMTP port** | `RN_SMTP_PORT` | 465 | 1 … 65535 | on restart |
+| **Send timeout** | `RN_SMTP_TIMEOUT_MS` | 600000 ms | 5000 … 900000 ms | on restart |
+| **Pause between messages** | `RN_SMTP_GAP_MS` | 0 ms | 0 … 60000 ms | on restart |
 | **Send only to** | `RN_SEND_ALLOWED_RECIPIENTS` | unset (system default) | — | on restart |
 | **From name** | `RN_MAIL_FROM_NAME` | unset (system default) | — | on restart |
+| **Reply to** | `RN_MAIL_REPLY_TO` | unset (system default) | — | on restart |
 | **Trace warnings** | `--trace-warnings` (NODE_OPTIONS) | off | — | on restart |
 | **Trace deprecations** | `--trace-deprecation` (NODE_OPTIONS) | off | — | on restart |
 | **Stack trace depth** | `--stack-trace-limit` (NODE_OPTIONS) | 10 | 0 … 200 | immediately |
@@ -498,6 +503,20 @@ Default: imap.gmail.com · Takes effect: on restart · Settings key: `imapHost`
 
 Default: 993 · Takes effect: on restart · Settings key: `imapPort`
 
+### Read timeout — `RN_IMAP_TIMEOUT_MS`
+
+**What it does.** How long the connection a run opens may sit silent before the client gives up. The default is imapflow's own five minutes, so leaving it alone changes nothing.
+
+It does not apply to the held-open watch connection. That one exists to sit silent for hours, and imapflow caps its auto-IDLE delay against this same number — a timeout short enough to be useful on a run is short enough to break the watch.
+
+**Why you would change it.** Because five minutes is longer than it is useful to wait and, more to the point, it is the same as read-mail's own ceiling. A server that stops answering therefore presents as the job running out of time, which is a different fault with a different fix: one is the network or the provider, the other is a job doing too much. Something like 60000 separates them.
+
+**If it's wrong.** Too low and a slow but working server looks broken — a large mailbox on a bad connection takes real seconds to search. Too high and it is the default, which is to say the failure above.
+
+A run that hits it fails and is retried; nothing is read twice as a result, because the dedupe window is committed per message rather than per run.
+
+Default: 300000 ms · Takes effect: on restart · Settings key: `imapTimeoutMs`
+
 ### Read mail the moment it arrives — `RN_MAIL_WATCH`
 
 **What it does.** Holds an IMAP connection open and starts a read-mail run within a couple of seconds of a message landing, instead of waiting for the job's thirty-minute schedule.
@@ -578,6 +597,22 @@ The server's TO search matches display names too, so the parsed addresses are re
 
 Default: unset (system default) · Takes effect: on restart · Settings key: `mailAllowedRecipients`
 
+### Messages per run — `RN_MAIL_MAX_MESSAGES`
+
+**What it does.** How many of the newest matching messages one read-mail run examines. Ones it has already reported are skipped without being downloaded, so this bounds the work rather than the results.
+
+It is the default for the job's own input: a run started by hand can say otherwise, and a scheduled run — which is nearly all of them — takes this.
+
+**Why you would change it.** It is half of the arithmetic that decides whether the job can dedupe at all, and until now it was the half nobody could change. "Remembered ids per job" was always a setting; this was a literal in the job file.
+
+They are read together. seen() keeps that many ids per job with the oldest falling off, so a run that examines more messages than the window holds pushes out ids it recorded in the same run — and the same mail is reported again weeks later with nothing red anywhere. The runner warns when the two cross.
+
+**If it's wrong.** Too low and a burst of mail between two runs is missed outright: there is no cursor here, only a recently-seen window, so a message that falls past the newest N before a run is never examined at all.
+
+Too high and the run is slow and the window overflows. For a quiet mailbox 25 is generous; for a busy one the answer is to run more often rather than to raise this.
+
+Default: 25 messages · Takes effect: on restart · Settings key: `mailMaxMessages`
+
 ## mail-sending
 
 ### SMTP host — `RN_SMTP_HOST`
@@ -601,6 +636,36 @@ Default: smtp.gmail.com · Takes effect: on restart · Settings key: `smtpHost`
 **If it's wrong.** Point 465 at a server that only speaks STARTTLS and the handshake fails immediately, which is the honest failure. The dangerous direction is the other one: a port that quietly works without encryption looks identical to one that works with it, from here.
 
 Default: 465 · Takes effect: on restart · Settings key: `smtpPort`
+
+### Send timeout — `RN_SMTP_TIMEOUT_MS`
+
+**What it does.** How long an SMTP connection may sit silent before the client gives up, and how long it may take to establish in the first place. The default is nodemailer's own ten minutes, so leaving it alone changes nothing.
+
+**Why you would change it.** That default is longer than the job that runs inside it. send-mail's ceiling is ten minutes too, so a socket that goes quiet eats the whole of it and the run is reported as the job timing out rather than as the server having stopped answering — two faults with two fixes, presented identically.
+
+A minute is enough for any single message. What a long list needs is time overall, which is the job's ceiling, not time per silence.
+
+**If it's wrong.** Too low and a slow provider looks like an outage. Too high and it is the default.
+
+Either way nothing is sent twice: a recipient already attempted carries a marker, so the retry after a timeout resumes rather than repeats. That is what makes lowering this safe to try.
+
+Default: 600000 ms · Takes effect: on restart · Settings key: `smtpTimeoutMs`
+
+### Pause between messages — `RN_SMTP_GAP_MS`
+
+**What it does.** How long to wait after each message before starting the next. Zero — the default — sends as fast as the loop and the server allow, which is right for the handful of recipients a personal install has.
+
+It is per message and not per run, so a list of two hundred at 500ms adds a hundred seconds. The job's ceiling has to cover that.
+
+**Why you would change it.** One send is one SMTP conversation per recipient, and the transport is not pooled, so a long list is that many connections opened as fast as they can be. A provider answering a burst with a 4xx is being polite about it, and rn reads 4xx as transient and retries the whole run.
+
+Nothing is delivered twice — the sent markers see to that — so the cost is a send that takes three attempts instead of one. Pacing turns it back into one.
+
+**If it's wrong.** Too high and a send takes longer than its own ceiling and is cut off part way, which resumes on the retry rather than repeating, but reports a partial send until it does.
+
+Zero is not a wrong answer for a small list. It is the wrong answer for a provider that has started refusing you, and the run record's rejected count is where that shows up first.
+
+Default: 0 ms · Takes effect: on restart · Settings key: `smtpGapMs`
 
 ### Send only to — `RN_SEND_ALLOWED_RECIPIENTS`
 
@@ -637,6 +702,18 @@ It is also on the short list of settings that cannot be corrected afterwards. Ch
 What it cannot do is make mail arrive as somebody else. The address is still the account that authenticated, and a receiving server checks that and not this; a name that disagrees with the address is a thing spam filters have opinions about.
 
 Default: unset (system default) · Takes effect: on restart · Settings key: `mailFromName`
+
+### Reply to — `RN_MAIL_REPLY_TO`
+
+**What it does.** Where replies should go, when that is not the account that sent. Empty — the default — sets no header at all and replies go to the account address, which is right whenever one account both sends and reads.
+
+**Why you would change it.** It is the second of the two settings a recipient meets, and the only one that changes what happens when they act on the message rather than how it looks. Worth setting when a machine's account does the sending and a person should get the answers: a reply into a mailbox nobody opens is indistinguishable, from the sender's side, from no reply at all.
+
+**If it's wrong.** It is a request rather than a rule — a mail client is free to ignore it, and a few do. It also does not change who the message is from: the address that authenticated is still on the outside of it, which is what a receiving server checks.
+
+An address here that nobody reads is worse than leaving it empty, because the sender's own mailbox then looks quiet for the right reason and the wrong one at once.
+
+Default: unset (system default) · Takes effect: on restart · Settings key: `mailReplyTo`
 
 ## Output
 

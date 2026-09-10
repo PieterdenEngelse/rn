@@ -176,6 +176,13 @@ export interface Transport {
          * that wrong in a way that shows up in somebody else's mail client.
          */
         from: string | { name: string; address: string };
+        /**
+         * Where replies should go, when that is not the sending account.
+         *
+         * Absent rather than empty when unset: an empty `Reply-To` is a header
+         * that says replies go nowhere, which some clients honour literally.
+         */
+        replyTo?: string;
         to: string;
         subject: string;
         html: string;
@@ -254,6 +261,17 @@ export function fromAddress(): string | { name: string; address: string } {
 }
 
 /**
+ * The `Reply-To` field, or no field at all.
+ *
+ * Returns the fragment rather than the value so the caller spreads it: an
+ * empty `Reply-To` is a header saying replies go nowhere, which some clients
+ * honour literally, and is a different statement from not having one.
+ */
+export function replyToField(): { replyTo?: string } {
+    return config.mailReplyTo === "" ? {} : { replyTo: config.mailReplyTo };
+}
+
+/**
  * The real transport, built per run and closed after it.
  *
  * `nodemailer` is imported dynamically so that nothing in the module graph
@@ -270,6 +288,12 @@ async function smtpTransport(password: string): Promise<Transport & { close(): v
         // 465 is implicit TLS. See config.ts for why not 587.
         secure: config.smtpPort === 465,
         auth: { user: config.mailUser, pass: password },
+        // Both, from one setting. nodemailer defaults these to ten and two
+        // minutes, and the first of those is the job's own ceiling — so a
+        // silent socket presents as the run timing out rather than as the
+        // server having stopped answering.
+        socketTimeout: config.smtpTimeoutMs,
+        connectionTimeout: config.smtpTimeoutMs,
     });
     return {
         async send(message) {
@@ -605,6 +629,10 @@ export const sendMail: Job = {
         let delivered = 0;
         let skipped = 0;
         let mintedTotal = 0;
+        // Messages this run actually put on the wire, which is what the pause
+        // is spaced against — a recipient skipped by a marker is not a
+        // conversation and should not earn a wait.
+        let attempted = 0;
         // Collected rather than thrown from inside the loop. One bad address
         // must not hold the rest of the list hostage: throwing on the second
         // of two hundred recipients left the other hundred and ninety-eight
@@ -650,6 +678,17 @@ export const sendMail: Job = {
                     body = shared;
                 }
 
+                // Before the message rather than after it, so the wait never
+                // trails the last recipient — a send that has finished should
+                // not sit there for another half second before saying so. It
+                // counts attempts and not deliveries: a recipient the server
+                // refused still cost a conversation, which is the thing being
+                // paced.
+                if (config.smtpGapMs > 0 && attempted > 0) {
+                    await new Promise((r) => setTimeout(r, config.smtpGapMs));
+                }
+                attempted += 1;
+
                 // Before the call, never after. tracker/sent.ts carries the
                 // whole argument for that order and what it costs.
                 sent.markAttempt(sendId, to);
@@ -657,6 +696,7 @@ export const sendMail: Job = {
                 try {
                     const info = await tx.send({
                         from: fromAddress(),
+                        ...replyToField(),
                         to,
                         subject,
                         html: body.html,

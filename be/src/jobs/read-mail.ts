@@ -208,7 +208,11 @@ export const readMail: Job = {
             id: "maxMessages",
             label: "Messages per run",
             type: "number",
-            default: 25,
+            // From the setting rather than a literal, so a *scheduled* run —
+            // which has no form to fill in, and is nearly all of them — uses
+            // what the install configured. A run started by hand still says
+            // otherwise in the field.
+            default: config.mailMaxMessages,
             info: {
                 what:
                     "The newest N messages to examine each run. Ones already seen are skipped " +
@@ -368,7 +372,7 @@ export const readMail: Job = {
 
     async run(ctx: JobContext): Promise<JobResult> {
         const mailbox = String(ctx.input.mailbox ?? "INBOX").trim() || "INBOX";
-        const maxMessages = Math.max(1, Number(ctx.input.maxMessages ?? 25));
+        const maxMessages = Math.max(1, Number(ctx.input.maxMessages ?? config.mailMaxMessages));
         const unreadOnly = ctx.input.unreadOnly === true;
         // The run's own field wins when it is filled in; otherwise the
         // install's standing setting applies. That order is what makes a
@@ -467,6 +471,11 @@ export const readMail: Job = {
             // imapflow logs the whole conversation at info by default, which
             // would put every subject line and the auth exchange on stdout.
             logger: false,
+            // A run's connection, so it may be bounded. The watcher's is not —
+            // see the note beside this setting in config.ts: that one is meant
+            // to sit silent, and imapflow caps its auto-IDLE delay against
+            // this same number.
+            socketTimeout: config.imapTimeoutMs,
         });
 
         const messages: { from: string; subject: string; date: string; links: string[] }[] = [];

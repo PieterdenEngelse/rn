@@ -656,6 +656,7 @@ export function createApp() {
                     // it — see the note on MailServer.
                     implicitTls: config.imapPort === 993,
                 },
+                imapTimeoutMs: config.imapTimeoutMs,
                 watchingEnabled: config.mailWatch,
                 watched: watch.mailboxes,
                 rulesEnabled: mailRules.list().filter((r) => r.enabled).length,
@@ -668,6 +669,8 @@ export function createApp() {
                     port: config.smtpPort,
                     implicitTls: config.smtpPort === 465,
                 },
+                smtpTimeoutMs: config.smtpTimeoutMs,
+                replyTo: config.mailReplyTo,
                 sendAllowedRecipients: config.sendAllowedRecipients,
                 fromName: config.mailFromName,
                 sends: trackerStore.sends().length,

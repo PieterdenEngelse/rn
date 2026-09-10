@@ -155,6 +155,13 @@ fn Receiving(data: MailHealthResponse) -> Element {
                 if_wrong: "Anything other than 993 here reports plain, which is correct for a server on a bench and wrong for anything reachable over a network you do not own. Mail is not the place to find out.".to_string(),
             }
             Metric {
+                label: "Read timeout".to_string(),
+                value: timeout_label(data.imap_timeout_ms),
+                what: "How long a run's connection may sit silent before the client gives up — RN_IMAP_TIMEOUT_MS. It is not applied to the held-open watch connection, which exists to sit silent for hours.".to_string(),
+                why: "The default is imapflow's five minutes, which is also read-mail's own ceiling — so a server that stops answering is reported as the job running out of time. Those are different faults with different fixes and they currently look identical. A minute tells them apart.".to_string(),
+                if_wrong: "Too low and a slow but working server reads as broken: a large mailbox on a poor connection takes real seconds to search. A run that hits it fails and is retried, and nothing is read twice as a result — the dedupe window is committed per message, not per run.".to_string(),
+            }
+            Metric {
                 label: "Watching".to_string(),
                 value: watching.to_string(),
                 what: "Whether rn holds a connection open to notice mail as it lands, rather than only reading on the read-mail schedule.".to_string(),
@@ -194,6 +201,11 @@ fn Sending(data: MailHealthResponse) -> Element {
     } else {
         data.send_allowed_recipients.clone()
     };
+    let reply_to = if data.reply_to.is_empty() {
+        "the account address".to_string()
+    } else {
+        data.reply_to.clone()
+    };
     let from_name = if data.from_name.is_empty() {
         "none — the address alone".to_string()
     } else {
@@ -220,6 +232,20 @@ fn Sending(data: MailHealthResponse) -> Element {
                 what: "Whether this port means TLS from the first byte. 465 is SMTP's implicit-TLS port and is what rn connects with; the setting is derived from the port, exactly as the receiving half derives its own from 993.".to_string(),
                 why: "Same argument as the other board, with more at stake: the message being carried is one you wrote to somebody, and the alternative to implicit TLS is a connection that starts in plaintext and upgrades if asked nicely.".to_string(),
                 if_wrong: "Anything but 465 reports plain here. 587 with STARTTLS is a perfectly ordinary way to send mail and is not what this client does, so the port is not a free choice.".to_string(),
+            }
+            Metric {
+                label: "Send timeout".to_string(),
+                value: timeout_label(data.smtp_timeout_ms),
+                what: "How long an SMTP connection may sit silent, and how long it may take to open — RN_SMTP_TIMEOUT_MS, one setting for both.".to_string(),
+                why: "nodemailer's default is ten minutes, and send-mail's own ceiling is ten minutes, so a silent socket consumes the whole run and reports as the job timing out rather than as the server having gone quiet. A minute is enough for any one message; a long list needs time overall, which is the ceiling, not time per silence.".to_string(),
+                if_wrong: "Lowering it is safe to try: a recipient already attempted carries a marker, so the retry after a timeout resumes rather than sending to anyone twice.".to_string(),
+            }
+            Metric {
+                label: "Reply to".to_string(),
+                value: reply_to,
+                what: "Where replies are directed — RN_MAIL_REPLY_TO. Empty sets no header at all, and replies come back to the account address.".to_string(),
+                why: "The other of the two settings a recipient meets, and the only one that changes what happens when they act on the message rather than how it looks. It earns its keep when a machine's account sends and a person should get the answers.".to_string(),
+                if_wrong: "It is a request, not a rule — a client may ignore it. It does not change who the message is from either: the address that authenticated is still on the outside of it. An address here that nobody reads is worse than empty, because the sending mailbox then looks quiet for two reasons at once.".to_string(),
             }
             Metric {
                 label: "Send only to".to_string(),
@@ -435,6 +461,20 @@ fn MailboxRow(mailbox: WatchedMailbox) -> Element {
                 span { class: "text-gray-300 text-xs", "{err}" }
             }
         }
+    }
+}
+
+/// A timeout in the largest unit that still reads as a round number.
+///
+/// Milliseconds are what the setting takes and what the wire carries, and
+/// "600000" on a board is a number a reader has to divide before it means
+/// anything.
+fn timeout_label(ms: f64) -> String {
+    let secs = ms / 1000.0;
+    if secs < 90.0 {
+        format!("{secs:.0}s")
+    } else {
+        format!("{:.0}m", secs / 60.0)
     }
 }
 

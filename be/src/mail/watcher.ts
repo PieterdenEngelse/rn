@@ -174,6 +174,12 @@ async function session(mailbox: string): Promise<void> {
         // the schedule. Found by delivering a message two seconds after connect
         // and watching nothing happen.
         autoIdleDelay: 1_000,
+        // No socketTimeout, deliberately, where read-mail sets one from
+        // RN_IMAP_TIMEOUT_MS. This connection's entire job is to sit silent
+        // until the server says something, and imapflow caps autoIdleDelay
+        // below socketTimeout — so a timeout short enough to be useful on a
+        // run would cut the watch, and the watch failing is mail arriving late
+        // with nothing red anywhere.
     });
 
     // An error event with no listener is an unhandled error that takes the

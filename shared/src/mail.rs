@@ -141,6 +141,9 @@ wire! {
         pub credential_set: bool,
 
         pub imap: MailServer,
+        /// How long a run's IMAP socket may sit silent, in ms. Not applied to
+        /// the held-open watch connection — see the setting.
+        pub imap_timeout_ms: f64,
         /// Whether the watcher is switched on at all.
         pub watching_enabled: bool,
         /// One entry per mailbox a connection is held for. Empty with watching
@@ -166,6 +169,11 @@ wire! {
         pub allowed_recipients: String,
 
         pub smtp: MailServer,
+        /// How long an SMTP socket may sit silent, in ms.
+        pub smtp_timeout_ms: f64,
+        /// Where replies are directed, or empty for the sending account.
+        #[serde(default)]
+        pub reply_to: String,
         /// The only addresses a send may go to. Empty refuses every send,
         /// which is the default and not the same as "no limit".
         ///
