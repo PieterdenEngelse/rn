@@ -20,10 +20,12 @@
 //!   not is exactly the thing somebody would rely on.
 
 use crate::api::{
-    delete_mail_rule, fetch_mail_rules, save_mail_rule, MailRule, MailRulesResponse,
+    delete_mail_rule, fetch_jobs, fetch_mail_rules, save_mail_rule, JobsResponse, MailRule,
+    MailRulesResponse,
 };
 use crate::app::Route;
 use crate::components::{InfoButton, Panel};
+use crate::pages::config_jobs::PerJob;
 use dioxus::prelude::*;
 use dioxus_router::Link;
 
@@ -132,6 +134,8 @@ pub fn ConfigMail() -> Element {
                         }
                     }
 
+                    MailJobs {}
+
                     // The connections themselves are somebody else's page. A
                     // rule's own state is here, beside the rule it belongs to;
                     // what the two servers are doing is not a property of any
@@ -157,6 +161,56 @@ fn watching_state(resp: &MailRulesResponse, mailbox: &str) -> Option<(bool, Stri
         .iter()
         .find(|w| w.mailbox == mailbox)
         .map(|w| (w.watching, w.error.clone().unwrap_or_default()))
+}
+
+/// The two jobs that do the reading and the sending, configured here rather
+/// than on Config → Jobs.
+///
+/// Their schedule, ceiling and handoffs are the same controls every other job
+/// has, and they are here because this is where a person is when they think
+/// about mail: the rules above decide what counts as interesting, and the
+/// schedule decides how long something interesting can sit unnoticed. Reading
+/// those two on separate pages meant holding one in your head to reason about
+/// the other.
+///
+/// Its own fetch, of the same payload Config → Jobs and Monitor → Jobs read.
+/// The rules endpoint knows nothing about jobs, and folding them together
+/// would make saving a rule refetch the whole catalogue.
+#[component]
+fn MailJobs() -> Element {
+    let mut jobs = use_resource(fetch_jobs);
+
+    rsx! {
+        Panel {
+            title: "Mail jobs".to_string(),
+            subtitle: Some("read-mail and send-mail, configured here".to_string()),
+            info: Some(rsx! {
+                InfoButton {
+                    title: "Why these two are on this page".to_string(),
+                    what: "The per-job cards for read-mail and send-mail — schedule, timeout, retry, and what each hands off to when it changes or fails. The same controls every job has on Config → Jobs, writing to the same per-job overrides file.\n\nThese two are not repeated there. Config → Jobs shows every other job and points here for these.".to_string(),
+                    why: "Because they are read together with the rules above them. A rule decides what counts as interesting; the schedule decides how long something interesting can sit unnoticed, and the watch decides whether it waits for the schedule at all. That is one decision, and it was spread over two pages.".to_string(),
+                    if_wrong: "A change here behaves as it does anywhere else: the override is written immediately, and a schedule change is picked up on the scheduler's next tick. It does not change the job's file — deleting ~/.config/rn/job-overrides.json returns both jobs to exactly what their code declares.\n\nA third mail job would appear on Config → Jobs rather than here until it is named in MAIL_JOB_IDS, which is the visible failure rather than the silent one.".to_string(),
+                }
+            }),
+            match &*jobs.read_unchecked() {
+                Some(Ok(j)) => {
+                    let j: JobsResponse = j.clone();
+                    rsx! {
+                        PerJob {
+                            jobs: j,
+                            mail_only: true,
+                            on_saved: move |_| jobs.restart(),
+                        }
+                    }
+                }
+                Some(Err(e)) => rsx! {
+                    p { class: "text-red-400 text-sm", "Backend unreachable" }
+                    p { class: "text-gray-300 text-sm mt-1", "{e}" }
+                },
+                None => rsx! { p { class: "text-gray-400 text-sm", "Loading…" } },
+            }
+        }
+    }
 }
 
 #[component]

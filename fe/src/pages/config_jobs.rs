@@ -7,9 +7,11 @@ use crate::components::param::{
     param_toggle_style, PARAM_INPUT_ROW_CLASS, PARAM_NUMBER_INPUT_CLASS,
     PARAM_NUMBER_INPUT_WIDE_CLASS, PARAM_TOGGLE_CLASS,
 };
+use crate::app::Route;
 use crate::components::{InfoButton, Panel, WebhookTile};
 use crate::pages::monitor_jobs::duration;
 use dioxus::prelude::*;
+use dioxus_router::Link;
 
 /// Config → Jobs. What every run is subject to, and what each job declares.
 ///
@@ -123,6 +125,15 @@ pub fn ConfigJobs() -> Element {
                                 // shows is what the backend confirmed, never
                                 // what was typed at it.
                                 on_saved: move |_| jobs.restart(),
+                            }
+                            // Said here because their absence is otherwise
+                            // indistinguishable from their not existing, and
+                            // somebody looking for read-mail's timeout would
+                            // conclude the catalogue had lost it.
+                            p { class: "text-gray-400 text-xs mt-3 max-w-3xl",
+                                "read-mail and send-mail are configured on "
+                                Link { to: Route::ConfigMail {}, class: "text-blue-400 hover:text-blue-300", "Config → Mail" }
+                                ", beside the rules and the mailboxes they read."
                             }
                         }
                     }
@@ -530,16 +541,55 @@ fn remembered(config: &JobsConfig) -> String {
     )
 }
 
+/// The jobs whose configuration lives on Config → Mail instead of here.
+///
+/// A written list rather than something derived. The obvious derivation is
+/// "wants the gmailAppPassword credential", and it is a coincidence: a future
+/// job could want that credential without belonging on the mail page, and a
+/// mail job could arrive without wanting it. Nothing on the wire says which
+/// page configures a job, so this says it, in one place, for both readers.
+///
+/// A third mail job not added here still appears on Config → Jobs, which is
+/// the right failure — visible, and configurable while nobody has noticed.
+pub const MAIL_JOB_IDS: [&str; 2] = ["read-mail", "send-mail"];
+
+/// The per-job cards, for whichever half of the catalogue the page owns.
+///
+/// One component and one list, rather than each page filtering for itself:
+/// with two filters the jobs shown on the two pages could overlap or, worse,
+/// leave a job configurable from neither.
 #[component]
-fn PerJob(jobs: JobsResponse, on_saved: EventHandler<()>) -> Element {
+pub fn PerJob(
+    jobs: JobsResponse,
+    /// Draw only the mail jobs — Config → Mail — rather than everything else,
+    /// which is this page.
+    #[props(default = false)] mail_only: bool,
+    on_saved: EventHandler<()>,
+) -> Element {
     // Built once for the whole board rather than per card: every handoff
     // control offers the same list, and it is the catalogue's list rather than
     // one the page invents — the backend refuses an id it does not know.
     let job_ids: Vec<String> = jobs.catalogue.iter().map(|j| j.id.clone()).collect();
-    if jobs.catalogue.is_empty() {
+
+    // The whole catalogue is still on the wire and still offered to every
+    // handoff control above — a job on the other page is a perfectly good
+    // onChange target, and hiding it from that list would be inventing a
+    // refusal the backend does not make.
+    let shown: Vec<CatalogueJob> = jobs
+        .catalogue
+        .iter()
+        .filter(|j| MAIL_JOB_IDS.contains(&j.id.as_str()) == mail_only)
+        .cloned()
+        .collect();
+
+    if shown.is_empty() {
         return rsx! {
             p { class: "text-gray-400",
-                "No jobs registered. The catalogue is the JOBS array in be/src/jobs/index.ts."
+                if mail_only {
+                    "No mail jobs registered. They are read-mail and send-mail in the JOBS array in be/src/jobs/index.ts."
+                } else {
+                    "No jobs registered. The catalogue is the JOBS array in be/src/jobs/index.ts."
+                }
             }
         };
     }
@@ -550,7 +600,7 @@ fn PerJob(jobs: JobsResponse, on_saved: EventHandler<()>) -> Element {
         // them one to a row made a five-job catalogue two screens of scrolling
         // with the right half of every one of them empty.
         div { class: "grid grid-cols-1 xl:grid-cols-2 gap-3 items-start",
-            for job in jobs.catalogue.iter() {
+            for job in shown.iter() {
                 JobConfigRow {
                     key: "{job.id}",
                     job: job.clone(),
