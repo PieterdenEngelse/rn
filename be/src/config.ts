@@ -235,6 +235,28 @@ export const config = {
      * install whose account already carries a name at the provider does not
      * need this at all.
      */
+    /**
+     * The only addresses `send-mail` may send to. Empty refuses every send.
+     *
+     * **Deliberately not `mailAllowedRecipients`**, which sounds like this and
+     * is the opposite: that one narrows the `To` and `Cc` of mail that
+     * *arrives*, and reading it as a send guard is a mistake this file has
+     * already watched somebody make. Different name, different direction,
+     * different job reading it.
+     *
+     * **Empty means refuse, not "no limit".** Every other filter in rn defaults
+     * to letting everything through, because the cost of an over-wide read is
+     * a page with too much on it. The cost here is a message in a stranger's
+     * mailbox, which no revert reaches — so this is the one that fails closed,
+     * and an install has to say who it is willing to write to before it can
+     * write to anybody.
+     *
+     * Matched with the same rules as the inbound filters: an exact address, or
+     * `@domain` (or a bare domain) as a suffix on the address — never a
+     * substring, because notexample.com contains example.com.
+     */
+    sendAllowedRecipients: process.env.RN_SEND_ALLOWED_RECIPIENTS ?? "",
+
     mailFromName: process.env.RN_MAIL_FROM_NAME ?? "",
 
     /** SMTP host the send job connects to. */

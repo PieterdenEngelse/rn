@@ -1094,6 +1094,15 @@ allowedSenders: string,
  */
 allowedRecipients: string, smtp: MailServer, 
 /**
+ * The only addresses a send may go to. Empty refuses every send,
+ * which is the default and not the same as "no limit".
+ *
+ * The outbound guard, and deliberately not spelled like
+ * `allowed_recipients` above: that one is inbound, and the two were
+ * confused here once already.
+ */
+sendAllowedRecipients: string, 
+/**
  * The name shown beside the address on outgoing mail. Empty sends the
  * bare address, which is the default.
  */

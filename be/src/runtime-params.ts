@@ -1142,6 +1142,46 @@ export const RUNTIME_PARAMS: readonly RuntimeParam[] = [
         },
     },
     {
+        id: "sendAllowedRecipients",
+        flag: "RN_SEND_ALLOWED_RECIPIENTS",
+        kind: "env",
+        type: "string",
+        default: null,
+        appliesAt: "restart",
+        category: "mail-sending",
+        label: "Send only to",
+        info: {
+            what:
+                "The only addresses the send job may write to. An exact address, or a domain " +
+                "written @example.com to mean anybody there; several separated by commas, " +
+                "semicolons or newlines. A domain matches as a suffix on the address and never " +
+                "as a substring, because notexample.com contains example.com and anyone can " +
+                "register it.\n\nEmpty is the default and refuses every send. Not \"no limit\" " +
+                "— refuses, before a connection is opened and before a link is minted.\n\n" +
+                "It is not \"Only to these recipients\" on the receiving board. That one is the " +
+                "opposite direction: it narrows the To and Cc of mail that arrives here.",
+            why:
+                "Every other filter in rn defaults to letting everything through, because the " +
+                "cost of reading too widely is a page with too much on it. The cost here is a " +
+                "message in somebody's mailbox, and no revert reaches that — so this one fails " +
+                "closed, and an install says who it is willing to write to before it can write " +
+                "to anybody.\n\nThe failure it is built for is not a typo in one address. It " +
+                "is a list pasted into the wrong run, or a job wired to a handoff nobody " +
+                "re-read: the moment where the addresses are right for some other purpose and " +
+                "wrong for this one.",
+            ifWrong:
+                "A send naming an address that is not covered fails before the connection is " +
+                "opened, names the addresses it refused, and sends to nobody — including the " +
+                "recipients that were covered. Refusing the whole list is deliberate: a send " +
+                "that quietly dropped four of forty is a partial delivery nobody asked for, " +
+                "and the four are the ones that mattered.\n\nIt takes effect at restart, so " +
+                "narrowing it and sending before relaunching would send to the old wider list. " +
+                "The job refuses to run at all in that window rather than using the value it " +
+                "still holds.\n\nA dry run is checked too. A rehearsal that passes where the " +
+                "real send would be refused is worse than no rehearsal.",
+        },
+    },
+    {
         id: "mailFromName",
         flag: "RN_MAIL_FROM_NAME",
         kind: "env",

@@ -668,6 +668,7 @@ export function createApp() {
                     port: config.smtpPort,
                     implicitTls: config.smtpPort === 465,
                 },
+                sendAllowedRecipients: config.sendAllowedRecipients,
                 fromName: config.mailFromName,
                 sends: trackerStore.sends().length,
             } satisfies MailHealthResponse);

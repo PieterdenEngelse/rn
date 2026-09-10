@@ -60,7 +60,7 @@ pub fn MonitorMail() -> Element {
                 InfoButton {
                     title: "The two halves of the mail account".to_string(),
                     what: "rn reads mail over IMAP and sends it over SMTP. Two protocols, two servers, two ports, two clients — and one account, which is the only thing they share: the same address authenticates both and the same gmailAppPassword credential answers for both.\n\nReading is a connection held open on a selected mailbox, which reports a message the moment it lands. Sending is a connection opened for one run and closed again.".to_string(),
-                    why: "Because \"is mail working\" is two questions with two answers, and they fail in opposite ways.\n\nA dropped read connection is silent: mail simply stops arriving promptly, the half-hourly schedule keeps running, and the job history goes on looking healthy. A failed send is the reverse — loud, and already outside this machine. Anything that reaches a recipient cannot be taken back, and there is no install-wide list of addresses standing in front of it: the recipients of a send are the ones typed into that run, and DRY_RUN plus the credential are what stop a half-configured install from mailing anybody.".to_string(),
+                    why: "Because \"is mail working\" is two questions with two answers, and they fail in opposite ways.\n\nA dropped read connection is silent: mail simply stops arriving promptly, the half-hourly schedule keeps running, and the job history goes on looking healthy. A failed send is the reverse — loud, and already outside this machine. Anything that reaches a recipient cannot be taken back, which is why the sending half is the one thing here that refuses by default: \"Send only to\" is empty until somebody names the addresses this install may write to, and an empty list refuses every send rather than permitting one.".to_string(),
                     if_wrong: "If the password is missing both halves refuse before opening a connection, saying so plainly rather than failing at the protocol. If the address is empty the same.\n\nThe quiet failure to watch for is a watched mailbox that reports healthy and never fires — a connection to a mailbox nothing is delivered to looks exactly like a connection to a mailbox that is working. The mailboxes below show how many runs each has actually started, which is the number that distinguishes them.".to_string(),
                 }
             }
@@ -189,6 +189,11 @@ fn Receiving(data: MailHealthResponse) -> Element {
 /// The SMTP half.
 #[component]
 fn Sending(data: MailHealthResponse) -> Element {
+    let allowed = if data.send_allowed_recipients.is_empty() {
+        "nobody — every send refused".to_string()
+    } else {
+        data.send_allowed_recipients.clone()
+    };
     let from_name = if data.from_name.is_empty() {
         "none — the address alone".to_string()
     } else {
@@ -215,6 +220,13 @@ fn Sending(data: MailHealthResponse) -> Element {
                 what: "Whether this port means TLS from the first byte. 465 is SMTP's implicit-TLS port and is what rn connects with; the setting is derived from the port, exactly as the receiving half derives its own from 993.".to_string(),
                 why: "Same argument as the other board, with more at stake: the message being carried is one you wrote to somebody, and the alternative to implicit TLS is a connection that starts in plaintext and upgrades if asked nicely.".to_string(),
                 if_wrong: "Anything but 465 reports plain here. 587 with STARTTLS is a perfectly ordinary way to send mail and is not what this client does, so the port is not a free choice.".to_string(),
+            }
+            Metric {
+                label: "Send only to".to_string(),
+                value: allowed,
+                what: "The only addresses this install may send to — RN_SEND_ALLOWED_RECIPIENTS, an exact address or a domain written @example.com. Empty is the default and refuses every send, before a connection is opened and before a link is minted.\n\nIt is not the Recipient filter on the board beside it. That one narrows the To and Cc of mail that arrives here; this one bounds who mail leaves for.".to_string(),
+                why: "Every other filter in rn defaults to letting everything through, because reading too widely costs you a crowded page. This one costs a message in somebody's mailbox, which nothing reverts — so it is the one that fails closed, and an install says who it is willing to write to before it can write to anybody.\n\nThe failure it is for is not a typo in one address. It is a list pasted into the wrong run.".to_string(),
+                if_wrong: "A send naming anything not covered is refused whole — none of the recipients are written to, including the ones that were covered, because a send that quietly dropped four of forty is a partial delivery nobody asked for.\n\nIt takes effect at restart, so narrowing it and sending before relaunching would use the old wider list. The job refuses to run at all in that window instead. A dry run is checked too: a rehearsal that passes where the real send is refused is worse than no rehearsal.".to_string(),
             }
             Metric {
                 label: "From name".to_string(),

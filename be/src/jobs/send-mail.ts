@@ -48,6 +48,8 @@
 
 import { createHash } from "node:crypto";
 import { config } from "../config.ts";
+import { parseSenders, senderMatches } from "../mail/extract.ts";
+import { load as loadSettings } from "../settings.ts";
 import { classifyBaseUrl, type BaseUrlProblem } from "../tracker/base-url.ts";
 import { rewrite, type Mint } from "../tracker/rewrite.ts";
 import * as links from "../tracker/store.ts";
@@ -179,6 +181,61 @@ export interface Transport {
         html: string;
         text: string;
     }): Promise<{ accepted: string[] }>;
+}
+
+/**
+ * Refuse unless every recipient is one this install has said it will write to.
+ *
+ * `config.sendAllowedRecipients` carries the whole argument for why empty
+ * refuses rather than permitting. Two things are decided here instead.
+ *
+ * **The whole list is refused, not the addresses that failed.** A send that
+ * quietly dropped four of forty is a partial delivery nobody asked for, and
+ * the four are the ones worth knowing about. Nothing is sent, so nothing has
+ * to be undone.
+ *
+ * **And a saved-but-unapplied list refuses too**, the same guard `read-mail`
+ * puts in front of its filters. The setting is read at startup, so between
+ * narrowing it on the page and relaunching, this process still holds the wider
+ * list — and the direction that matters is exactly that one: the operator has
+ * just decided somebody should no longer be written to.
+ */
+export function assertAllowedRecipients(recipients: readonly string[]): void {
+    const inForce = config.sendAllowedRecipients.trim();
+
+    const saved = (() => {
+        const v = loadSettings(config.settingsPath)["sendAllowedRecipients"];
+        return typeof v === "string" ? v.trim() : "";
+    })();
+    if (saved !== "" && saved !== inForce) {
+        throw new PermanentFailure(
+            'send-mail: "Send only to" has been saved but not applied — this process is ' +
+                "running with the previous list, which may include somebody you have just " +
+                "removed. Restart rn (be/r) and send again.",
+            "the setting takes effect at restart, and no retry restarts anything",
+        );
+    }
+
+    if (inForce === "") {
+        throw new PermanentFailure(
+            'send-mail: "Send only to" is empty, so this install has not said who it may ' +
+                "write to and nothing is sent. Set RN_SEND_ALLOWED_RECIPIENTS to the " +
+                "addresses or domains this install is allowed to mail.",
+            "an empty allowlist is empty on the next attempt too",
+        );
+    }
+
+    const patterns = parseSenders(inForce);
+    const refused = recipients.filter((r) => !senderMatches(r, patterns));
+    if (refused.length > 0) {
+        throw new PermanentFailure(
+            `send-mail: ${refused.slice(0, 5).join(", ")} ` +
+                `${refused.length === 1 ? "is not" : "are not"} covered by "Send only to", ` +
+                `so none of the ${recipients.length} recipients were sent to. Add them there, ` +
+                "or take them out of this send.",
+            "an address outside the allowlist is outside it on the next attempt too",
+        );
+    }
 }
 
 /**
@@ -435,6 +492,12 @@ export const sendMail: Job = {
                 "a malformed address is malformed on every attempt",
             );
         }
+
+        // Before anything is minted, opened or rehearsed. A dry run is checked
+        // too: a rehearsal that passes where the real send is refused is worse
+        // than no rehearsal, and this is the refusal an operator most needs to
+        // meet early.
+        assertAllowedRecipients(recipients);
 
         const subject = String(ctx.input.subject ?? "");
         const html = String(ctx.input.html ?? "");

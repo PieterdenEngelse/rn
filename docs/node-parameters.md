@@ -38,6 +38,7 @@ scales with installed RAM, so expect a different number elsewhere.
 | **Only to these recipients** | `RN_MAIL_ALLOWED_RECIPIENTS` | unset (system default) | — | on restart |
 | **SMTP host** | `RN_SMTP_HOST` | smtp.gmail.com | — | on restart |
 | **SMTP port** | `RN_SMTP_PORT` | 465 | 1 … 65535 | on restart |
+| **Send only to** | `RN_SEND_ALLOWED_RECIPIENTS` | unset (system default) | — | on restart |
 | **From name** | `RN_MAIL_FROM_NAME` | unset (system default) | — | on restart |
 | **Trace warnings** | `--trace-warnings` (NODE_OPTIONS) | off | — | on restart |
 | **Trace deprecations** | `--trace-deprecation` (NODE_OPTIONS) | off | — | on restart |
@@ -600,6 +601,26 @@ Default: smtp.gmail.com · Takes effect: on restart · Settings key: `smtpHost`
 **If it's wrong.** Point 465 at a server that only speaks STARTTLS and the handshake fails immediately, which is the honest failure. The dangerous direction is the other one: a port that quietly works without encryption looks identical to one that works with it, from here.
 
 Default: 465 · Takes effect: on restart · Settings key: `smtpPort`
+
+### Send only to — `RN_SEND_ALLOWED_RECIPIENTS`
+
+**What it does.** The only addresses the send job may write to. An exact address, or a domain written @example.com to mean anybody there; several separated by commas, semicolons or newlines. A domain matches as a suffix on the address and never as a substring, because notexample.com contains example.com and anyone can register it.
+
+Empty is the default and refuses every send. Not "no limit" — refuses, before a connection is opened and before a link is minted.
+
+It is not "Only to these recipients" on the receiving board. That one is the opposite direction: it narrows the To and Cc of mail that arrives here.
+
+**Why you would change it.** Every other filter in rn defaults to letting everything through, because the cost of reading too widely is a page with too much on it. The cost here is a message in somebody's mailbox, and no revert reaches that — so this one fails closed, and an install says who it is willing to write to before it can write to anybody.
+
+The failure it is built for is not a typo in one address. It is a list pasted into the wrong run, or a job wired to a handoff nobody re-read: the moment where the addresses are right for some other purpose and wrong for this one.
+
+**If it's wrong.** A send naming an address that is not covered fails before the connection is opened, names the addresses it refused, and sends to nobody — including the recipients that were covered. Refusing the whole list is deliberate: a send that quietly dropped four of forty is a partial delivery nobody asked for, and the four are the ones that mattered.
+
+It takes effect at restart, so narrowing it and sending before relaunching would send to the old wider list. The job refuses to run at all in that window rather than using the value it still holds.
+
+A dry run is checked too. A rehearsal that passes where the real send would be refused is worse than no rehearsal.
+
+Default: unset (system default) · Takes effect: on restart · Settings key: `sendAllowedRecipients`
 
 ### From name — `RN_MAIL_FROM_NAME`
 

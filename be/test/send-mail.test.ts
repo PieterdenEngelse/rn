@@ -30,6 +30,8 @@ const mutable = config as unknown as {
     trackerBaseUrl: string;
     mailUser: string;
     mailFromName: string;
+    sendAllowedRecipients: string;
+    settingsPath: string;
 };
 mutable.trackerStorePath = LINKS;
 mutable.trackerSentPath = SENT;
@@ -38,8 +40,14 @@ mutable.mailUser = "sender@example.com";
 
 const links = await import("../src/tracker/store.ts");
 const sent = await import("../src/tracker/sent.ts");
-const { deriveSendId, fromAddress, parseRecipients, plainTextFrom, isPermanentSmtp } =
-    await import("../src/jobs/send-mail.ts");
+const {
+    assertAllowedRecipients,
+    deriveSendId,
+    fromAddress,
+    parseRecipients,
+    plainTextFrom,
+    isPermanentSmtp,
+} = await import("../src/jobs/send-mail.ts");
 
 after(() => {
     rmSync(LINKS, { force: true });
@@ -60,6 +68,42 @@ test("recipients are split on lines, commas and semicolons, and deduplicated", (
         "c@x.com",
     ]);
     assert.deepEqual(parseRecipients("   "), []);
+});
+
+test("an empty allowlist refuses the send rather than permitting it", () => {
+    // The one filter in rn that fails closed, and the reason is the thing it
+    // guards: a message in somebody's mailbox is not revertible. Every other
+    // filter here defaults to letting everything through.
+    mutable.sendAllowedRecipients = "";
+    assert.throws(
+        () => assertAllowedRecipients(["a@example.com"]),
+        /has not said who it may write to/,
+    );
+});
+
+test("an address outside the allowlist refuses the whole list, not just itself", () => {
+    mutable.sendAllowedRecipients = "her@example.com, @team.example.com";
+
+    // Covered: an exact address, and anybody at an allowed domain.
+    assert.doesNotThrow(() =>
+        assertAllowedRecipients(["her@example.com", "someone@team.example.com"]),
+    );
+
+    // A partial send is the failure this avoids: forty addresses with four
+    // quietly dropped is a delivery nobody asked for, and the four are the
+    // ones that mattered.
+    assert.throws(
+        () => assertAllowedRecipients(["her@example.com", "stranger@elsewhere.com"]),
+        /stranger@elsewhere\.com/,
+    );
+
+    // A suffix on the address, never a substring: anyone can register the
+    // longer domain.
+    assert.throws(
+        () => assertAllowedRecipients(["her@notexample.com"]),
+        /not covered/,
+    );
+    mutable.sendAllowedRecipients = "";
 });
 
 test("a From name is handed over as a name, and its absence sends the bare address", () => {
