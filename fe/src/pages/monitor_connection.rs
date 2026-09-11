@@ -631,9 +631,9 @@ fn ConnectionBoards(c: ConnectionResponse, m: Option<NodeMetrics>, h: Option<Hea
                                             "A request that never reached the socket, because nothing in rn saw it. Three ordinary ways: the backend restarting, the tunnel down or its mapping removed, the machine asleep. On 2026-09-10 GitHub recorded a 502 for a push at 14:18:41; the backend logged the restart behind it at 14:18:49, and no count anywhere in rn moved, because Funnel answered on rn's behalf."
                                         }
                                         p { class: "mt-2 text-gray-200 leading-relaxed",
-                                            "Nothing queues for you — GitHub does not retry a failed delivery on its own — so the sender's own delivery log is the only record: the repository's Settings → Webhooks → Recent Deliveries, which also has the button to redeliver. Reading that log from a scheduled job is the open item in "
-                                            span { class: "font-mono text-gray-300", "docs/todo.md" }
-                                            "."
+                                            "Nothing queues for you — GitHub does not retry a failed delivery on its own — so the sender's own delivery log is the only record: the repository's Settings → Webhooks → Recent Deliveries, which also has the button to redeliver. The "
+                                            span { class: "font-mono text-gray-300", "watch-deliveries" }
+                                            " job reads that log every hour and reports each delivery that failed and was not since redelivered — see Monitor → Jobs."
                                         }
                                     }
                                     div {

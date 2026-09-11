@@ -88,43 +88,6 @@ Nothing on this list is waiting on anyone. It is here so the next person does
 not re-decide it, and so a report that keeps naming these does not read as
 neglect.
 
-## A delivery that never reached rn is recorded nowhere in rn — 2026-09-11
-
-Monitor → Connection's Listeners board counts every request either outward
-door answered, refusals and 404s included. By construction it cannot count a
-request that never reached the socket, and there are three ordinary ways that
-happens: the backend restarting, the tunnel down or its mapping removed, and
-the machine asleep.
-
-It has happened. GitHub recorded a **502 for a `push` at 14:18:41 on
-2026-09-10**; `rn-backend.service` logged the restart that caused it at
-14:18:49. Nothing in rn moved, and nothing could have — Funnel answered on
-rn's behalf because nothing was bound on 3011. GitHub does not retry a failed
-delivery on its own, so that push is simply absent from the run history.
-
-**What goes wrong while this is open:** a lost delivery is visible only in the
-sender's own delivery log, which nobody reads unless something is already
-wrong. For `demo` that costs nothing. For the first webhook whose job matters,
-it is a missed deploy or a ticket nobody was told about.
-
-**The fix is the sender's view, read after the fact.** A scheduled job reading
-`GET /repos/{owner}/{repo}/hooks/{hook_id}/deliveries` and reporting any non-2xx
-covers every one of the three cases, precisely because it does not need rn to
-have been up at the moment of the failure. It needs a GitHub token that can read
-repository webhooks; the `redelivery` endpoint beside it could make the recovery
-one click rather than a trip to the repository settings.
-
-**Decided against: rn probing its own public URL.** Two reasons, both
-measured. The probe runs inside the backend, so during a restart — the one
-window the 502 above fell in — it is down too. And from this machine the probe
-never reaches Funnel: MagicDNS resolves `laptop.tail1e7abb.ts.net` to this
-node's own tailnet address (`100.96.123.99`), where public DNS gives Funnel's
-relays (`176.58.88.82` and two others), so the request would test
-`tailscale serve` over the tailnet and report "reachable" with Funnel switched
-off. See `docs/tunnel.md`.
-
----
-
 ## `effectFree` stays code, though it sits among controls — 2026-09-06
 
 Config → Jobs now edits five fields on every job: schedule, timeout, on
