@@ -700,8 +700,8 @@ yours.
 - `docs/os.md` — rebuilding the dev machine itself with chezmoi: what gets
   captured, the bootstrap scripts, and how to prove a restore works. Phases
   1 to 4 exist: the private `dotfiles` repo, `capture.sh`, the dotfiles, the
-  age-encrypted secrets and the bootstrap scripts. Restoring into a fresh VM
-  is still plan.
+  age-encrypted secrets and the bootstrap scripts. The Phase 5 restore has
+  run in a container; a VM run is still open.
 - `docs/n8n.md` — what is worth borrowing from n8n and what is not, with steps.
 - `docs/todo.md` — open work, each item saying what goes wrong while it stays
   open.

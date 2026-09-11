@@ -4,8 +4,8 @@ Plan, written 2026-09-11. **Phases 1 to 4 exist:** the private source repo
 `PieterdenEngelse/dotfiles`, checked out at `~/.local/share/chezmoi`, holds
 `capture.sh`, the curated package lists, the dotfiles, the age-encrypted
 secrets and the bootstrap scripts. chezmoi v2.72.1 is in `~/.local/bin`.
-The restore test (Phase 5) is still plan, so the bootstrap has only been run
-against the machine it describes. It's about the
+The restore test (Phase 5) has run in a container, which leaves snaps, user
+services and the desktop login for a VM run that is still open. It's about the
 machine rn runs on, not about rn itself, but it lives here because
 rebuilding the machine is mostly rebuilding what rn needs.
 
@@ -398,8 +398,77 @@ In order:
 
 ## Phase 5: prove it restores
 
-A bootstrap you have never run is a plan, not a backup. `spice-vdagent` is
-already enabled here, so a VM is close at hand:
+A bootstrap you have never run is a plan, not a backup.
+
+### Run in a container, 2026-09-11
+
+**Why a container, not the VM below.** A faithful VM restore needs 20–30 GB
+of disk, and the laptop had 16 GB free. It also had no VM software at all:
+`spice-vdagent` being enabled, which this section used to cite, says nothing
+about that. A container runs the same bootstrap on a blank Ubuntu 26.04 and
+fits in the space.
+
+**How to run it.** `~/.local/share/chezmoi/restore-test/run.sh`. It:
+
+- clones the committed dotfiles into a fresh `ubuntu:26.04` container;
+- mounts the age key read-only, and points rn's GitHub URL at `~/rn`, so no
+  GitHub login is needed;
+- runs every script in chezmoi's own order, then does it all again;
+- removes the container, and with it the copy of the key, at the end.
+
+It is guarded:
+
+- the container is capped at 3 GB of RAM, and cargo runs with 2 jobs;
+- it will not start with Firefox open;
+- a host-side watchdog stops the container below 4 GB free disk or 700 MB
+  available memory.
+
+The first run took about 90 minutes: `20-apt`, installing 1,980 packages,
+took 53 of them, and building `dioxus-cli` took 23. It used about 11 GB of
+disk at peak.
+
+**Results, first pass:**
+
+| Step | Result |
+|---|---|
+| `00`, `10`, the files | ok. `chezmoi verify`: every managed file matches its source |
+| secrets | the ssh key, `rclone.conf` and rn's `credentials` all decrypted at 600, and the `.bashrc` key line rendered |
+| `20-apt` | all 37 listed packages installed; LightDM became the default next to GNOME's GDM |
+| `30`, `31`, `32`, `33` | rustc 1.98.1 with wasm32, `dx 0.7.10` built from source, the VS Code extensions, all 8 Node release keys |
+| `40` | `50-rn.conf` installed. **The laptop gate held:** with a made-up product name, none of the ES8336 audio files appeared |
+| `70` | `~/rn` and the `ca`/`cb`/`cc` worktrees, each with its own runtime and `node_modules`, and the launcher built. The backend suite: 503 tests, 0 failing |
+| `21-snap`, `60-user-units` | failed, as a container must: no snapd, no systemd user session |
+
+**Second pass:** every script exited as on the first pass, and none
+installed anything.
+
+**What the run found, and what was fixed:**
+
+- **`21-snap` failed hard** when snapd didn't answer. Inside a real `chezmoi
+  apply`, that would stop every script after it. It now warns and continues,
+  and `99-checklist` lists any snaps still missing.
+- **`capture.sh` stopped at the same point,** so its report ended before the
+  VS Code and cargo sections. It now says "snapd is not answering" and
+  carries on.
+- **`age` was missing from `apt.txt`,** although `00` installs it, so every
+  restored machine would report it as drift. It is listed now.
+- **The harness's own bug:** its test step ran without nvm loaded and
+  reported "npm: command not found" as a failure. Fixed in the harness.
+
+**Still unproven:**
+
+- snaps actually installing;
+- the five user units enabling and linger switching on;
+- a real LightDM login into XFCE;
+- `50-dconf` against a live session;
+- the real one-liner, with `gh auth login` and a clone from GitHub.
+
+That is the VM run below.
+
+### The VM run, still open
+
+It needs about 30 GB free and VM software installed, and neither is true here
+yet.
 
 1. A fresh Ubuntu 26.04 VM, installed with the defaults.
 2. Before the first XFCE login, run the one-liner, give it the age key, and
