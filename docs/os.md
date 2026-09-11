@@ -1,6 +1,9 @@
 # Rebuilding this machine with chezmoi
 
-Plan, written 2026-09-11. Nothing described here exists yet. It's about the
+Plan, written 2026-09-11. **Phase 1 exists:** the private source repo
+`PieterdenEngelse/dotfiles`, checked out at `~/.local/share/chezmoi`, with
+`capture.sh` and the curated package lists. Everything from Phase 2 on is
+still plan, and chezmoi itself isn't installed yet. It's about the
 machine rn runs on, not about rn itself, but it lives here because
 rebuilding the machine is mostly rebuilding what rn needs.
 
@@ -116,11 +119,15 @@ from the machine. chezmoi gives you better than that for free:
       #!/bin/bash
       # packages/apt.txt hash: {{ include "packages/apt.txt" | sha256sum }}
       set -euo pipefail
-      grep -v '^\s*#' {{ joinPath .chezmoi.sourceDir "packages/apt.txt" | quote }} \
+      sed 's/#.*//' {{ joinPath .chezmoi.sourceDir "packages/apt.txt" | quote }} \
+        | tr -s ' \t' '\n' | grep -v '^!' | grep . \
         | xargs sudo apt-get install -y
 
   Adding a line to `apt.txt` and running `chezmoi apply` installs exactly that,
-  on every machine. The list *is* the install, so it cannot drift.
+  on every machine. The list *is* the install, so it cannot drift. A `!name`
+  entry marks a package that is known and deliberately *not* installed
+  (installer noise, mostly), so `capture.sh` stops reporting it. Whatever reads
+  a list has to skip those, which is what the `grep -v '^!'` is for.
 - **`before_` / `after_`** decide whether a script runs before or after the
   files are written. Repos and keyrings go before; anything that reads a
   managed file goes after.
