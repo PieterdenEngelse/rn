@@ -20,12 +20,22 @@ Decided so far:
   reproduce that deliberately (see `20-apt` in Phase 4).
 
 **The goal:** a fresh Ubuntu install gets from a blank desktop to this one with
-a single command:
+two commands: one to authenticate, one to apply.
 
+    sudo apt-get install -y gh && gh auth login     # HTTPS; let it set up git
     sh -c "$(curl -fsLS get.chezmoi.io)" -- init --apply PieterdenEngelse/dotfiles
 
+It can't be one command. The repo is private, and nothing on a blank machine
+can authenticate to GitHub until `gh` is signed in. chezmoi clones over
+HTTPS, and `gh auth login` sets up the git credential helper that answers for
+it. That is also how rn is pushed: this machine's ssh key isn't registered
+on GitHub (checked 2026-09-11: `Permission denied (publickey)` from a key
+with no passphrase), so an ssh clone fails here as well. The `gh auth login`
+has to happen before chezmoi runs, even though the `.gitconfig` that
+chezmoi writes carries the same helper lines.
+
 After that, a handful of steps stay manual and say so, because nobody can do
-them for you: signing in to Tailscale, gh, rclone and the browsers.
+them for you: signing in to Tailscale, rclone and the browsers.
 
 ## What there is to capture (surveyed 2026-09-11)
 
@@ -221,7 +231,7 @@ paper, or both.
 
 | Secret | Plan |
 |---|---|
-| `~/.ssh/id_ed25519` | **Carried as-is**, age-encrypted, so a rebuilt machine is the same identity to GitHub and to anything that trusts this key. `id_ed25519.pub` and `known_hosts` go in plain, and `authorized_keys` is left out (it's empty). chezmoi's `private_` prefix gives `~/.ssh` 0700 and the key 0600. Get that wrong and ssh refuses the key, which looks like an auth failure rather than a permissions one. The cost of carrying one key: if it leaks, every machine that has it is exposed at once. |
+| `~/.ssh/id_ed25519` | **Carried as-is**, age-encrypted, so a rebuilt machine is the same identity to anything that trusts this key. That does *not* include GitHub, where the key isn't registered: git to GitHub goes over HTTPS through `gh`. Registering it (`gh ssh-key add`, which needs the `admin:public_key` scope this `gh` login lacks) would be a separate decision. `id_ed25519.pub` and `known_hosts` go in plain, and `authorized_keys` is left out (it's empty). chezmoi's `private_` prefix gives `~/.ssh` 0700 and the key 0600. Get that wrong and ssh refuses the key, which looks like an auth failure rather than a permissions one. The cost of carrying one key: if it leaks, every machine that has it is exposed at once. |
 | `rclone.conf` | age-encrypted. The OAuth refresh tokens in it do expire, so the checklist says to run `rclone config reconnect gdrive:` if a mount fails. |
 | `~/.config/rn/credentials` | age-encrypted, or re-entered. `docs/sec.md` in rn is the authority on what is in it. |
 | gh, Tailscale, browser sessions | Not captured. Signing in again is the correct behaviour. |
@@ -289,8 +299,7 @@ In order:
    up.
 10. **`99-checklist`** (once): print, don't do, the steps that need a human:
 
-        sudo tailscale up
-        gh auth login
+        sudo tailscale up                 # gh was signed in before chezmoi ran
         rclone config reconnect gdrive:   # only if the mount fails
         docker login docker.n8n.io        # only if n8n is ever restarted
         sign in: Firefox, Thunderbird, VS Code settings sync
