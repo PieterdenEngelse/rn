@@ -320,6 +320,7 @@ export function handle(deliveries: DeliveryLog, lookup: JobLookup = jobById) {
         // GET on the right path, so the URL cannot be probed with a browser.
         if (req.method !== "POST" || !url.pathname.startsWith("/api/hooks/")) {
             debug("hook-not-found", { method: req.method, path: url.pathname });
+            count("not-found");
             return refuse(res, 404);
         }
 
@@ -332,6 +333,7 @@ export function handle(deliveries: DeliveryLog, lookup: JobLookup = jobById) {
         // enumerate the catalogue by timing the difference between answers.
         if (hook === undefined) {
             debug("hook-not-found", { id });
+            count("not-found");
             return refuse(res, 404);
         }
 
@@ -343,7 +345,12 @@ export function handle(deliveries: DeliveryLog, lookup: JobLookup = jobById) {
         // has nothing else to say why a provider reports every delivery
         // failing. The counters are three numbers in memory, so a caller who
         // cannot produce a signature can move them and gain nothing.
+        //
+        // The listener's own count is a different question — what this door
+        // did, not what one webhook did — and takes every request, code-declared
+        // hooks included. See `HooksTraffic`.
         const refused = (): void => {
+            count("refused");
             if (hook.def !== undefined) webhooks.record(hook.def.id, "refused");
         };
         const event = headerValue(req.headers, cfg.eventHeader ?? DEFAULT_EVENT_HEADER);
@@ -468,6 +475,9 @@ export function handle(deliveries: DeliveryLog, lookup: JobLookup = jobById) {
         const answer = (code: number, body: unknown): void => {
             if (answered) return;
             answered = true;
+            // Here rather than at each call: this is the one place a 2xx is
+            // written, and it fires once, so the count cannot double.
+            count("accepted");
             res.writeHead(code, { "content-type": "application/json" });
             res.end(JSON.stringify(body));
             step("hook-accepted", {
@@ -564,17 +574,43 @@ export function createHookApp(
 // Monitor → Connection falls back to this when the handle list is empty, and a
 // field renamed on one side would otherwise reach the page as undefined.
 export type { HooksHealth } from "../generated/wire.ts";
-import type { HooksHealth } from "../generated/wire.ts";
+import type { HooksHealth, HookOutcome, HooksTraffic } from "../generated/wire.ts";
 
-let health: HooksHealth = { listening: false, port: 0, error: null };
+const quiet = (): HooksTraffic => ({
+    accepted: 0,
+    refused: 0,
+    notFound: 0,
+    lastAt: null,
+    lastOutcome: null,
+});
+
+let health: HooksHealth = { listening: false, port: 0, error: null, since: null, traffic: quiet() };
 
 export function hooksHealth(): HooksHealth {
-    return { ...health };
+    // The counts copied too: a caller holding the result must not see it move.
+    return { ...health, traffic: { ...health.traffic } };
 }
 
 /** Test seam. */
 export function resetHooksHealth(): void {
-    health = { listening: false, port: 0, error: null };
+    health = { listening: false, port: 0, error: null, since: null, traffic: quiet() };
+}
+
+/**
+ * One answered request, counted against the listener.
+ *
+ * Called at the moment the answer is decided and never on the success of the
+ * work behind it — the door's count is of what it said, and what the run then
+ * did is the run record's. In memory only; see `HooksTraffic` for why that is
+ * the right durability and who can move these numbers.
+ */
+function count(outcome: HookOutcome): void {
+    const t = health.traffic;
+    if (outcome === "accepted") t.accepted += 1;
+    else if (outcome === "refused") t.refused += 1;
+    else t.notFound += 1;
+    t.lastAt = Date.now();
+    t.lastOutcome = outcome;
 }
 
 /**
@@ -610,12 +646,17 @@ export function startHooks(
     host: string,
     onListening?: () => void,
 ): void {
-    health = { listening: false, port, error: null };
+    // The counts are carried across rather than reset: they belong to the
+    // process, which binds this listener once, and a test that binds twice
+    // resets them itself.
+    health = { listening: false, port, error: null, since: null, traffic: health.traffic };
 
     server.on("error", (err: NodeJS.ErrnoException) => {
         health = {
+            ...health,
             listening: false,
             port,
+            since: null,
             error: err.code === "EADDRINUSE"
                 ? `port ${port} is already in use`
                 : (err.message ?? String(err)),
@@ -630,7 +671,7 @@ export function startHooks(
     });
 
     server.listen(port, host, () => {
-        health = { listening: true, port, error: null };
+        health = { ...health, listening: true, port, error: null, since: Date.now() };
         onListening?.();
     });
 }

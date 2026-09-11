@@ -82,21 +82,43 @@ import * as store from "./store.ts";
 /** The prefix a link carries when nothing has stripped it. */
 const PREFIX = "/t/";
 
-/** Mirrors `HooksHealth`: what /api/health can say about this listener. */
-export interface TrackerHealth {
-    listening: boolean;
-    port: number;
-    error: string | null;
-}
+// What /api/health can say about this listener. Defined in
+// shared/src/connection.rs rather than here: it was a hand-written mirror of
+// `HooksHealth` until Monitor → Connection needed to read it, and a mirror is
+// exactly the second copy that shared/ exists to remove.
+export type { TrackerHealth } from "../generated/wire.ts";
+import type { TrackerHealth, TrackerOutcome, TrackerTraffic } from "../generated/wire.ts";
 
-let health: TrackerHealth = { listening: false, port: 0, error: null };
+const quiet = (): TrackerTraffic => ({
+    redirected: 0,
+    unknownId: 0,
+    notFound: 0,
+    lastAt: null,
+    lastOutcome: null,
+});
+
+let health: TrackerHealth = { listening: false, port: 0, error: null, since: null, traffic: quiet() };
 
 export function trackerHealth(): TrackerHealth {
-    return health;
+    return { ...health, traffic: { ...health.traffic } };
 }
 
 export function resetTrackerHealth(): void {
-    health = { listening: false, port: 0, error: null };
+    health = { listening: false, port: 0, error: null, since: null, traffic: quiet() };
+}
+
+/**
+ * One answered request, counted against the listener — the same rule as the
+ * hooks listener's `count`. Never the id or the path: this is a tally, and an
+ * unknown id is a question about somebody's mail.
+ */
+function count(outcome: TrackerOutcome): void {
+    const t = health.traffic;
+    if (outcome === "redirected") t.redirected += 1;
+    else if (outcome === "unknown-id") t.unknownId += 1;
+    else t.notFound += 1;
+    t.lastAt = Date.now();
+    t.lastOutcome = outcome;
 }
 
 /**
@@ -140,12 +162,14 @@ export function handle() {
 
         if (method !== "GET" && method !== "HEAD") {
             debug("tracker-not-found", { method, path: url.pathname });
+            count("not-found");
             return notFound(res);
         }
 
         const id = idFrom(url.pathname);
         if (id === undefined) {
             debug("tracker-not-found", { method, path: url.pathname });
+            count("not-found");
             return notFound(res);
         }
 
@@ -155,11 +179,16 @@ export function handle() {
             // of an expired store, a typo, or somebody probing, and a warning
             // per probe is a log nobody reads.
             debug("tracker-unknown-id", { id });
+            // Counted apart from not-found although the answer is the same
+            // 404: the caller must not be able to tell them apart, the operator
+            // should. An expired link still in somebody's mailbox lands here.
+            count("unknown-id");
             return notFound(res);
         }
 
         const userAgent = headerValue(req.headers["user-agent"]);
         store.click(id, userAgent, method);
+        count("redirected");
 
         // `Location` is the stored URL and nothing else. Note what is *not*
         // here: no reflection of the query string, which is deliberate — a
@@ -224,12 +253,14 @@ export function startTracker(
     host: string,
     onListening?: () => void,
 ): void {
-    health = { listening: false, port, error: null };
+    health = { listening: false, port, error: null, since: null, traffic: health.traffic };
 
     server.on("error", (err: NodeJS.ErrnoException) => {
         health = {
+            ...health,
             listening: false,
             port,
+            since: null,
             error: err.code === "EADDRINUSE"
                 ? `port ${port} is already in use`
                 : (err.message ?? String(err)),
@@ -243,7 +274,7 @@ export function startTracker(
     });
 
     server.listen(port, host, () => {
-        health = { listening: true, port, error: null };
+        health = { ...health, listening: true, port, error: null, since: Date.now() };
         onListening?.();
     });
 }

@@ -44,6 +44,11 @@ wire! {
         /// The hooks listener's port — the one a tunnel points at, and the
         /// only port that should ever be tunnelled.
         pub hooks_port: u32,
+        /// The tracker's port, the third listener. Sent so Monitor → Connection
+        /// can name its socket rather than listing it as an anonymous "bound"
+        /// row the reader has to match by eye. Zero when not configured.
+        #[serde(default)]
+        pub tracker_port: u32,
         /// How many jobs declare a webhook. Zero is the common case and the
         /// page says so rather than showing an empty list.
         #[serde(default)]
@@ -85,6 +90,120 @@ wire! {
         pub port: u32,
         /// Set when binding failed — the reason a delivery would not arrive.
         pub error: Option<String>,
+        /// Epoch ms when the socket bound. `None` until it has, and after a
+        /// failed bind — a time the listener was never up would date nothing.
+        #[serde(default)]
+        pub since: Option<f64>,
+        /// What it has answered since then.
+        #[serde(default)]
+        pub traffic: HooksTraffic,
+    }
+}
+
+wire! {
+    /// What the hooks listener did with one request, in the listener's own
+    /// terms rather than any one webhook's.
+    ///
+    /// Three, where a page-made webhook's tile has four. "Dropped" — accepted,
+    /// then no run — is decided after the 202 has gone, by the webhook's kind,
+    /// and is already counted per webhook in `WebhookStats`. At this level the
+    /// question is what the door did with the request, and the answer it sent
+    /// is the whole of that.
+    #[derive(Copy, Eq)]
+    #[serde(rename_all = "kebab-case")]
+    pub enum HookOutcome {
+        /// Passed every check and was answered 2xx, code-declared webhook and
+        /// page-made alike.
+        Accepted,
+        /// Reached a webhook that exists and failed a check on the way in: a
+        /// missing secret, a bad signature or token, a body too large or
+        /// unparseable, a replayed delivery id.
+        Refused,
+        /// No such route — another method, another path, or an id with no
+        /// webhook behind it. One answer on the wire for all three, so the
+        /// door cannot be used to find out what this install runs.
+        NotFound,
+    }
+}
+
+wire! {
+    /// Requests the hooks listener has answered since it bound, by outcome.
+    ///
+    /// In memory and gone on restart, like `WebhookStats`, and for the same
+    /// reason: the durable record of a delivery is the run it started. What
+    /// these add is everything that started no run — the refusals and the
+    /// 404s — and, unlike `WebhookStats`, they cover code-declared webhooks
+    /// too, which have no per-webhook counter at all.
+    ///
+    /// Counts on a public door can be moved by anyone who can reach it.
+    /// `refused` and `not_found` need nothing but the URL; only `accepted`
+    /// needs the secret.
+    #[derive(Default)]
+    #[serde(rename_all = "camelCase")]
+    pub struct HooksTraffic {
+        pub accepted: u32,
+        pub refused: u32,
+        pub not_found: u32,
+        /// Epoch ms of the last request of any outcome.
+        pub last_at: Option<f64>,
+        pub last_outcome: Option<HookOutcome>,
+    }
+}
+
+wire! {
+    /// What the tracker did with one request.
+    #[derive(Copy, Eq)]
+    #[serde(rename_all = "kebab-case")]
+    pub enum TrackerOutcome {
+        /// A known id: answered 302 to its stored destination and recorded as
+        /// a click. HEAD included, since a link checker's HEAD is redirected
+        /// rather than refused.
+        Redirected,
+        /// The shape of a link — one path segment — with no link by that id.
+        /// An id expired past retention, a mistyped one, somebody guessing, or
+        /// a browser asking for `/favicon.ico`, which has exactly that shape.
+        UnknownId,
+        /// Anything else: another method, or more than one path segment.
+        NotFound,
+    }
+}
+
+wire! {
+    /// Requests the tracker has answered since it bound, by outcome.
+    ///
+    /// `redirected` is not the click count on Monitor → Links: that one is
+    /// durable and per link, this one is since the listener bound and per
+    /// door. The two agree only on a process that has never restarted.
+    #[derive(Default)]
+    #[serde(rename_all = "camelCase")]
+    pub struct TrackerTraffic {
+        pub redirected: u32,
+        pub unknown_id: u32,
+        pub not_found: u32,
+        /// Epoch ms of the last request of any outcome.
+        pub last_at: Option<f64>,
+        pub last_outcome: Option<TrackerOutcome>,
+    }
+}
+
+wire! {
+    /// Whether the tracker is bound, from the socket's own flag — the
+    /// tracker's counterpart of `HooksHealth`, reported from the API for the
+    /// stronger version of the same reason: its one route is public, so a
+    /// health endpoint on that port would be a second thing a stranger can
+    /// reach.
+    #[serde(rename_all = "camelCase")]
+    pub struct TrackerHealth {
+        pub listening: bool,
+        pub port: u32,
+        /// Set when binding failed — the reason a tracked link would not
+        /// resolve.
+        pub error: Option<String>,
+        /// Epoch ms when the socket bound.
+        #[serde(default)]
+        pub since: Option<f64>,
+        #[serde(default)]
+        pub traffic: TrackerTraffic,
     }
 }
 
@@ -99,5 +218,49 @@ wire! {
         pub node: String,
         #[serde(default)]
         pub hooks: Option<HooksHealth>,
+        /// Sent since the tracker landed and read by nothing until this was
+        /// declared: an undeclared field is one `fe` silently drops.
+        #[serde(default)]
+        pub tracker: Option<TrackerHealth>,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The wire spellings, pinned — see the rule in `params.rs`. A variant
+    /// renamed without a `#[serde(rename)]` would make `fe` fail to parse
+    /// `/api/health` outright, which is the Listeners board and the Webhooks
+    /// board's fallback both gone at once.
+    #[test]
+    fn listener_outcomes_keep_their_wire_spelling() {
+        let hook = |o: &HookOutcome| serde_json::to_string(o).expect("serialises");
+        assert_eq!(hook(&HookOutcome::Accepted), "\"accepted\"");
+        assert_eq!(hook(&HookOutcome::Refused), "\"refused\"");
+        assert_eq!(hook(&HookOutcome::NotFound), "\"not-found\"");
+
+        let tracker = |o: &TrackerOutcome| serde_json::to_string(o).expect("serialises");
+        assert_eq!(tracker(&TrackerOutcome::Redirected), "\"redirected\"");
+        assert_eq!(tracker(&TrackerOutcome::UnknownId), "\"unknown-id\"");
+        assert_eq!(tracker(&TrackerOutcome::NotFound), "\"not-found\"");
+    }
+
+    /// A backend from before the counters still parses, with nothing counted.
+    ///
+    /// A page served by a newer `fe` than the backend behind it is the ordinary
+    /// state of a dev pane between a landing and a restart, and a health
+    /// payload that failed to parse would blank two boards over a field the
+    /// older process simply does not have.
+    #[test]
+    fn a_health_payload_without_counters_parses() {
+        let out: HealthResponse = serde_json::from_str(
+            r#"{"status":"ok","node":"v24","hooks":{"listening":true,"port":3011,"error":null}}"#,
+        )
+        .expect("parses");
+        let hooks = out.hooks.expect("hooks present");
+        assert_eq!(hooks.since, None);
+        assert_eq!(hooks.traffic, HooksTraffic::default());
+        assert_eq!(out.tracker, None);
     }
 }

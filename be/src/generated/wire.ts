@@ -255,6 +255,12 @@ netEnforced: boolean,
  */
 hooksPort: number, 
 /**
+ * The tracker's port, the third listener. Sent so Monitor → Connection
+ * can name its socket rather than listing it as an anonymous "bound"
+ * row the reader has to match by eye. Zero when not configured.
+ */
+trackerPort: number, 
+/**
  * How many jobs declare a webhook. Zero is the common case and the
  * page says so rather than showing an empty list.
  */
@@ -534,7 +540,12 @@ export type HealthResponse = {
 /**
  * `ok`, or `degraded` when a subsystem is down but the API is not.
  */
-status: string, node: string, hooks: HooksHealth | null, };
+status: string, node: string, hooks: HooksHealth | null, 
+/**
+ * Sent since the tracker landed and read by nothing until this was
+ * declared: an undeclared field is one `fe` silently drops.
+ */
+tracker: TrackerHealth | null, };
 
 /**
  * One V8 heap space that currently holds something.
@@ -588,6 +599,18 @@ rt: string | null, };
 export type HistoryTier = { id: string, label: string, bucketMs: number, capacity: number, buckets: Array<Bucket>, };
 
 /**
+ * What the hooks listener did with one request, in the listener's own
+ * terms rather than any one webhook's.
+ *
+ * Three, where a page-made webhook's tile has four. "Dropped" — accepted,
+ * then no run — is decided after the 202 has gone, by the webhook's kind,
+ * and is already counted per webhook in `WebhookStats`. At this level the
+ * question is what the door did with the request, and the answer it sent
+ * is the whole of that.
+ */
+export type HookOutcome = "accepted" | "refused" | "not-found";
+
+/**
  * Whether the hooks listener is bound, from the socket's own flag.
  *
  * The second source for a fact Monitor → Connection otherwise reads out of
@@ -601,7 +624,35 @@ export type HooksHealth = { listening: boolean, port: number,
 /**
  * Set when binding failed — the reason a delivery would not arrive.
  */
-error: string | null, };
+error: string | null, 
+/**
+ * Epoch ms when the socket bound. `None` until it has, and after a
+ * failed bind — a time the listener was never up would date nothing.
+ */
+since: number | null, 
+/**
+ * What it has answered since then.
+ */
+traffic: HooksTraffic, };
+
+/**
+ * Requests the hooks listener has answered since it bound, by outcome.
+ *
+ * In memory and gone on restart, like `WebhookStats`, and for the same
+ * reason: the durable record of a delivery is the run it started. What
+ * these add is everything that started no run — the refusals and the
+ * 404s — and, unlike `WebhookStats`, they cover code-declared webhooks
+ * too, which have no per-webhook counter at all.
+ *
+ * Counts on a public door can be moved by anyone who can reach it.
+ * `refused` and `not_found` need nothing but the URL; only `accepted`
+ * needs the secret.
+ */
+export type HooksTraffic = { accepted: number, refused: number, notFound: number, 
+/**
+ * Epoch ms of the last request of any outcome.
+ */
+lastAt: number | null, lastOutcome: HookOutcome | null, };
 
 /**
  * `PUT /api/jobs/:id/config`: whether it took, and what is refused.
@@ -1841,6 +1892,42 @@ identified: boolean,
  * page must not report as "nobody", hence `identified` beside it.
  */
 recipients: number, };
+
+/**
+ * Whether the tracker is bound, from the socket's own flag — the
+ * tracker's counterpart of `HooksHealth`, reported from the API for the
+ * stronger version of the same reason: its one route is public, so a
+ * health endpoint on that port would be a second thing a stranger can
+ * reach.
+ */
+export type TrackerHealth = { listening: boolean, port: number, 
+/**
+ * Set when binding failed — the reason a tracked link would not
+ * resolve.
+ */
+error: string | null, 
+/**
+ * Epoch ms when the socket bound.
+ */
+since: number | null, traffic: TrackerTraffic, };
+
+/**
+ * What the tracker did with one request.
+ */
+export type TrackerOutcome = "redirected" | "unknown-id" | "not-found";
+
+/**
+ * Requests the tracker has answered since it bound, by outcome.
+ *
+ * `redirected` is not the click count on Monitor → Links: that one is
+ * durable and per link, this one is since the listener bound and per
+ * door. The two agree only on a process that has never restarted.
+ */
+export type TrackerTraffic = { redirected: number, unknownId: number, notFound: number, 
+/**
+ * Epoch ms of the last request of any outcome.
+ */
+lastAt: number | null, lastOutcome: TrackerOutcome | null, };
 
 /**
  * Recipients a server refused *transiently*, over a recent window.

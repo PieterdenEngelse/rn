@@ -147,6 +147,27 @@ The 202 on row two is the byte-identity result restated: the HMAC is over the
 bytes, so a proxy that moved one of them would have produced row three's 401
 instead.
 
+### A test from this machine is not a test of Funnel
+
+Measured 2026-09-11, because it had been assumed the other way:
+
+```
+here, via MagicDNS:  laptop.tail1e7abb.ts.net → 100.96.123.99   this node's own tailnet address
+public DNS:          laptop.tail1e7abb.ts.net → 176.58.88.82, 176.58.88.108, 176.58.92.199
+```
+
+A request from this laptop to its own `*.ts.net` name goes over the tailnet to
+`tailscale serve` and never touches Funnel's public ingress. It proves the
+path-to-port mapping and the listener behind it, which is worth proving, and
+says nothing about whether a stranger on the internet can reach either — it
+would pass with Funnel switched off.
+
+Where the table above was run from is not recorded. If it was run here, rows
+two to seven exercised `serve` rather than Funnel, and the GitHub deliveries
+below are the evidence for the public route — which they are regardless, since
+they came from outside by definition. A deliberate test of the public path has
+to start outside the tailnet: a phone off wifi, or the provider itself.
+
 ### A real provider, at last
 
 The section below used to say no GitHub delivery had been involved. It has

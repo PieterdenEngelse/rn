@@ -514,3 +514,34 @@ test("a test delivery with no credential says so instead of sending an unsigned 
     assert.equal(out.status, 0);
     assert.match(out.detail, /RN_SECRET_NEVER_SET_ANYWHERE/);
 });
+
+test("the listener counts every answer by what it did, code-declared hooks included", async (t) => {
+    // What Monitor → Connection's Listeners board reads. The per-webhook tile
+    // only ever counted page-made webhooks, so a code-declared one — `demo`,
+    // on the only install this has run on — was refused in silence.
+    process.env[envVarFor("fixtureToken")] = SECRET;
+    t.after(() => {
+        delete process.env[envVarFor("fixtureToken")];
+    });
+    const { hooksHealth, resetHooksHealth } = await import("../src/hooks/server.ts");
+    resetHooksHealth();
+
+    const job = jobThat({
+        webhook: { credential: "fixtureToken", auth: { kind: "token", header: "x-api-key" } },
+    });
+    const stranger = jobThat({ id: "not-registered" });
+
+    assert.equal((await post(job, { "x-api-key": SECRET })).status, 202);
+    assert.equal((await post(job, { "x-api-key": "wrong" })).status, 401);
+    assert.equal((await post(job, {})).status, 401);
+    // Posted through a listener whose lookup knows only `stranger`, which
+    // declares no webhook: the 404 a real probe gets.
+    assert.equal((await post(stranger, {})).status, 404);
+
+    const traffic = hooksHealth().traffic;
+    assert.equal(traffic.accepted, 1);
+    assert.equal(traffic.refused, 2, "the wrong token and the missing one");
+    assert.equal(traffic.notFound, 1);
+    assert.equal(traffic.lastOutcome, "not-found");
+    assert.notEqual(traffic.lastAt, null);
+});

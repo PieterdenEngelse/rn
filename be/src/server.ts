@@ -777,6 +777,9 @@ export function createApp() {
                 // Reported so the Webhooks board can say which port to point a
                 // tunnel at — and, by saying it is not `port`, why.
                 hooksPort: config.hooksPort,
+                // The third listener, so its socket can be named on the Bound
+                // board instead of sitting there as an unexplained "bound".
+                trackerPort: config.trackerPort,
                 webhookJobs: JOBS.filter((j) => j.webhook !== undefined).length,
                 webhookReady: JOBS.filter(
                     (j) => j.webhook !== undefined && secrets.isSet(j.webhook.credential),

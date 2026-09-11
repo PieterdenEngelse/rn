@@ -60,6 +60,7 @@ test("a taken port degrades the listener instead of killing the process", async 
 
     const health = hooksHealth();
     assert.equal(health.listening, false, "it did not bind, and does not claim to");
+    assert.equal(health.since, null, "a listener that never bound has no window to date");
     assert.match(
         health.error ?? "",
         /already in use/,
@@ -79,4 +80,20 @@ test("health starts as not listening rather than as unknown", () => {
     const health = hooksHealth();
     assert.equal(health.listening, false);
     assert.equal(health.error, null);
+});
+
+test("the bind time is recorded, so the counts have a window", async () => {
+    // The Listeners board reads every count against this. A count with no
+    // window says nothing: twelve refusals in nine minutes and twelve in three
+    // days are different findings.
+    resetHooksHealth();
+    const before = Date.now();
+    const port = await freePort();
+    const app = createHookApp();
+    await new Promise<void>((resolve) => startHooks(app, port, HOST, resolve));
+
+    const since = hooksHealth().since;
+    assert.ok(since !== null && since >= before, "dated from the bind, not before it");
+
+    await new Promise<void>((r) => app.close(() => r()));
 });

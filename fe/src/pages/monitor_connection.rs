@@ -12,7 +12,10 @@
 //! `/api/node` for what is genuinely open — so nothing new is collected to
 //! render it.
 
-use crate::api::{fetch_connection, fetch_health, fetch_node_metrics, ConnectionResponse, HealthResponse, NodeMetrics, API_BASE};
+use crate::api::{
+    fetch_connection, fetch_health, fetch_node_metrics, ConnectionResponse, HealthResponse, HookOutcome, NodeMetrics,
+    TrackerOutcome, API_BASE,
+};
 use crate::components::{Board, InfoButton, Metric, Panel};
 use dioxus::prelude::*;
 
@@ -99,18 +102,66 @@ fn format_uptime(ms: f64) -> String {
     }
 }
 
-/// Which of this install's two doors a listening socket is, by port.
+/// Which of this install's three doors a listening socket is, by port.
 ///
-/// The process listens twice — the API the frontend talks to, and the webhook
-/// door deliveries arrive on — and a row saying only "bound" makes the reader
-/// match ports by eye to tell which is which. Naming them also makes the
-/// webhook socket *evidence*: the Webhooks board claims a port from config,
-/// and this says a socket is genuinely open on it.
-fn socket_role(detail: &str, api_port: u32, hooks_port: u32) -> &'static str {
+/// The process listens three times — the API the frontend talks to, the
+/// webhook door deliveries arrive on, and the tracker that tracked links in
+/// sent mail resolve through — and a row saying only "bound" makes the reader
+/// match ports by eye to tell which is which. Naming them also makes the two
+/// outward sockets *evidence*: the Webhooks and Listeners boards claim ports,
+/// and this says a socket is genuinely open on each.
+///
+/// The tracker was the third for a week before this knew about it, and sat
+/// on the board as an unexplained "bound" row the whole time.
+fn socket_role(detail: &str, api_port: u32, hooks_port: u32, tracker_port: u32) -> &'static str {
     match detail.rsplit_once(':').and_then(|(_, p)| p.parse::<u32>().ok()) {
         Some(p) if p == api_port => "api socket",
         Some(p) if p == hooks_port && hooks_port != 0 => "webhook socket",
+        Some(p) if p == tracker_port && tracker_port != 0 => "tracker socket",
         _ => "bound",
+    }
+}
+
+/// How long a listener has been bound, or why there is no figure.
+///
+/// A listener that failed to bind has not been up for any length of time, and
+/// the reason it failed is the better use of the slot than a zero would be.
+fn bound_for(listening: bool, since: Option<f64>, error: Option<&str>, now: f64) -> String {
+    match (listening, since) {
+        (true, Some(t)) => format_uptime(now - t),
+        // A backend from before the bind time was reported.
+        (true, None) => "bound — time not reported".to_string(),
+        (false, _) => match error {
+            Some(e) => format!("not bound — {e}"),
+            None => "not bound".to_string(),
+        },
+    }
+}
+
+/// "4m 10s ago — refused", or that nothing has come in at all.
+fn last_request(at: Option<f64>, outcome: Option<&'static str>, now: f64) -> String {
+    match (at, outcome) {
+        (Some(t), Some(o)) => format!("{} ago — {o}", format_uptime(now - t)),
+        (Some(t), None) => format!("{} ago", format_uptime(now - t)),
+        (None, _) => "none since it bound".to_string(),
+    }
+}
+
+/// The row labels, so "last request" names an outcome with the same words as
+/// the count it went into.
+fn hook_outcome_word(o: HookOutcome) -> &'static str {
+    match o {
+        HookOutcome::Accepted => "accepted",
+        HookOutcome::Refused => "refused",
+        HookOutcome::NotFound => "not found",
+    }
+}
+
+fn tracker_outcome_word(o: TrackerOutcome) -> &'static str {
+    match o {
+        TrackerOutcome::Redirected => "redirected",
+        TrackerOutcome::UnknownId => "unknown id",
+        TrackerOutcome::NotFound => "not found",
     }
 }
 
@@ -175,13 +226,43 @@ fn ConnectionBoards(c: ConnectionResponse, m: Option<NodeMetrics>, h: Option<Hea
     let (hooks_listening, hooks_from_health, hooks_error) = if !servers.is_empty() {
         let bound = servers
             .iter()
-            .any(|s| socket_role(&s.detail, c.port, c.hooks_port) == "webhook socket");
+            .any(|s| socket_role(&s.detail, c.port, c.hooks_port, c.tracker_port) == "webhook socket");
         (Some(bound), false, None)
     } else if let Some(hk) = h.as_ref().and_then(|h| h.hooks.as_ref()) {
         (Some(hk.listening), true, hk.error.clone())
     } else {
         (None, false, None)
     };
+
+    // The Listeners board reads /api/health and nothing else. Both ports serve
+    // the internet, so neither has a route that could report on itself; the
+    // API reports for them from inside the same process.
+    let now = js_sys::Date::now();
+    let hooks_h = h.as_ref().and_then(|h| h.hooks.clone());
+    let tracker_h = h.as_ref().and_then(|h| h.tracker.clone());
+    // Absent rather than zero when the health payload did not arrive: a zero
+    // would claim the door had been quiet.
+    let unreported = || "not reported".to_string();
+    let hooks_heading = format!("Hooks · port {}", c.hooks_port);
+    let hooks_bound = hooks_h
+        .as_ref()
+        .map_or_else(unreported, |x| bound_for(x.listening, x.since, x.error.as_deref(), now));
+    let hooks_accepted = hooks_h.as_ref().map_or_else(unreported, |x| x.traffic.accepted.to_string());
+    let hooks_refused = hooks_h.as_ref().map_or_else(unreported, |x| x.traffic.refused.to_string());
+    let hooks_not_found = hooks_h.as_ref().map_or_else(unreported, |x| x.traffic.not_found.to_string());
+    let hooks_last = hooks_h.as_ref().map_or_else(unreported, |x| {
+        last_request(x.traffic.last_at, x.traffic.last_outcome.map(hook_outcome_word), now)
+    });
+    let tracker_heading = format!("Tracker · port {}", c.tracker_port);
+    let tracker_bound = tracker_h
+        .as_ref()
+        .map_or_else(unreported, |x| bound_for(x.listening, x.since, x.error.as_deref(), now));
+    let tracker_redirected = tracker_h.as_ref().map_or_else(unreported, |x| x.traffic.redirected.to_string());
+    let tracker_unknown = tracker_h.as_ref().map_or_else(unreported, |x| x.traffic.unknown_id.to_string());
+    let tracker_not_found = tracker_h.as_ref().map_or_else(unreported, |x| x.traffic.not_found.to_string());
+    let tracker_last = tracker_h.as_ref().map_or_else(unreported, |x| {
+        last_request(x.traffic.last_at, x.traffic.last_outcome.map(tracker_outcome_word), now)
+    });
 
     let measured_reach = if servers.is_empty() {
         "not reported".to_string()
@@ -224,9 +305,10 @@ fn ConnectionBoards(c: ConnectionResponse, m: Option<NodeMetrics>, h: Option<Hea
                                 "comparison, which is why the two sit together rather than on ",
                                 "separate pages.\n\n",
 
-                                "There are normally two sockets — the API this page talks to, and ",
-                                "the webhook door — and each row is labelled with which door it ",
-                                "is, worked out from the port.",
+                                "There are normally three sockets — the API this page talks to, ",
+                                "the webhook door, and the tracker that links in sent mail resolve ",
+                                "through — and each row is labelled with which door it is, worked ",
+                                "out from the port.",
                             ).to_string(),
                             why: "A bind address is the whole of this install's security position, because the API has no authentication: whoever can reach the socket can drive it. Reading it from the process rather than the settings is the point — a setting says what someone intended, and only the socket says what is true.".to_string(),
                             if_wrong: concat!(
@@ -259,11 +341,11 @@ fn ConnectionBoards(c: ConnectionResponse, m: Option<NodeMetrics>, h: Option<Hea
                     }
                     for s in servers.iter() {
                         Metric {
-                            label: socket_role(&s.detail, c.port, c.hooks_port),
+                            label: socket_role(&s.detail, c.port, c.hooks_port, c.tracker_port),
                             value: s.detail.clone(),
                             mono_note: s.fd.map(|f| format!("fd {f}")),
                             what: "The address a listening socket is actually bound to, taken from the running process rather than from any setting.".to_string(),
-                            why: "This is the claim Config → Connection makes, measured. There are normally two — the API the frontend talks to, and the webhook door — and the webhook one appearing here is the only proof anywhere that the port on the Webhooks board is genuinely open rather than merely configured. The descriptor beside each is the same socket as the operating system sees it, which is what `ss -lptn` and `lsof` will show you.".to_string(),
+                            why: "This is the claim Config → Connection makes, measured. There are normally three — the API the frontend talks to, the webhook door, and the tracker — and the two outward ones appearing here are the only proof from the handle list that those ports are genuinely open rather than merely configured. The descriptor beside each is the same socket as the operating system sees it, which is what `ss -lptn` and `lsof` will show you.".to_string(),
                             if_wrong: "An address of 0.0.0.0 or :: means every interface, so any machine that can route to this one can reach the API. That is a service, not an app, and nothing else in rn is built on that assumption.".to_string(),
                         }
                     }
@@ -489,6 +571,160 @@ fn ConnectionBoards(c: ConnectionResponse, m: Option<NodeMetrics>, h: Option<Hea
                         what: "How many of those jobs have their signing credential configured. A hook whose secret is missing rejects every delivery it receives.".to_string(),
                         why: "The gap between this and the row above is the number of webhook jobs that will silently never fire.".to_string(),
                         if_wrong: "Fewer ready than declaring means deliveries are arriving and being rejected, and the provider's retry log is otherwise the only place that shows. It is not an error anywhere in rn — it is visible here and on Config → Jobs and nowhere else.".to_string(),
+                    }
+                }
+
+                // Both outward doors, counted. Beside Webhooks rather than
+                // folded into it, because the tracker is the other half of
+                // "what can a stranger reach" and belongs on the same board as
+                // the hooks door rather than on a page about links.
+                Board { title: "Listeners".to_string(),
+                    info: Some(rsx! {
+                        InfoButton {
+                            title: "Listeners — the two outward doors, counted".to_string(),
+                            extra: Some(rsx! {
+                                div { class: "space-y-4 max-w-3xl",
+                                    div {
+                                        h4 { class: "text-sm font-semibold text-gray-300", "What each count is" }
+                                        ul { class: "mt-1 space-y-1 text-gray-200 leading-relaxed list-disc ml-5",
+                                            li { "Hooks, accepted — passed every check and answered 2xx. For a webhook declared in a job's code, its job was started. For one made on Config → Jobs, the delivery was handed to that webhook's kind, and the webhook's own tile says whether a run followed." }
+                                            li { "Hooks, refused — a webhook that exists, and a check that failed on the way in: the secret missing, the signature or token wrong, a body over 1 MB or one that will not parse, a delivery id already seen." }
+                                            li { "Hooks, not found — no webhook matched: another method, another path, or an id nothing is registered under." }
+                                            li { "Tracker, redirected — a known id, answered 302 to its destination and recorded as a click. HEAD counts too." }
+                                            li { "Tracker, unknown id — one path segment and no link by that id: expired past retention, mistyped, guessed, or a browser's automatic "
+                                                span { class: "font-mono text-gray-300", "/favicon.ico" }
+                                                "." }
+                                            li { "Tracker, not found — another method, or a path deeper than one segment." }
+                                        }
+                                        p { class: "mt-2 text-gray-200 leading-relaxed",
+                                            "Every not found and unknown id gets the same empty 404 on the wire, so a caller cannot tell them apart or use either door to learn what exists. They are counted apart so that you can."
+                                        }
+                                    }
+                                    div {
+                                        h4 { class: "text-sm font-semibold text-gray-300", "Where the numbers come from" }
+                                        p { class: "mt-1 text-gray-200 leading-relaxed",
+                                            "Each listener counts at the moment it decides its answer — "
+                                            span { class: "font-mono text-gray-300", "be/src/hooks/server.ts" }
+                                            " and "
+                                            span { class: "font-mono text-gray-300", "be/src/tracker/server.ts" }
+                                            " — and the API reports the counts in "
+                                            span { class: "font-mono text-gray-300", "GET /api/health" }
+                                            ". Not from the listeners themselves: each has exactly one public route, and a route that reported on the door would be a second thing a stranger could reach. The counts live in memory and start again at zero whenever the backend restarts, which is why every group starts with how long its socket has been bound."
+                                        }
+                                    }
+                                    div {
+                                        h4 { class: "text-sm font-semibold text-gray-300", "Who can move them" }
+                                        p { class: "mt-1 text-gray-200 leading-relaxed",
+                                            "Both doors are public, so anyone who has the URL can add to refused, either not found, and unknown id — a rising count there is somebody's traffic, not necessarily a fault. Accepted needs the webhook's secret. Redirected needs a real link id, which only a recipient of the mail has."
+                                        }
+                                    }
+                                    div {
+                                        h4 { class: "text-sm font-semibold text-gray-300", "What this board cannot see" }
+                                        p { class: "mt-1 text-gray-200 leading-relaxed",
+                                            "A request that never reached the socket, because nothing in rn saw it. Three ordinary ways: the backend restarting, the tunnel down or its mapping removed, the machine asleep. On 2026-09-10 GitHub recorded a 502 for a push at 14:18:41; the backend logged the restart behind it at 14:18:49, and no count anywhere in rn moved, because Funnel answered on rn's behalf."
+                                        }
+                                        p { class: "mt-2 text-gray-200 leading-relaxed",
+                                            "Nothing queues for you — GitHub does not retry a failed delivery on its own — so the sender's own delivery log is the only record: the repository's Settings → Webhooks → Recent Deliveries, which also has the button to redeliver. Reading that log from a scheduled job is the open item in "
+                                            span { class: "font-mono text-gray-300", "docs/todo.md" }
+                                            "."
+                                        }
+                                    }
+                                    div {
+                                        h4 { class: "text-sm font-semibold text-gray-300", "Testing it from this machine" }
+                                        p { class: "mt-1 text-gray-200 leading-relaxed",
+                                            "A request from here to this laptop's own "
+                                            span { class: "font-mono text-gray-300", "*.ts.net" }
+                                            " name never goes through Funnel. MagicDNS resolves the name to this node's tailnet address, so the request crosses the tailnet to "
+                                            span { class: "font-mono text-gray-300", "tailscale serve" }
+                                            " and reaches the listener having proved that mapping and nothing about the public route — it would succeed with Funnel switched off. Public DNS gives Tailscale's Funnel relays instead. A test of the public path has to start outside the tailnet: a phone off wifi, or the provider itself. Measured in "
+                                            span { class: "font-mono text-gray-300", "docs/tunnel.md" }
+                                            "."
+                                        }
+                                    }
+                                }
+                            }),
+                            what: concat!(
+                                "The two ports this process serves to the internet through the ",
+                                "tunnel: the hooks listener, where webhook deliveries arrive, and ",
+                                "the tracker, where tracked links in sent mail resolve. For each, how ",
+                                "long its socket has been bound and every request it has answered ",
+                                "since, sorted by what it did with it.",
+                            ).to_string(),
+                            why: "The run history shows the deliveries that worked. Everything else — a provider sending with the wrong secret, somebody probing the URL, a recipient clicking a link that expired — starts no run, and left no count anywhere but the log. A door being hit and refused forty times an hour looked exactly like one nobody had touched.".to_string(),
+                            if_wrong: "Every count starts again at zero when the backend restarts, and so does \"bound for\" — read the counts against it. And a request that never reached the socket cannot appear here at all; the section on what this board cannot see says where that evidence is instead.".to_string(),
+                        }
+                    }),
+                    div { class: "text-xs font-semibold text-gray-300", "{hooks_heading}" }
+                    Metric {
+                        label: "bound for",
+                        value: hooks_bound,
+                        what: "How long the hooks socket has been bound, timed from the moment listen returned — the socket's own flag, not the handle list the Bound board reads. It is the window every count under it covers.".to_string(),
+                        why: "A count means nothing without the time it was gathered over. Twelve refusals in nine minutes is somebody hammering the URL; twelve in three days is a provider retrying one bad delivery.".to_string(),
+                        if_wrong: "Not bound, with a reason, means deliveries are refused at the socket before rn could count them — fix that first, because nothing below it can move. A figure that keeps falling back near zero is the backend restarting, and every restart is a few seconds in which senders get an error rn never sees.".to_string(),
+                    }
+                    Metric {
+                        label: "accepted",
+                        value: hooks_accepted,
+                        what: "Deliveries that passed every check and were answered 2xx. For a webhook declared in a job's code, its job was started. For one made on Config → Jobs, the delivery was handed to that webhook's kind — its own tile says whether a run followed, since an action with no route is accepted and then dropped.".to_string(),
+                        why: "The only count on this door that needs the secret to move, so the one that says a real provider is talking to you.".to_string(),
+                        if_wrong: "Zero while the provider's log shows green deliveries means those requests went somewhere else — another backend, another port, another machine. Match the provider's delivery ids against the run history on Monitor → Jobs.".to_string(),
+                    }
+                    Metric {
+                        label: "refused",
+                        value: hooks_refused,
+                        what: "Requests to a webhook that exists that failed a check on the way in: the signing secret missing, the signature or token wrong, a body over 1 MB or one that will not parse, or a delivery id already seen. The order the checks run in is in the Webhooks board's panel.".to_string(),
+                        why: "From the sender's side every one of these is just a 4xx, and the commonest cause — a secret that differs at the two ends — is invisible from here unless it is counted. The log says which check failed; this says it is happening.".to_string(),
+                        if_wrong: "Rising while accepted stays flat is a secret mismatch until proven otherwise: compare the credential on Config → Jobs with the one set at the provider. A few among many accepted is usually replays after a provider retry, which is the check doing its job. Anyone with the URL can add to this number without the secret.".to_string(),
+                    }
+                    Metric {
+                        label: "not found",
+                        value: hooks_not_found,
+                        what: "Requests that matched no webhook: another method, another path, or an id nothing is registered under. All answered with the same empty 404, so the door cannot be used to list what this install runs.".to_string(),
+                        why: "The internet's background noise, made countable. A public URL collects scanners and guesses, and this is where they land.".to_string(),
+                        if_wrong: "A steady trickle is normal for any public address. A provider's deliveries landing here instead of under accepted means the URL it holds is wrong — typically a job renamed in code while the provider still posts to the old id.".to_string(),
+                    }
+                    Metric {
+                        label: "last request",
+                        value: hooks_last,
+                        what: "When the hooks door last answered anything, and which of the three answers it gave.".to_string(),
+                        why: "The quickest check that a delivery you just triggered arrived: push, then look here, before reading any log.".to_string(),
+                        if_wrong: "Nothing changing after the provider reports sending means the request never reached this socket. The board's own panel lists the ways that happens and where the evidence is instead.".to_string(),
+                    }
+                    div { class: "text-xs font-semibold text-gray-300 mt-2", "{tracker_heading}" }
+                    Metric {
+                        label: "bound for",
+                        value: tracker_bound,
+                        what: "How long the tracker socket has been bound, from the socket's own flag — the window every count under it covers.".to_string(),
+                        why: "The counts are only readable against their window, and the window starts again with every backend restart.".to_string(),
+                        if_wrong: "Not bound is worse here than on the hooks door. A webhook sender retries; a recipient who clicks a tracked link while nothing is bound gets a browser error on a link somebody sent them, and nobody retries that for them.".to_string(),
+                    }
+                    Metric {
+                        label: "redirected",
+                        value: tracker_redirected,
+                        what: "Requests for a link that exists, answered 302 to its stored destination and recorded as a click. HEAD requests count too, since a link checker's HEAD is redirected rather than refused.".to_string(),
+                        why: "The durable version of this number, per link and per send, is on Monitor → Links. This one is per door and since the socket bound — the quick answer to whether links are being followed right now.".to_string(),
+                        if_wrong: "Lower than the clicks on Monitor → Links is expected after any restart: this one starts again, that one does not. Higher than you can explain is often mail scanners, which follow every link in a message before a person sees it.".to_string(),
+                    }
+                    Metric {
+                        label: "unknown id",
+                        value: tracker_unknown,
+                        what: "Requests shaped like a link — one path segment — with no link by that id: a link expired past the retention window, a mistyped one, a guess, or a browser asking for /favicon.ico, which has exactly that shape.".to_string(),
+                        why: "The one count that can mean a real person was let down — somebody clicking an old link in mail they kept. What they got back is the same empty 404 as any probe, so this is the only place that difference shows.".to_string(),
+                        if_wrong: "A steady rise with no recent sends is probably probing and favicon requests. A rise just after links passed the retention window is recipients reaching links that no longer resolve.".to_string(),
+                    }
+                    Metric {
+                        label: "not found",
+                        value: tracker_not_found,
+                        what: "Everything else: another method, or a path deeper than one segment. The same 404 as an unknown id, so the endpoint cannot be used to learn whether an id was ever minted.".to_string(),
+                        why: "Background noise on a public address, counted so it is not mistaken for the more interesting number above it.".to_string(),
+                        if_wrong: "Nothing a recipient does lands here. A large number is scanners, and harmless unless it grows large enough to be load.".to_string(),
+                    }
+                    Metric {
+                        label: "last request",
+                        value: tracker_last,
+                        what: "When the tracker last answered anything, and which of the three answers it gave.".to_string(),
+                        why: "Open a tracked link from a device outside the tailnet and look here: the quickest proof the whole path works, tunnel included.".to_string(),
+                        if_wrong: "Unchanged after such a click means the request never reached this socket — the tunnel, its mapping, or the machine asleep.".to_string(),
                     }
                 }
 

@@ -25,7 +25,7 @@ const STORE = join(tmpdir(), `rn-tracker-server-test-${process.pid}.jsonl`);
 (config as unknown as { trackerStorePath: string }).trackerStorePath = STORE;
 
 const store = await import("../src/tracker/store.ts");
-const { createTrackerApp } = await import("../src/tracker/server.ts");
+const { createTrackerApp, trackerHealth, resetTrackerHealth } = await import("../src/tracker/server.ts");
 
 after(() => {
     rmSync(STORE, { force: true });
@@ -199,4 +199,28 @@ test("an encoded slash cannot smuggle a second segment into either spelling", as
         const res = await fetch(`${origin}${path}`, { redirect: "manual" });
         assert.equal(res.status, 404, `${path} should be 404`);
     }
+});
+
+test("every answer is counted against the listener, by what it did", async (t) => {
+    // What Monitor → Connection's Listeners board reads. The three outcomes
+    // share one 404 on the wire, deliberately, so a caller cannot tell an
+    // unknown id from a bad path — and are counted apart, so the operator can.
+    resetTrackerHealth();
+    const origin = await serving(t);
+    const link = store.mint("send-1", "alice@example.com", "https://example.com/landing");
+    const hit = (path: string, method = "GET") =>
+        fetch(`${origin}${path}`, { method, redirect: "manual" }).then((r) => r.arrayBuffer());
+
+    await hit(`/t/${link.id}`);
+    await hit(`/t/${link.id}`, "HEAD");
+    await hit("/t/never-minted");
+    await hit("/t/two/segments");
+    await hit(`/t/${link.id}`, "POST");
+
+    const traffic = trackerHealth().traffic;
+    assert.equal(traffic.redirected, 2, "GET and HEAD both redirect, so both count");
+    assert.equal(traffic.unknownId, 1);
+    assert.equal(traffic.notFound, 2, "a deep path and a POST");
+    assert.equal(traffic.lastOutcome, "not-found");
+    assert.notEqual(traffic.lastAt, null);
 });

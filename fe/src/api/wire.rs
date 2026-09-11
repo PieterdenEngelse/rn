@@ -14,7 +14,8 @@
 // The jobs surface.
 pub use shared::{
     CatalogueJob, ConnectionResponse, DeclaredConfig, EnvEntry, HandlerOverride, HealthResponse,
-    HooksHealth, EnvResponse, CredentialRef, JobConfigResponse, JobErrors, JobInfo, JobInput,
+    HooksHealth, HookOutcome, HooksTraffic, TrackerHealth, TrackerOutcome, TrackerTraffic,
+    EnvResponse, CredentialRef, JobConfigResponse, JobErrors, JobInfo, JobInput,
     JobInputType, JobOverride, RetryOverride, ScheduleOverride,
     JobRun, JobRunResult, JobSource, JobStep, JobsConfig, JobsResponse, Outcome, RetryPolicy,
     RunningJob, RunsDeleteResponse, RunsResponse, Schedule, ScheduledJob, StateResetResponse,

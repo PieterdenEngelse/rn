@@ -114,6 +114,11 @@ pub fn export_all(cfg: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
 
     ConnectionResponse::export_all(cfg)?;
     HooksHealth::export_all(cfg)?;
+    HookOutcome::export_all(cfg)?;
+    HooksTraffic::export_all(cfg)?;
+    TrackerOutcome::export_all(cfg)?;
+    TrackerTraffic::export_all(cfg)?;
+    TrackerHealth::export_all(cfg)?;
     HealthResponse::export_all(cfg)?;
     EnvEntry::export_all(cfg)?;
     EnvResponse::export_all(cfg)?;
