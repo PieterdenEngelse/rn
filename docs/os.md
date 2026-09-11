@@ -11,6 +11,10 @@ Decided so far:
 - The `rn-*` helpers live in rn's own `scripts/`, done 2026-09-11.
   `~/.local/bin` holds symlinks to them, so chezmoi manages the links and
   never the scripts (see Phase 2).
+- **Both desktops stay:** `ubuntu-desktop` (GNOME) alongside `xfce4`. So the
+  dconf step stays, and so does the snap base GNOME brings. XFCE is the
+  session actually used, through **LightDM**, and the rebuild has to
+  reproduce that deliberately (see `20-apt` in Phase 4).
 
 **The goal:** a fresh Ubuntu install gets from a blank desktop to this one with
 a single command:
@@ -147,7 +151,8 @@ list holds only what you chose. From today's 88 that comes to roughly:
 
     build-essential pkg-config mold libssl-dev libwebkit2gtk-4.1-dev libxdo-dev
     git gh curl neovim tmux kate wmctrl xdotool devilspie2 dsh zram-tools
-    xfce4 xfce4-systemload-plugin xfdesktop4 xubuntu-wallpapers
+    ubuntu-desktop xfce4 xfce4-systemload-plugin xfdesktop4 xubuntu-wallpapers
+    lightdm lightdm-gtk-greeter
     code docker-ce docker-ce-cli containerd.io docker-buildx-plugin
     docker-compose-plugin tailscale texlive-latex-base libfuse2t64
     python3-netifaces intel-media-va-driver
@@ -231,6 +236,22 @@ In order:
    Template `resolute` as `{{ .chezmoi.osRelease.versionCodename }}` so the
    next LTS doesn't need an edit.
 3. **`20-apt`**, **`21-snap`** (onchange, after): install the curated lists.
+   `lightdm` isn't in today's manual list, because it arrived as a
+   dependency, but it matters: a fresh Ubuntu Desktop boots into GDM, and this
+   machine logs in through LightDM (`/etc/X11/default-display-manager`). So
+   `20-apt` preseeds the choice before installing, so that it doesn't stop to
+   ask:
+
+       echo "lightdm shared/default-x-display-manager select lightdm" \
+         | sudo debconf-set-selections
+       sudo DEBIAN_FRONTEND=noninteractive apt-get install -y lightdm …
+       echo /usr/sbin/lightdm | sudo tee /etc/X11/default-display-manager
+
+   It also makes XFCE the default session with `user-session=xfce` in
+   `/etc/lightdm/lightdm.conf.d/50-rn.conf`. GNOME stays one pick away in
+   the greeter. Nothing is removed. Keeping both desktops means GNOME's
+   packages and snaps keep updating alongside XFCE's, and that cost was
+   accepted.
 4. **`30-toolchains`** (once, after): rustup (`-y --no-modify-path`, since
    `.bashrc` is already managed), the `wasm32-unknown-unknown` target, nvm,
    bun, deno, then `sudo usermod -aG docker $USER`.
@@ -301,10 +322,3 @@ Ubuntu LTS upgrade.
 - **XFCE:** the XML files change every time you touch a setting, so `chezmoi
   re-add ~/.config/xfce4` after a deliberate change, and commit it with a
   message saying what the change was. The XML diff won't tell you.
-
-## Open decisions
-
-- **`ubuntu-desktop` alongside `xfce4`:** keep both, or install
-  `xubuntu-desktop` and drop the GNOME half. Dropping it removes the dconf step
-  and most of the snap base, but it's a change to the machine, not just a
-  capture of it, so decide it separately.
