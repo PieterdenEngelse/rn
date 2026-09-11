@@ -222,6 +222,18 @@ wire! {
         /// declared: an undeclared field is one `fe` silently drops.
         #[serde(default)]
         pub tracker: Option<TrackerHealth>,
+        /// The backend's own clock, epoch ms, when this was answered.
+        ///
+        /// Every other time in this payload is a backend timestamp, so a page
+        /// turning one into "4m ago" has to subtract it from a clock on the
+        /// same side. The browser's is on the other: a viewer on a machine
+        /// whose clock is off by a minute read every duration off by that
+        /// minute, and a headless screenshot — whose virtual clock runs ahead
+        /// — showed a listener bound 26 seconds longer than the process that
+        /// holds it had existed. `None` from a backend older than the field;
+        /// the page falls back to its own clock then.
+        #[serde(default)]
+        pub now: Option<f64>,
     }
 }
 
@@ -262,5 +274,6 @@ mod tests {
         assert_eq!(hooks.since, None);
         assert_eq!(hooks.traffic, HooksTraffic::default());
         assert_eq!(out.tracker, None);
+        assert_eq!(out.now, None, "an older backend sends no clock, and the page falls back");
     }
 }

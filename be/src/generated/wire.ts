@@ -545,7 +545,20 @@ status: string, node: string, hooks: HooksHealth | null,
  * Sent since the tracker landed and read by nothing until this was
  * declared: an undeclared field is one `fe` silently drops.
  */
-tracker: TrackerHealth | null, };
+tracker: TrackerHealth | null, 
+/**
+ * The backend's own clock, epoch ms, when this was answered.
+ *
+ * Every other time in this payload is a backend timestamp, so a page
+ * turning one into "4m ago" has to subtract it from a clock on the
+ * same side. The browser's is on the other: a viewer on a machine
+ * whose clock is off by a minute read every duration off by that
+ * minute, and a headless screenshot — whose virtual clock runs ahead
+ * — showed a listener bound 26 seconds longer than the process that
+ * holds it had existed. `None` from a backend older than the field;
+ * the page falls back to its own clock then.
+ */
+now: number | null, };
 
 /**
  * One V8 heap space that currently holds something.

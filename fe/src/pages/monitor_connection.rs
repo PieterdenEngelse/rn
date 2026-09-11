@@ -237,7 +237,11 @@ fn ConnectionBoards(c: ConnectionResponse, m: Option<NodeMetrics>, h: Option<Hea
     // The Listeners board reads /api/health and nothing else. Both ports serve
     // the internet, so neither has a route that could report on itself; the
     // API reports for them from inside the same process.
-    let now = js_sys::Date::now();
+    //
+    // Durations are taken against the backend's clock, sent with the counts,
+    // because every timestamp here is the backend's. The browser's clock is
+    // only the fallback for a backend too old to send one.
+    let now = h.as_ref().and_then(|h| h.now).unwrap_or_else(js_sys::Date::now);
     let hooks_h = h.as_ref().and_then(|h| h.hooks.clone());
     let tracker_h = h.as_ref().and_then(|h| h.tracker.clone());
     // Absent rather than zero when the health payload did not arrive: a zero
@@ -611,6 +615,9 @@ fn ConnectionBoards(c: ConnectionResponse, m: Option<NodeMetrics>, h: Option<Hea
                                             span { class: "font-mono text-gray-300", "GET /api/health" }
                                             ". Not from the listeners themselves: each has exactly one public route, and a route that reported on the door would be a second thing a stranger could reach. The counts live in memory and start again at zero whenever the backend restarts, which is why every group starts with how long its socket has been bound."
                                         }
+                                        p { class: "mt-2 text-gray-200 leading-relaxed",
+                                            "Every duration here — bound for, and how long ago the last request was — is worked out against the backend's own clock, which the API sends with the counts. The timestamps are the backend's, so subtracting them from this browser's clock would add whatever this machine's clock is off by, and a viewer elsewhere would read every figure wrong by the same amount."
+                                        }
                                     }
                                     div {
                                         h4 { class: "text-sm font-semibold text-gray-300", "Who can move them" }
@@ -690,7 +697,10 @@ fn ConnectionBoards(c: ConnectionResponse, m: Option<NodeMetrics>, h: Option<Hea
                         why: "The quickest check that a delivery you just triggered arrived: push, then look here, before reading any log.".to_string(),
                         if_wrong: "Nothing changing after the provider reports sending means the request never reached this socket. The board's own panel lists the ways that happens and where the evidence is instead.".to_string(),
                     }
-                    div { class: "text-xs font-semibold text-gray-300 mt-2", "{tracker_heading}" }
+                    // A rule above the second group, not just a gap: at the
+                    // row spacing the two groups ran together, and "Tracker"
+                    // read as one more row of the hooks door.
+                    div { class: "text-xs font-semibold text-gray-300 mt-2 pt-2 border-t border-gray-700", "{tracker_heading}" }
                     Metric {
                         label: "bound for",
                         value: tracker_bound,

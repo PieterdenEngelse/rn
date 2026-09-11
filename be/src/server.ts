@@ -423,6 +423,10 @@ export function createApp() {
                 hooks: hooksState,
                 tracker: trackerState,
                 mail: mailState,
+                // The clock every timestamp above was taken on. A page
+                // subtracting them from its own clock inherits whatever the
+                // viewer's machine is off by; see HealthResponse.now.
+                now: Date.now(),
             });
             return done(200);
         }
