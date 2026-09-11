@@ -692,8 +692,10 @@ yours.
   public unauthenticated endpoint, which is the one thing rn has never had.
 - `docs/packaging.md` — shipping this as an installable app.
 - `docs/os.md` — rebuilding the dev machine itself with chezmoi: what gets
-  captured, the bootstrap scripts, and how to prove a restore works. Phase 1
-  (the private `dotfiles` repo and its `capture.sh`) exists; the rest is plan.
+  captured, the bootstrap scripts, and how to prove a restore works. Phases
+  1 to 3 exist: the private `dotfiles` repo, `capture.sh`, the dotfiles and the
+  age-encrypted secrets. The bootstrap scripts and the restore test are
+  still plan.
 - `docs/n8n.md` — what is worth borrowing from n8n and what is not, with steps.
 - `docs/todo.md` — open work, each item saying what goes wrong while it stays
   open.

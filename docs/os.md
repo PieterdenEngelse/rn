@@ -1,9 +1,10 @@
 # Rebuilding this machine with chezmoi
 
-Plan, written 2026-09-11. **Phase 1 exists:** the private source repo
-`PieterdenEngelse/dotfiles`, checked out at `~/.local/share/chezmoi`, with
-`capture.sh` and the curated package lists. Everything from Phase 2 on is
-still plan, and chezmoi itself isn't installed yet. It's about the
+Plan, written 2026-09-11. **Phases 1 to 3 exist:** the private source repo
+`PieterdenEngelse/dotfiles`, checked out at `~/.local/share/chezmoi`, holds
+`capture.sh`, the curated package lists, the dotfiles, and the age-encrypted
+secrets. chezmoi v2.72.1 is in `~/.local/bin`. The bootstrap scripts (Phase 4)
+and the restore test (Phase 5) are still plan. It's about the
 machine rn runs on, not about rn itself, but it lives here because
 rebuilding the machine is mostly rebuilding what rn needs.
 
@@ -69,7 +70,8 @@ which is runtime state rather than configuration.
 A **private** GitHub repo, `PieterdenEngelse/dotfiles`, checked out at
 `~/.local/share/chezmoi`:
 
-    .chezmoi.toml.tmpl              # asks hostname/role once; sets age recipient
+    .chezmoi.toml.tmpl              # encryption, age identity + recipient, umask
+    secrets/                        # age-encrypted values that templates read
     .chezmoiignore                  # *.bak*, and hardware files on other machines
     .chezmoiexternal.toml           # nvm, tpm, anything fetched rather than stored
 
@@ -197,6 +199,15 @@ has drifted (`diff packages/apt.txt packages/apt.raw`), not to decide for you.
 Then delete every `*.bak*` from the source directory and list the pattern in
 `.chezmoiignore`.
 
+**One umask for everything.** chezmoi records whether a file is executable or
+private, and derives every other permission bit from one `umask`. The files
+here disagreed: 61 of 70 were group-writable (664/775, Ubuntu's default
+umask), and 9 were 644/755. That covers the systemd units, `.bashrc`, `.profile` and
+three panel launchers. The config sets `umask = 0o002` to match the majority,
+so the first `apply` on this machine makes those 9 group-writable. On a
+one-user machine that is cosmetic, and it is the only difference `chezmoi
+diff` shows: 0 content lines, checked 2026-09-11.
+
 **xfconf is the one trap here.** `xfconfd` holds the settings in memory and
 writes its own copy back over the XML files at logout, so writing the files
 under a running XFCE session gets them silently reverted. There are two ways
@@ -232,14 +243,22 @@ paper, or both.
 | Secret | Plan |
 |---|---|
 | `~/.ssh/id_ed25519` | **Carried as-is**, age-encrypted, so a rebuilt machine is the same identity to anything that trusts this key. That does *not* include GitHub, where the key isn't registered: git to GitHub goes over HTTPS through `gh`. Registering it (`gh ssh-key add`, which needs the `admin:public_key` scope this `gh` login lacks) would be a separate decision. `id_ed25519.pub` and `known_hosts` go in plain, and `authorized_keys` is left out (it's empty). chezmoi's `private_` prefix gives `~/.ssh` 0700 and the key 0600. Get that wrong and ssh refuses the key, which looks like an auth failure rather than a permissions one. The cost of carrying one key: if it leaks, every machine that has it is exposed at once. |
-| `rclone.conf` | age-encrypted. The OAuth refresh tokens in it do expire, so the checklist says to run `rclone config reconnect gdrive:` if a mount fails. |
-| `~/.config/rn/credentials` | age-encrypted, or re-entered. `docs/sec.md` in rn is the authority on what is in it. |
+| `rclone.conf` | age-encrypted, as a **`create_`** entry. rclone rewrites the file whenever it refreshes a token, so a normal entry would have `chezmoi apply` put a stale token back over a live one. `create_` writes it only when it is missing, which is the fresh-machine case. The refresh tokens do expire eventually, so the checklist says to run `rclone config reconnect gdrive:` if a mount fails. |
+| `~/.config/rn/credentials` | age-encrypted, `create_` for the same reason: rn writes this file itself. `docs/sec.md` is the authority on what is in it. |
+| `ANTHROPIC_API_KEY` | Exported on the last line of `.bashrc`, so `.bashrc` is a template (`dot_bashrc.tmpl`) whose line reads `secrets/anthropic_api_key.age` through `decrypt`. The rendered file is byte-identical to the original (checked), so the key is in the repo only as ciphertext. |
 | gh, Tailscale, browser sessions | Not captured. Signing in again is the correct behaviour. |
 
 The age identity is the one thing that can't be bootstrapped, since it
-decrypts everything else. `.chezmoi.toml.tmpl` prompts for its path on
-`init`. Test that a restore actually decrypts before you rely on it: an age
-key you have never used to decrypt is a guess, not a backup.
+decrypts everything else. It lives at `~/.config/chezmoi/key.txt` (mode 600,
+never in the repo), and `.chezmoi.toml.tmpl` names that path and carries the
+public recipient. On a fresh machine, put the key there before running
+`init --apply`. It was generated with `chezmoi age-keygen`: chezmoi's
+built-in age does all the encryption, so the `age` binary is optional
+rather than a prerequisite. Test that a restore actually decrypts before you
+rely on it: an age key you have never used to decrypt is a guess, not a
+backup. Every secret was round-tripped when it was added (`chezmoi cat`
+against the original, all identical), which checks the key on this machine
+and nothing about a copy of it kept somewhere else.
 
 ## Phase 4: the bootstrap scripts
 
