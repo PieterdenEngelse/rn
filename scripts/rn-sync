@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# Put one agent worktree back on main, when that costs nothing.
+#
+# The branches ca/cb/cc exist because git will not check the same branch out in
+# two worktrees — "fatal: 'main' is already used by worktree at /home/pde/rn".
+# They are not a workflow. This keeps them from becoming one: at every launch a
+# worktree that has nothing of its own is fast-forwarded to origin/main, so a
+# session starts where main is rather than wherever it was left days ago.
+#
+# `rn` is included, and is the reason the guards below are not optional: it is
+# the user's own checkout, holding the branch every landing pushes to, so it
+# drifts behind the moment anyone lands from a worktree — and it is also the one
+# most likely to have somebody halfway through something in it.
+#
+# It never destroys anything. Three cases stop it, and each says so rather than
+# proceeding quietly:
+#
+#   - uncommitted work in the tree  -> left alone, because a fast-forward with
+#     a dirty tree is how a peer's in-flight edits get mixed into a rebase
+#   - commits not yet on main       -> left alone; that is what rn-land is for
+#   - no network                    -> left alone; a stale origin/main is not a
+#     reason to move a branch anywhere
+set -euo pipefail
+
+worktree=${1:?usage: rn-sync <rn|ca|cb|cc>}
+dir=/home/pde/$worktree
+[ -d "$dir" ] || { echo "rn-sync: $dir does not exist" >&2; exit 2; }
+
+git -C "$dir" fetch -q origin 2>/dev/null || {
+    echo "rn-sync: $worktree left as is — could not reach origin" >&2
+    exit 0
+}
+
+# The generated stylesheet drifts on its own, and that alone is not work.
+#
+# A Tailwind `--watch` beside a dev server adds rules as classes appear and does
+# not prune them when the source changes back, so fe/assets/styling/output.css
+# grows for as long as a pane is serving. Measured from identical source: a
+# one-shot build gives the committed bytes, the watcher's file was 42 bytes
+# larger, and after a day of edits it had reached 125090 against 100008. Being a
+# committed file, that counts as uncommitted work — which stopped every landing
+# from reaching ~/rn, the one checkout the user is actually looking at. It was
+# cleared by hand four times in one session before it was worth automating.
+#
+# A one-shot build is authoritative where the watcher is not. So when the sheet
+# is the *only* thing dirty, rebuild it and look again. If it then matches HEAD
+# there was never anything to keep and this proceeds; if it still differs,
+# somebody genuinely changed the stylesheet and the guard below stops as before.
+# Nothing is discarded either way: the rebuild is a function of committed
+# source, not a `git checkout` of the file.
+dirty=$(git -C "$dir" status --porcelain)
+if [ "$dirty" = " M fe/assets/styling/output.css" ] && [ -d "$dir/fe/node_modules" ]; then
+    (cd "$dir/fe" && npm run --silent css:build) >/dev/null 2>&1 || true
+    if [ -z "$(git -C "$dir" status --porcelain)" ]; then
+        echo "rn-sync: $worktree — rebuilt a stylesheet the watcher had drifted" >&2
+        dirty=""
+    else
+        dirty=$(git -C "$dir" status --porcelain)
+    fi
+fi
+
+if [ -n "$dirty" ]; then
+    echo "rn-sync: $worktree has uncommitted work — left where it is" >&2
+    exit 0
+fi
+
+# Ahead of main is unlanded work, and the whole point of the check: this script
+# must be safe to run on a worktree whose session is mid-series.
+ahead=$(git -C "$dir" rev-list --count origin/main..HEAD)
+if [ "$ahead" -gt 0 ]; then
+    echo "rn-sync: $worktree has $ahead commit(s) not on main — run rn-land there" >&2
+    exit 0
+fi
+
+behind=$(git -C "$dir" rev-list --count HEAD..origin/main)
+[ "$behind" -eq 0 ] && exit 0
+
+git -C "$dir" merge --ff-only origin/main >/dev/null
+echo "rn-sync: $worktree moved $behind commit(s) up to main" >&2

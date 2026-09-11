@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# Put this worktree's commits on main. The only git command a session needs.
+#
+# Run it from anywhere inside a worktree. It rebases onto main so the push is a
+# fast-forward, runs the full suite, and pushes straight to main — the branch
+# name never appears, because it is plumbing rather than a decision anyone made.
+#
+# The push is `HEAD:main` rather than a local merge on purpose. main is checked
+# out in ~/rn, where somebody is usually working; moving the local ref means
+# operating inside that checkout, and git refuses to move a branch another
+# worktree holds anyway. Pushing the ref lands the work without reaching into
+# anyone's tree — theirs goes one commit behind until they pull, which costs
+# them nothing.
+set -euo pipefail
+
+root=$(git rev-parse --show-toplevel 2>/dev/null) || {
+    echo "rn-land: not inside a git worktree" >&2; exit 2
+}
+cd "$root"
+
+if [ -n "$(git status --porcelain)" ]; then
+    echo "rn-land: commit or discard your changes first — this lands commits, not a working tree" >&2
+    git status --short >&2
+    exit 1
+fi
+
+git fetch -q origin
+
+if [ "$(git rev-list --count origin/main..HEAD)" -eq 0 ]; then
+    echo "rn-land: nothing to land — this worktree has no commits main lacks"
+    exit 0
+fi
+
+# Two agents own the whole repository, so two of them editing one file collide
+# nowhere on disk — separate checkouts — and meet here, in the rebase, when the
+# second one lands. Left to `set -e` that would abort the script with a rebase
+# half-applied and the worktree in a conflicted state nobody asked for: the
+# session would discover it later, from a `git status` it had no reason to run.
+# So the conflict is caught, unwound, and named.
+rebase_onto_main() {
+    local behind
+    behind=$(git rev-list --count HEAD..origin/main)
+    [ "$behind" -eq 0 ] && return 0
+    echo "rn-land: rebasing $behind commit(s) of main under your work"
+    if git rebase origin/main; then
+        return 0
+    fi
+    local clashed
+    clashed=$(git diff --name-only --diff-filter=U)
+    git rebase --abort
+    echo "rn-land: STOPPED — another session changed the same file(s) on main:" >&2
+    printf '  %s\n' $clashed >&2
+    echo "rn-land: nothing was landed, and your branch is exactly as it was." >&2
+    echo "rn-land: resolve it yourself with 'git rebase origin/main', then run rn-land again." >&2
+    exit 1
+}
+
+rebase_onto_main
+
+# Checked here rather than trusted: what lands on main is what everybody else
+# starts their next session from, and a red suite there costs three sessions
+# rather than one.
+echo "rn-land: running the full suite"
+./scripts/check.sh
+
+landing=$(git log --oneline origin/main..HEAD)
+# One retry, for the case worth retrying: somebody landed between the fetch
+# above and this push. Anything else is a real failure and should be read.
+if ! git push -q origin HEAD:main 2>/dev/null; then
+    echo "rn-land: main moved under us — rebasing and trying once more"
+    git fetch -q origin
+    rebase_onto_main
+    ./scripts/check.sh
+    landing=$(git log --oneline origin/main..HEAD)
+    git push -q origin HEAD:main
+fi
+
+git fetch -q origin
+echo "rn-land: landed on main —"
+printf '  %s\n' "$landing"
+echo "rn-land: main is now at $(git log --oneline -1 origin/main)"
+
+# ~/rn is where the dev server on :1790 watches, and :1790 is the view of this
+# project. A landing that stops at the remote is one nobody can see: the user
+# would have to be told to pull, every time, for a change they asked for. So
+# the last step of landing is to put it in front of them — dx notices the files
+# change and reloads on its own.
+#
+# rn-sync rather than a pull here, for its guards: a checkout with uncommitted
+# work or commits of its own is left alone with a line saying which, so this
+# can never reach into a tree somebody is working in.
+/home/pde/.local/bin/rn-sync rn || true

@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Start (or re-attach to) one scoped `rn` claude agent in its own tmux session.
+#
+# Used as the command of each worktree's folderOpen task: VS Code shows the
+# three agents side by side (they share a presentation group), while tmux keeps
+# each one alive across VS Code restarts. Closing VS Code only detaches.
+set -euo pipefail
+
+worktree=${1:?usage: rn-agent <ca|cb|cc>}
+
+# 1790 is the user's own frontend (docs/dev.md, and the backend's CORS
+# default). The agents start one above it so none of them can take it.
+case $worktree in
+    ca) port=1791 ;;
+    cb) port=1792 ;;
+    cc) port=1793 ;;
+    *)  echo "rn-agent: unknown worktree '$worktree'" >&2; exit 2 ;;
+esac
+
+dir=/home/pde/$worktree
+[ -d "$dir" ] || { echo "rn-agent: $dir does not exist" >&2; exit 2; }
+
+# Fence the agent into its slice of the repo before it starts. The deny rules
+# are local-only by design, so a recreated worktree comes back unscoped with
+# nothing to say so; a failure here stops the launch rather than quietly
+# handing this agent the whole repo.
+/home/pde/.local/bin/rn-scope "$worktree"
+
+# VS Code launched from a tmux pane passes TMUX/TMUX_PANE down to every
+# integrated terminal it spawns. This process is not actually inside tmux, so
+# leaving them set would make tmux refuse to nest. Clear them.
+unset TMUX TMUX_PANE
+
+# -A attaches if the session already exists, otherwise creates it; on the
+# attach path the env and command below are ignored, which is what we want.
+# No RN_CORS_ORIGIN here on purpose. A shell variable beats node's
+# --env-file, so an agent that started the backend would narrow CORS to its
+# own port and break every other preview. be/.env lists all four origins for
+# the single backend instead.
+exec tmux new-session -A -s "$worktree" -c "$dir" \
+    -e "CARGO_TARGET_DIR=/home/pde/.cache/rn-target" \
+    -e "PORT=$port" \
+    "${CLAUDE_BIN:-/home/pde/.local/bin/claude}"

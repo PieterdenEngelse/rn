@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Start (or re-attach to) the three scoped `rn` claude agents as one tmux
+# session split into three side-by-side panes: ca | cb | cc.
+#
+# Panes share one cargo target dir so builds serialise on cargo's own lock
+# instead of thrashing a 2-core box, and each gets its own dx port.
+# The session outlives VS Code; closing the terminal only detaches.
+set -euo pipefail
+
+SESSION=rn3
+WINDOW=agents
+TARGET=/home/pde/.cache/rn-target
+CLAUDE_BIN=${CLAUDE_BIN:-$(command -v claude || echo /home/pde/.local/bin/claude)}
+
+pane() {  # pane <worktree> <port>
+    printf '%s' "-c /home/pde/$1 \
+-e CARGO_TARGET_DIR=$TARGET \
+-e PORT=$2 \
+-e RN_CORS_ORIGIN=http://localhost:$2,http://127.0.0.1:$2"
+}
+
+if ! tmux has-session -t "$SESSION" 2>/dev/null; then
+    # shellcheck disable=SC2046
+    tmux new-session  -d -s "$SESSION" -n "$WINDOW" $(pane ca 1790) "$CLAUDE_BIN"
+    # shellcheck disable=SC2046
+    tmux split-window -h -t "$SESSION:$WINDOW" $(pane cb 1791) "$CLAUDE_BIN"
+    # shellcheck disable=SC2046
+    tmux split-window -h -t "$SESSION:$WINDOW" $(pane cc 1792) "$CLAUDE_BIN"
+
+    tmux select-pane -t "$SESSION:$WINDOW.0"
+    # size to the most recent client, so attaching a small second client
+    # does not shrink the panes for everyone
+    tmux set-option -w -t "$SESSION:$WINDOW" window-size latest
+fi
+
+# re-even the panes on every launch; a detached client may have left them ragged
+tmux select-layout -t "$SESSION:$WINDOW" even-horizontal
+
+[ -n "${RN_AGENTS_NO_ATTACH:-}" ] && exit 0
+
+# Attach in *this* terminal, always. TMUX/TMUX_PANE can be inherited by a
+# process that is not actually running inside tmux (VS Code launched from a
+# tmux pane passes them to every integrated terminal it spawns); acting on
+# them would switch some unrelated window over to this session instead of
+# attaching here. Clearing them makes attach unconditional.
+unset TMUX TMUX_PANE
+exec tmux attach-session -t "$SESSION"

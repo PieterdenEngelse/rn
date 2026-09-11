@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Write the permissions.deny scope for one rn agent worktree.
+#
+# The three agents work three branches of one repo. Because the worktrees are
+# separate checkouts, two agents editing the same path collide with nothing on
+# disk — it stays invisible until the branches merge, carrying two divergent
+# versions of the same files written by agents that never saw each other. The
+# deny lists below make the change-sets disjoint by construction.
+#
+# The file this writes is excluded in .git/info/exclude ("local, never
+# shared"), and .git/info/exclude is itself never committed or cloned. So a
+# recreated worktree comes back unscoped, and a missing local settings file is
+# not an error anyone reports: with defaultMode auto the agent just starts able
+# to edit everything, looking exactly like a normal start. Hence this runs on
+# every launch, and the launcher refuses to start the agent if it fails.
+set -euo pipefail
+
+worktree=${1:?usage: rn-scope <ca|cb|cc>}
+dir=/home/pde/$worktree
+[ -d "$dir" ] || { echo "rn-scope: $dir does not exist" >&2; exit 2; }
+
+# Ownership is by agent rather than by directory, as of 2026-08-28.
+#
+# ca owns everything, with no deny rules at all — including paths outside the
+# repository. cb and cc own the whole repository in their own worktree: the
+# be/ fe/ docs/ split is gone, so two of them editing the same file is possible
+# again and is handled by the agents coordinating rather than by this file.
+#
+# What this cannot express: "cb may edit the repository and nothing else". That
+# is a whitelist, and permissions.deny is a blacklist — there is no pattern for
+# "everywhere except here". Confinement outside the repository is therefore not
+# enforced by this file; a PreToolUse hook is the only thing that would.
+case $worktree in
+    ca) deny=() ;;
+    cb) deny=() ;;
+    cc) deny=() ;;
+    *)  echo "rn-scope: unknown worktree '$worktree'" >&2; exit 2 ;;
+esac
+
+if [ ${#deny[@]} -eq 0 ]; then
+    entries=""
+else
+    entries=$(printf '      "Edit(%s)",\n' "${deny[@]}" | sed '$ s/,$//')
+fi
+canonical="{
+  \"permissions\": {
+    \"deny\": [
+$entries
+    ]
+  }
+}"
+
+target=$dir/.claude/settings.local.json
+mkdir -p "$dir/.claude"
+
+if [ ! -e "$target" ]; then
+    printf '%s\n' "$canonical" > "$target"
+    echo "rn-scope: wrote missing $worktree scope -> $target" >&2
+elif ! printf '%s\n' "$canonical" | cmp -s - "$target"; then
+    # Deliberately not overwritten: a hand-edit is more likely to be
+    # intentional than stale. Say so once instead of silently reverting it.
+    echo "rn-scope: $target differs from the canonical $worktree scope; left as is" >&2
+fi

@@ -349,6 +349,12 @@ Detail, measured sizes and the build checklist: `docs/packaging.md`.
   info-panel text
 - **Spawning processes**: absolute paths and an explicitly constructed
   environment, every time — see Runtime Rules
+- **The `rn-*` helpers** (`rn-land`, `rn-sync`, `rn-grid`, `rn-agent`,
+  `rn-agents`, `rn-claim`, `rn-scope`, `rn-view`) live in `scripts/`.
+  `~/.local/bin/rn-*` are symlinks to `~/rn/scripts/`, meaning main as synced,
+  and not to the worktree you are in. So an edit to one does nothing until it
+  lands. That is deliberate: `rn-grid.service` and every pane should run one
+  copy, and the landed one is the copy that passed `check.sh`
 
 ## Collaboration Style
 

@@ -1,0 +1,200 @@
+#!/usr/bin/env bash
+# Point :1790 — the view — at a worktree, without landing anything.
+#
+# `dx` watches the directory it was started in and nothing else, so :1790 shows
+# whatever tree its server was launched from, which is normally ~/rn. That is
+# why work in a worktree has had to land before anyone could look at it: landing
+# runs rn-sync, rn-sync moves ~/rn, and ~/rn is what that server watches. Fine
+# for finished work and backwards for work you want eyes on *before* it lands.
+#
+# This stops the server on :1790 and starts one for the worktree you name, on
+# the same port, in the foreground. Ctrl-C to stop it; `rn-view rn` to put the
+# view back where it was.
+#
+# It reaches into no tree and changes no file. The only state it touches is a
+# note of which backend each worktree was last built against — see REBUILD.
+#
+# ## The three things that make this go wrong, all handled here
+#
+# **The compiled-in API address.** `fe` reads RN_API_BASE through `option_env!`,
+# which Cargo does not treat as an input: change it and nothing rebuilds, so the
+# bundle keeps calling the address it was built with and the page says the
+# backend is unreachable while the backend is plainly running. CLAUDE.md says so
+# in as many words. Handled by remembering the last address per worktree and
+# touching the file that reads it when it changes.
+#
+# **CORS.** scripts/dev-ports.sh gives each worktree's backend an allowlist
+# derived from that worktree's own frontend port, so ~/cc's backend on 3040
+# answers origin :1793 and not :1790. Point a frontend on 1790 at it and every
+# fetch fails while both processes look healthy. Handled by asking the backend,
+# with the Origin header the browser will actually send, before starting
+# anything.
+#
+# **Which tree you are looking at.** Nothing on the page says. The banner below
+# is the whole of the answer, so it is loud and it names the worktree.
+set -euo pipefail
+
+# The view. One port, and the only one this script will bind — the whole point
+# is that :1790 is where the user already looks.
+PORT_VIEW=1790
+
+# The backend :1790 normally talks to: the launcher-supervised one, holding
+# whatever is on main. Right for any branch that does not change be/.
+API_DEFAULT=3010
+
+usage() {
+    cat >&2 <<'USAGE'
+usage: rn-view [worktree] [--api PORT]
+
+  worktree   rn, ca, cb, cc — defaults to the one you are standing in
+  --api      backend port to build against (default 3010, the launcher's)
+
+  rn-view          show the worktree you are in, on :1790
+  rn-view cc       show ~/cc on :1790, against main's backend
+  rn-view cc --api 3040   ...against ~/cc's own backend
+  rn-view rn       put the view back
+USAGE
+    exit 2
+}
+
+worktree=""
+api_port=$API_DEFAULT
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --api) api_port=${2:?--api needs a port}; shift 2 ;;
+        -h|--help) usage ;;
+        -*) echo "rn-view: unknown option $1" >&2; usage ;;
+        *) [ -n "$worktree" ] && usage; worktree=$1; shift ;;
+    esac
+done
+
+# No argument means the tree you are in, the way rn-land takes no argument.
+if [ -z "$worktree" ]; then
+    root=$(git rev-parse --show-toplevel 2>/dev/null) || {
+        echo "rn-view: not inside a worktree, and none named" >&2; usage
+    }
+    worktree=$(basename "$root")
+fi
+
+dir=/home/pde/$worktree
+[ -d "$dir/fe" ] || { echo "rn-view: $dir/fe does not exist" >&2; exit 2; }
+
+api_base="http://127.0.0.1:$api_port"
+
+# --- is that backend there, and will it talk to a page served from :1790? ----
+#
+# Asked rather than assumed, with the Origin the browser will send. A backend
+# that is up and refuses this origin is the failure worth catching here: it
+# renders as "backend unreachable" on a page whose backend is running, and the
+# reason is invisible from both ends.
+origin="http://localhost:$PORT_VIEW"
+# `|| true` inside, not outside: `pipefail` is on, so a refused connection is
+# curl's exit 7 becoming the pipeline's, and `set -e` would end the script here
+# — before the message below, which is the one worth reading.
+allowed=$(curl -s -m 3 -D- -o /dev/null -H "Origin: $origin" "$api_base/api/health" 2>/dev/null |
+    tr -d '\r' | sed -n 's/^[Aa]ccess-[Cc]ontrol-[Aa]llow-[Oo]rigin: //p' || true)
+
+if [ -z "$allowed" ]; then
+    echo "rn-view: nothing is answering on $api_base" >&2
+    if [ "$api_port" = "$API_DEFAULT" ]; then
+        echo "rn-view: that is the launcher's backend — start it with be/s in ~/rn" >&2
+    else
+        echo "rn-view: start it with be/d in ~/$worktree, and see the note below" >&2
+    fi
+    exit 1
+fi
+
+if [ "$allowed" != "$origin" ]; then
+    echo "rn-view: the backend on :$api_port will not answer a page served from $origin" >&2
+    echo "rn-view: it allows '$allowed' — its allowlist comes from its own PORT." >&2
+    echo "rn-view: restart it with the view's origin, then run this again:" >&2
+    echo "  cd ~/$worktree/be && RN_CORS_ORIGIN=$origin,http://127.0.0.1:$PORT_VIEW ./d" >&2
+    echo "rn-view: nothing was started, and :$PORT_VIEW is untouched." >&2
+    exit 1
+fi
+
+# --- a branch whose backend is not the one you are pointing at ---------------
+#
+# A warning rather than a refusal: pointing a changed frontend at main's backend
+# is a perfectly reasonable thing to do on purpose, and only you know whether
+# the parts you want to look at need the new endpoints. Said out loud because
+# the failure it produces — one panel empty, everything else fine — is read as a
+# bug in the panel.
+if [ "$api_port" = "$API_DEFAULT" ] && [ "$worktree" != "rn" ]; then
+    if ! git -C "$dir" diff --quiet origin/main -- be shared 2>/dev/null; then
+        echo "rn-view: note — ~/$worktree changes be/ or shared/, and you are pointing at" >&2
+        echo "rn-view: main's backend on :$API_DEFAULT. Anything needing a new endpoint will" >&2
+        echo "rn-view: read as an empty or failing panel. Use --api for its own backend." >&2
+    fi
+fi
+
+# --- REBUILD: the compiled-in address ----------------------------------------
+#
+# `option_env!` is evaluated at compile time and Cargo does not know it is an
+# input, so a bundle built against one backend keeps calling it after you ask
+# for another. Nothing warns; the page just says the backend is unreachable.
+#
+# The note lives outside the repo so switching views never dirties a tree, and
+# the touch is conditional so an unchanged address costs nothing.
+stamp_dir=$HOME/.cache/rn-view
+mkdir -p "$stamp_dir"
+stamp=$stamp_dir/$worktree
+if [ "$(cat "$stamp" 2>/dev/null || true)" != "$api_base" ]; then
+    # The one file that reads it. Touching it is enough to recompile the crate
+    # with the new value, and cheaper than the clean build CLAUDE.md mentions.
+    touch "$dir/fe/src/api/client.rs"
+    printf '%s' "$api_base" > "$stamp"
+    echo "rn-view: API address changed — forcing a rebuild of fe so it takes"
+fi
+
+# --- free the port -----------------------------------------------------------
+#
+# Only ever a dx. Anything else is refused by name: this script exists to move
+# one dev server, and killing an unrelated process that happens to hold a port
+# is not a thing a preview command should do.
+holder=$(ss -lptnH "sport = :$PORT_VIEW" 2>/dev/null |
+    grep -o 'pid=[0-9]*' | head -1 | cut -d= -f2 || true)
+if [ -n "$holder" ]; then
+    what=$(ps -o comm= -p "$holder" 2>/dev/null || true)
+    if [ "$what" != "dx" ]; then
+        where=$(ps -o tty= -p "$holder" 2>/dev/null | tr -d ' ')
+        echo "rn-view: :$PORT_VIEW is held by ${what:-an exited process} (pid $holder) on ${where:-no tty}," >&2
+        echo "rn-view: which is not a dev server. Nothing was stopped or started." >&2
+        exit 1
+    fi
+    echo "rn-view: stopping the dx on :$PORT_VIEW (pid $holder)"
+    kill "$holder" 2>/dev/null || true
+    # Waited for rather than slept past: dx unbinds when it exits, and starting
+    # into a port that is still held is the "Address already in use" this whole
+    # script is meant to spare you.
+    for _ in $(seq 1 50); do
+        ss -lptnH "sport = :$PORT_VIEW" 2>/dev/null | grep -q . || break
+        sleep 0.2
+    done
+    if ss -lptnH "sport = :$PORT_VIEW" 2>/dev/null | grep -q .; then
+        echo "rn-view: :$PORT_VIEW is still held after 10s — nothing was started." >&2
+        exit 1
+    fi
+fi
+
+# --- say which tree, because the page will not --------------------------------
+#
+# One padded field per line rather than a hand-spaced box. The first version
+# lined the rules up against fixed text and the worktree name pushed the right
+# edge out — a box that does not close reads as something having gone wrong,
+# which is the opposite of what a reassurance banner is for.
+bar() { printf '  │ %-59s │\n' "$1"; }
+echo
+echo "  ┌─────────────────────────────────────────────────────────────┐"
+bar ":$PORT_VIEW is now showing   ~/$worktree"
+bar "its API                     $api_base"
+bar ""
+bar "Nothing on the page says so. Ctrl-C stops it;"
+bar "'rn-view rn' puts the view back."
+echo "  └─────────────────────────────────────────────────────────────┘"
+echo
+
+# serve.sh derives the build directory from the worktree's name rather than the
+# port, so this writes to that worktree's own target and cannot clobber another
+# one's — the collision that used to make a second dx a banned thing.
+exec env PORT="$PORT_VIEW" RN_API_BASE="$api_base" "$dir/fe/serve.sh" "$@"

@@ -4,7 +4,13 @@ Plan, written 2026-09-11. Nothing described here exists yet. It's about the
 machine rn runs on, not about rn itself, but it lives here because
 rebuilding the machine is mostly rebuilding what rn needs.
 
-Decided: the current ssh key is carried over, not regenerated (see Secrets).
+Decided so far:
+
+- The source repo is **private GitHub**.
+- The current ssh key is carried over, not regenerated (see Secrets).
+- The `rn-*` helpers live in rn's own `scripts/`, done 2026-09-11.
+  `~/.local/bin` holds symlinks to them, so chezmoi manages the links and
+  never the scripts (see Phase 2).
 
 **The goal:** a fresh Ubuntu install gets from a blank desktop to this one with
 a single command:
@@ -75,7 +81,8 @@ A **private** GitHub repo, `PieterdenEngelse/dotfiles`, checked out at
     dot_config/Code/User/settings.json, keybindings.json
     private_dot_config/rclone/encrypted_rclone.conf.age
     private_dot_ssh/encrypted_private_id_ed25519.age
-    dot_local/bin/executable_*
+    dot_local/bin/executable_*      # ag, audio-*, xfce helpers
+    dot_local/bin/symlink_rn-*.tmpl # each one line: ~/rn/scripts/rn-…
 
     run_once_before_00-bootstrap-prereqs.sh
     run_onchange_before_10-apt-repos.sh.tmpl
@@ -162,7 +169,8 @@ has drifted (`diff packages/apt.txt packages/apt.raw`), not to decide for you.
     chezmoi add ~/.config/xfce4/xfconf/xfce-perchannel-xml
     chezmoi add ~/.config/autostart ~/.config/devilspie2/screen_assign.lua
     chezmoi add ~/.config/systemd/user
-    chezmoi add ~/.local/bin/{ag,rn-*,audio-*,xfce-click-show-desktop.sh,…}
+    chezmoi add ~/.local/bin/{ag,audio-*,xfce-click-show-desktop.sh,…}
+    chezmoi add --follow=false ~/.local/bin/rn-*    # the links, not the scripts
 
 Then delete every `*.bak*` from the source directory and list the pattern in
 `.chezmoiignore`.
@@ -183,11 +191,15 @@ to handle it:
 out. On different hardware it describes monitors that are not there.
 
 **`~/.local/bin` needs a decision per file.** The `rn-*` scripts are rn
-tooling that lives outside the rn repo. That is worth fixing on its own terms:
-they belong in `~/rn/scripts/` with a symlink, rather than in chezmoi, where
-they would drift from the repo they drive. `rtk`, `claude` and the llama.cpp
-binaries are downloaded, not written, so they go in `.chezmoiexternal.toml` or
-in the toolchain script, never committed.
+tooling, so they live in rn's `scripts/`, and `~/.local/bin/rn-*` are symlinks
+to `~/rn/scripts/`. chezmoi carries only the links. A link points into a
+checkout that doesn't exist until `70-projects` clones it, so on a fresh
+machine it dangles for the length of one `apply`, which is harmless.
+Committing the scripts here instead would give them two sources of truth.
+
+`rtk`, `claude` and the llama.cpp binaries are downloaded, not written, so
+they go in `.chezmoiexternal.toml` or in the toolchain script, never
+committed.
 
 ## Phase 3: secrets
 
@@ -292,12 +304,6 @@ Ubuntu LTS upgrade.
 
 ## Open decisions
 
-- **Repo host:** private GitHub (recommended, since `gh` is already signed in
-  here) or a local bare repo on the Google Drive mount. Either way it has to
-  be private, even with age: the unencrypted files still describe the machine
-  in detail.
-- **`rn-*` scripts:** move them into the rn repo first (recommended), or
-  manage them here for now.
 - **`ubuntu-desktop` alongside `xfce4`:** keep both, or install
   `xubuntu-desktop` and drop the GNOME half. Dropping it removes the dconf step
   and most of the snap base, but it's a change to the machine, not just a

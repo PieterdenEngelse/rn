@@ -1,0 +1,166 @@
+#!/usr/bin/env bash
+# One tmux session laid out as a 2x3 grid, shown in a single VS Code terminal:
+#
+#     claude ca | claude cb | claude cc      <- top row, one per worktree
+#     ---------------------------------
+#       be/s    |   shell   |   fe/s         <- bottom row, the main checkout
+#
+# The VS Code panel splits terminals side by side only, so a row under a row
+# is not something it can draw; tmux can, and the agents were already in it.
+# The session outlives VS Code — closing the terminal only detaches — but only
+# because of the scope below; see spawn().
+set -euo pipefail
+
+# tasks.json closes this terminal when the script exits — right for a detach,
+# wrong for a failure nobody got to read, because the message would go with the
+# tab. So an interactive failure holds the terminal open instead. Not under the
+# service: there RN_GRID_NO_ATTACH is set, and a shell that never exits would
+# leave systemd waiting on ExecStart forever.
+trap 'st=$?; if [ "$st" -ne 0 ] && [ -z "${RN_GRID_NO_ATTACH:-}" ] && [ -t 1 ]; then
+    echo; echo "rn-grid: failed (exit $st) — terminal held so this stays readable"
+    exec bash
+fi' EXIT
+
+SESSION=rn6
+WINDOW=rn
+TARGET=/home/pde/.cache/rn-target
+CLAUDE_BIN=${CLAUDE_BIN:-/home/pde/.local/bin/claude}
+
+# A server that exits (port taken, launcher already up) would take its pane
+# down with it, leaving a hole in the grid. Keep a shell there instead, so the
+# error stays readable and the pane stays usable.
+hold() { printf 'bash -c %q' "$1"$'\n''echo; exec bash'; }
+
+# A reboot takes the tmux server with it, so the scrollback and the running
+# agents are gone whatever this script does. Their transcripts are not: Claude
+# keeps one file per conversation under ~/.claude/projects, in a directory
+# named for the working directory with the slashes turned into dashes. Resume
+# the newest one, so a reboot costs the scrollback and not the thread.
+#
+# Guarded, because bare --continue in a worktree that has never held a
+# conversation exits rather than starting one, and a pane whose command exits
+# takes the pane down with it — a hole in the grid on the first boot after a
+# new worktree is added.
+agent_cmd=()
+agent() {
+    local proj="$HOME/.claude/projects/${1//\//-}"
+    agent_cmd=("$CLAUDE_BIN")
+    compgen -G "$proj/*.jsonl" >/dev/null 2>&1 && agent_cmd+=(--continue)
+    return 0
+}
+
+# A tmux server daemonizes to ppid 1 but stays in the cgroup of whoever started
+# it — app-code-<pid>.scope when that is a VS Code terminal. Reparenting is not
+# escape: everything left in that scope is systemd's to stop when the app goes,
+# so the grid would be a hostage of the window it happens to be attached in.
+# Start the server in a scope of its own instead. Only this first command
+# matters: every later tmux call talks to that server, and the panes it forks
+# get their own tmux-spawn-*.scope regardless.
+spawn() {
+    if [ -n "${RN_GRID_OWNED:-}" ]; then
+        # Started by rn-grid.service: stay in the unit's own cgroup, which is
+        # what systemd watches to decide the grid is still up. Moving out would
+        # empty the cgroup and the unit would count as dead on arrival.
+        "$@"
+    elif [ -n "${XDG_RUNTIME_DIR:-}" ] && command -v systemd-run >/dev/null 2>&1; then
+        # No --unit: a stale scope of the same name would fail the launch, and
+        # the auto-generated run-*.scope name costs nothing. --collect drops
+        # the unit once the server exits rather than leaving it failed.
+        systemd-run --user --scope --quiet --collect \
+            --description="tmux server for the $SESSION grid" -- "$@"
+    else
+        "$@"
+    fi
+}
+
+# Fence each agent into its slice of the repo first — see rn-scope. Done
+# before the session exists so a failure stops the launch here, instead of
+# bringing up three agents that can all edit each other's files.
+for w in ca cb cc; do /home/pde/.local/bin/rn-scope "$w"; done
+
+# Then put each one back on main where that costs nothing — see rn-sync. A
+# worktree branch is a name git demands, not a line of work anybody chose to
+# keep, and a session that starts three days behind main finds that out by
+# rebasing later. Never destructive: a worktree with uncommitted work or
+# unlanded commits is left exactly as it is, with a line saying which.
+for w in rn ca cb cc; do /home/pde/.local/bin/rn-sync "$w" || true; done
+
+# The session belongs to rn-grid.service, not to the terminal that asked for
+# it, so it outlives the window — closing a VS Code terminal only detaches, and
+# the agents in it keep running mid-thought. It does not outlive a logout or a
+# reboot: the user instance stops, and there is no linger, so the server dies
+# with it. What comes back at the next login is a fresh grid the unit builds
+# here, with each agent resuming its own transcript — see agent(). This script
+# stays the entry point either way: it starts the unit and then attaches, and
+# the unit starts this script with RN_GRID_OWNED=1 to build the grid in place.
+if [ -z "${RN_GRID_OWNED:-}" ] \
+   && ! tmux has-session -t "$SESSION" 2>/dev/null \
+   && systemctl --user cat rn-grid.service >/dev/null 2>&1; then
+    # Blocking on purpose: Type=forking returns once the server is up, so the
+    # attach below cannot race the session into existence.
+    systemctl --user start rn-grid.service
+fi
+
+# A grid that predates the unit — built by hand, or by a terminal from before
+# this service existed — is adopted rather than rebuilt: moving one pid costs
+# nothing, where re-creating it would kill three agents mid-thought. systemd
+# needs a process in the unit's cgroup to call it alive, and the tmux server is
+# the one process that is always there.
+if [ -n "${RN_GRID_OWNED:-}" ] && tmux has-session -t "$SESSION" 2>/dev/null; then
+    cgroup=/sys/fs/cgroup$(cut -d: -f3 /proc/self/cgroup)/cgroup.procs
+    tmux display -p '#{pid}' > "$cgroup"
+fi
+
+# ca 1791, cb 1792, cc 1793 — 1790 stays the user's own frontend.
+if ! tmux has-session -t "$SESSION" 2>/dev/null; then
+    # -x/-y so the splits divide a sane geometry while detached; the window
+    # resizes to the real client on attach (window-size latest, below).
+    agent /home/pde/ca
+    top_ca=$(spawn tmux new-session -d -x 240 -y 60 -P -F '#{pane_id}' -s "$SESSION" -n "$WINDOW" \
+        -c /home/pde/ca -e "CARGO_TARGET_DIR=$TARGET" \
+        env PORT=1791 "${agent_cmd[@]}")
+    agent /home/pde/cb
+    top_cb=$(tmux split-window -h -P -F '#{pane_id}' -t "$top_ca" \
+        -c /home/pde/cb -e "CARGO_TARGET_DIR=$TARGET" -e PORT=1792 "${agent_cmd[@]}")
+    agent /home/pde/cc
+    top_cc=$(tmux split-window -h -P -F '#{pane_id}' -t "$top_cb" \
+        -c /home/pde/cc -e "CARGO_TARGET_DIR=$TARGET" -e PORT=1793 "${agent_cmd[@]}")
+    tmux select-layout -t "$SESSION:$WINDOW" even-horizontal
+
+    # PORT=1790 explicitly: the bottom row is the user's own checkout, and 1790
+    # is its port. Without this they inherit whatever the top row set.
+    eval tmux split-window -v -t "$top_ca" -c /home/pde/rn    -e PORT=1790 $(hold '/home/pde/rn/be/s')
+    tmux split-window -v -t "$top_cb" -c /home/pde/rn -e PORT=1790
+    eval tmux split-window -v -t "$top_cc" -c /home/pde/rn/fe -e PORT=1790 $(hold '/home/pde/rn/fe/s')
+
+    tmux select-pane -t "$top_ca"
+    # size to the most recent client, so a small second client does not shrink
+    # the grid for everyone
+    tmux set-option -w -t "$SESSION:$WINDOW" window-size latest
+fi
+
+# No select-layout here on purpose: tmux's "tiled" puts six panes in 3 rows of
+# 2 whatever the window width (rows = ceil(sqrt(n))), which is the transpose of
+# what this grid is for. The explicit splits above already carry the topology,
+# and tmux scales them to the client.
+
+# Both paths land here with a server up: the one adopted above, or the one the
+# splits just built. systemd reads this file once, right after this script
+# exits, and watches that pid from then on.
+[ -n "${RN_GRID_OWNED:-}" ] && tmux display -p '#{pid}' > "$XDG_RUNTIME_DIR/rn-grid.pid"
+
+[ -n "${RN_GRID_NO_ATTACH:-}" ] && exit 0
+
+# VS Code passes TMUX/TMUX_PANE down to terminals it spawns even though they
+# are not inside tmux; acting on them would switch some other window over to
+# this session instead of attaching here.
+unset TMUX TMUX_PANE
+
+# -d: this attach detaches every other client first, so the session has exactly
+# one at a time. Without it a window reload leaves the previous window's client
+# attached beside the new one, and two clients of different sizes fight over the
+# layout — tmux sizes a session to the latest client, so the grid shrinks to
+# whichever tab was touched last. It also settles what happens to the tab left
+# behind: its attach exits here rather than lingering as a live second view of
+# the same session, and `close: true` in tasks.json then removes the tab.
+exec tmux attach-session -d -t "$SESSION"

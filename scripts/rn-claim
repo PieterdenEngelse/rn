@@ -1,0 +1,169 @@
+#!/usr/bin/env python3
+"""Refuse an edit to a shared file another live session is already editing.
+
+A PreToolUse hook. Claude Code hands it the pending tool call on stdin and
+reads its exit code: 0 lets the edit through, 2 blocks it and shows this
+script's stderr to the agent, which is why the refusal below is written to be
+read by one.
+
+It guards a short list of paths and nothing else. Three agents work three
+worktrees of one repository, so two of them editing fe/src/pages/config_jobs.rs
+collide nowhere on disk and are reconciled by rn-land's rebase — that is the
+normal case and fences would only get in its way. GUARDED is the set where a
+second writer is always a mistake rather than a merge: the files every task
+touches whatever it is about, and the generated ones, where two agents running
+the same build produce a textual conflict nobody should resolve by hand.
+
+Identity is the session id, liveness is the pid. A claim held by a session that
+crashed, was killed, or simply ended must not outlive it — a lock that needs
+someone to find and delete it is worse than the collision it prevents — so a
+claim whose pid is gone is taken over silently, as is one nothing has touched
+for TTL_MINUTES.
+
+What it does not cover, stated because the gap is invisible from inside: only
+Claude Code's own Edit/Write reach this hook. A `sed -i` through Bash, or the
+user in their editor, walks straight past it.
+"""
+
+import fcntl
+import hashlib
+import json
+import os
+import sys
+import time
+from pathlib import Path
+
+# Repo-relative, because the whole point is that ~/ca/shared/src/jobs.rs and
+# ~/cb/shared/src/jobs.rs are one file wearing two paths.
+GUARDED = (
+    "CLAUDE.md",
+    "Cargo.lock",
+    "docs/todo.md",
+    "docs/node-parameters.md",
+    "be/runtime-params.json",
+    "be/src/generated/wire.ts",
+    "fe/assets/styling/output.css",
+)
+GUARDED_PREFIXES = ("shared/src/",)
+
+WORKTREES = ("rn", "ca", "cb", "cc")
+HOME = Path.home()
+TTL_MINUTES = 30
+
+CLAIMS = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp")) / "rn-claims"
+
+
+def allow() -> None:
+    sys.exit(0)
+
+
+def deny(message: str) -> None:
+    print(message, file=sys.stderr)
+    sys.exit(2)
+
+
+def repo_relative(path: str) -> tuple[str, str] | None:
+    """(worktree, path within it), or None for anything outside the repo."""
+    try:
+        resolved = Path(path).resolve()
+    except OSError:
+        return None
+    for name in WORKTREES:
+        root = HOME / name
+        try:
+            return name, str(resolved.relative_to(root))
+        except ValueError:
+            continue
+    return None
+
+
+def guarded(rel: str) -> bool:
+    return rel in GUARDED or rel.startswith(GUARDED_PREFIXES)
+
+
+def alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # Someone else's process, so something is running under that pid. Not
+        # ours to signal, but not dead either.
+        return True
+    return True
+
+
+def main() -> None:
+    # Every failure here is a reason to get out of the way. A hook that blocks
+    # edits because its own input surprised it would be indistinguishable, from
+    # inside the session, from a repository that has gone read-only.
+    try:
+        event = json.load(sys.stdin)
+    except (json.JSONDecodeError, ValueError):
+        allow()
+
+    if event.get("tool_name") not in ("Edit", "Write", "NotebookEdit"):
+        allow()
+
+    path = (event.get("tool_input") or {}).get("file_path")
+    if not isinstance(path, str) or not path:
+        allow()
+
+    where = repo_relative(path)
+    if where is None:
+        allow()
+    worktree, rel = where
+    if not guarded(rel):
+        allow()
+
+    me = event.get("session_id") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "unknown"
+    my_pid = int(os.environ.get("CLAUDE_PID") or os.getppid())
+
+    CLAIMS.mkdir(parents=True, exist_ok=True)
+    claim = CLAIMS / hashlib.sha1(rel.encode()).hexdigest()
+
+    # One lock file for the read-decide-write, so two agents arriving in the
+    # same millisecond cannot both read "unclaimed" and both write a claim.
+    lock = CLAIMS / "lock"
+    with open(lock, "a+") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+
+        held = None
+        if claim.exists():
+            try:
+                held = json.loads(claim.read_text())
+            except (json.JSONDecodeError, OSError):
+                held = None
+
+        if held and held.get("session") != me:
+            stale_after = time.time() - TTL_MINUTES * 60
+            if alive(int(held.get("pid", 0))) and held.get("at", 0) > stale_after:
+                mins = int((time.time() - held.get("at", 0)) // 60)
+                deny(
+                    f"rn-claim: {rel} is being edited by the session in "
+                    f"~/{held.get('worktree', '?')} (claimed {mins}m ago).\n"
+                    f"This file is on the shared list — two writers here is a "
+                    f"conflict rather than a merge, so the edit was not made.\n"
+                    f"Ask that session to run rn-land, then edit this on top of "
+                    f"what it landed. Nothing is wrong with your change."
+                )
+
+        claim.write_text(
+            json.dumps(
+                {
+                    "session": me,
+                    "pid": my_pid,
+                    "worktree": worktree,
+                    "path": rel,
+                    "at": time.time(),
+                }
+            )
+        )
+
+    allow()
+
+
+if __name__ == "__main__":
+    main()
