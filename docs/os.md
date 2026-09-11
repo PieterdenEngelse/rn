@@ -1,10 +1,11 @@
 # Rebuilding this machine with chezmoi
 
-Plan, written 2026-09-11. **Phases 1 to 3 exist:** the private source repo
+Plan, written 2026-09-11. **Phases 1 to 4 exist:** the private source repo
 `PieterdenEngelse/dotfiles`, checked out at `~/.local/share/chezmoi`, holds
-`capture.sh`, the curated package lists, the dotfiles, and the age-encrypted
-secrets. chezmoi v2.72.1 is in `~/.local/bin`. The bootstrap scripts (Phase 4)
-and the restore test (Phase 5) are still plan. It's about the
+`capture.sh`, the curated package lists, the dotfiles, the age-encrypted
+secrets and the bootstrap scripts. chezmoi v2.72.1 is in `~/.local/bin`.
+The restore test (Phase 5) is still plan, so the bootstrap has only been run
+against the machine it describes. It's about the
 machine rn runs on, not about rn itself, but it lives here because
 rebuilding the machine is mostly rebuilding what rn needs.
 
@@ -51,11 +52,11 @@ them for you: signing in to Tailscale, rclone and the browsers.
 | Third-party apt repos | docker, tailscale, vscode | `/etc/apt/sources.list.d/`, keyrings |
 | snap | firefox, thunderbird, chromium, htop (everything else is base) | `snap list` |
 | VS Code | 9 extensions | `code --list-extensions`, `~/.config/Code/User/` |
-| Toolchains | rustup plus `dioxus-cli`, nvm (24.19, 24.20), bun, deno, dotnet | upstream installers |
+| Toolchains | rustup + wasm32 plus `dioxus-cli`, nvm (24.19, 24.20), deno, Claude Code. `~/.bun` and `~/.dotnet` are leftovers, not installs: no `bun` binary, and only a cache under `.dotnet` | upstream installers |
 | User binaries | `ag`, `rn-*`, `audio-*`, `rtk`, `claude`, llama.cpp, xfce helpers | `~/.local/bin` |
 | User units | `ag`, `audio-guard`, `falkordb`, `n8n-alerts`, `rclone-gdrive/onedrive`, `rn-backend`, `rn-grid` | `~/.config/systemd/user/` |
-| System units | `audio-amp-guard`, `ollama` | `/etc/systemd/system/` |
-| Hardware quirks | `es8336-quirk.conf` (`quirk=0x1b0`), `iwlwifi.conf`, `alsa-base.conf` | `/etc/modprobe.d/` |
+| System units | `audio-amp-guard` (enabled). `ollama` is disabled, and its installer writes the unit itself, so it isn't captured | `/etc/systemd/system/` |
+| Hardware quirks | `es8336-quirk.conf` (`quirk=0x1b0`). `iwlwifi.conf` and `alsa-base.conf` belong to `kmod` and `alsa-base`, unmodified (`dpkg -V`), so a fresh install brings them | `/etc/modprobe.d/` |
 | Shell | `.bashrc`, `.profile`, `.tmux.conf`, `.gitconfig` | `~` |
 | Containers | n8n (stopped deliberately since 2026-09-10) | docker |
 | **Secrets** | ssh key, rclone OAuth tokens, `~/.config/rn/credentials` | see "Secrets" below |
@@ -83,11 +84,11 @@ A **private** GitHub repo, `PieterdenEngelse/dotfiles`, checked out at
         cargo.txt                   # dioxus-cli
     desktop/
         dconf.ini                   # filtered `dconf dump`
-    system/                         # files installed to /etc with sudo
-        modprobe.d/es8336-quirk.conf
-        modprobe.d/iwlwifi.conf
-        systemd/audio-amp-guard.service
-        systemd/ollama.service
+    system/                         # mirrors /etc paths; installed with sudo
+        all/etc/lightdm/lightdm.conf.d/50-rn.conf
+        bohb-wax9/etc/modprobe.d/es8336-quirk.conf
+        bohb-wax9/etc/systemd/system/audio-amp-guard.service
+    lib/common.sh                   # helpers every run_ script sources
 
     dot_bashrc
     dot_profile
@@ -103,18 +104,22 @@ A **private** GitHub repo, `PieterdenEngelse/dotfiles`, checked out at
     dot_local/bin/executable_*      # ag, audio-*, xfce helpers
     dot_local/bin/symlink_rn-*.tmpl # each one line: ~/rn/scripts/rn-…
 
-    run_once_before_00-bootstrap-prereqs.sh
+    run_once_before_00-prereqs.sh.tmpl
     run_onchange_before_10-apt-repos.sh.tmpl
     run_onchange_after_20-apt.sh.tmpl
     run_onchange_after_21-snap.sh.tmpl
-    run_once_after_30-toolchains.sh
+    run_once_after_30-toolchains.sh.tmpl
     run_onchange_after_31-cargo.sh.tmpl
     run_onchange_after_32-vscode.sh.tmpl
     run_onchange_after_40-system-files.sh.tmpl
     run_onchange_after_50-dconf.sh.tmpl
-    run_once_after_60-user-units.sh
-    run_once_after_70-projects.sh
-    run_once_after_99-checklist.sh
+    run_onchange_after_51-xfconf.sh.tmpl
+    run_once_after_60-user-units.sh.tmpl
+    run_once_after_70-projects.sh.tmpl
+    run_once_after_99-checklist.sh.tmpl
+
+Every script is a template, if only to learn where the source directory is
+so it can source `lib/common.sh` and read the lists.
 
 ### Why this layout: `run_onchange_` does the work of a master script
 
@@ -262,10 +267,44 @@ and nothing about a copy of it kept somewhere else.
 
 ## Phase 4: the bootstrap scripts
 
+**Built 2026-09-11.** All thirteen scripts share one rule, enforced in
+`lib/common.sh`: check before acting, and call sudo only for something
+actually missing. chezmoi runs every script it hasn't recorded, on this
+machine as on a fresh one, so a script that assumes a blank machine would
+reinstall things on the first `apply` here.
+
+**How it was tested.** Each script was rendered with `chezmoi
+execute-template`, syntax-checked, and then run on this machine with `sudo`,
+`pkill`, `xfce4-panel` and `dconf load` replaced by stubs that only record
+the call. Ten of the thirteen did nothing. The other three:
+
+- `00` reached sudo for `age`, which isn't installed;
+- `40` reached sudo for LightDM's `50-rn.conf`, which is new;
+- `50` reloaded the same dconf values.
+
+It found a real bug. `install_file` is called inside `if` and `&&`, where
+bash suspends `set -e`, so a refused sudo came back as "unchanged" and the
+script printed "installed". A failed install now exits the script.
+
+**What the first real `apply` on this machine does:**
+
+- asks for sudo twice: once to install `age`, once to write `50-rn.conf`,
+  which changes nothing visible because XFCE is already your remembered
+  session;
+- reloads identical dconf values;
+- makes the 9 files described under "One umask for everything"
+  group-writable;
+- stops `xfconfd` and restarts the panel if xfconfd happens to be running
+  at that moment;
+- prints one note: `~/ca` has a symlinked `node_modules` but no
+  `be/runtime`, so it is left alone.
+
+Nothing else changes.
+
 In order:
 
-1. **`00-bootstrap-prereqs`** (once, before): `apt-get install -y git curl
-   age`. Everything after assumes these.
+1. **`00-prereqs`** (once, before): `apt-get install -y git curl gh age`.
+   Everything after assumes these.
 2. **`10-apt-repos`** (onchange, before): install the docker, tailscale and
    vscode keyrings and source files from `packages/apt-repos/`, then `apt-get
    update`. Hash the directory into the script so a new repo re-runs it.
@@ -289,30 +328,49 @@ In order:
    packages and snaps keep updating alongside XFCE's, and that cost was
    accepted.
 4. **`30-toolchains`** (once, after): rustup (`-y --no-modify-path`, since
-   `.bashrc` is already managed), the `wasm32-unknown-unknown` target, nvm,
-   bun, deno, then `sudo usermod -aG docker $USER`.
+   `.bashrc` is already managed), the `wasm32-unknown-unknown` target, nvm
+   0.40.3 into `~/.config/nvm` (`PROFILE=/dev/null`, for the same reason),
+   deno, Claude Code, then `sudo usermod -aG docker $USER`.
 5. **`31-cargo`**, **`32-vscode`** (onchange): `cargo install --locked` over
    `cargo.txt`, `code --install-extension` over the list.
 6. **`40-system-files`** (onchange): `sudo install` the files under
-   `system/` into `/etc`, `daemon-reload`, and enable `audio-amp-guard` and
-   `ollama`. **Gate the hardware half on the machine**, since the es8336 quirk
-   and the amp guard are specific to this Huawei:
+   `system/<set>/` into `/etc`, `daemon-reload` if a unit changed, and enable
+   the units installed. That means `audio-amp-guard`, and not `ollama`,
+   which was disabled here. **The hardware half is gated on the machine**,
+   since the es8336 quirk and the amp guard are specific to this Huawei. It
+   is a separate `system/bohb-wax9/` set, installed only when:
 
        {{ if eq (output "cat" "/sys/class/dmi/id/product_name" | trim) "BOHB-WAX9" }}
 
    Put the same condition in `.chezmoiignore` so another laptop doesn't get
    `audio-guard` either. The memory note on the speaker-switch race is the
    reason these files exist, so link it from a comment in the script.
-7. **`50-dconf`** (onchange): `dconf load / < desktop/dconf.ini`.
+7. **`50-dconf`** (onchange): `dconf load / < desktop/dconf.ini`, which
+   holds six sections: input sources, ibus, interface, window-button layout,
+   the mutter keybindings and tiling-assistant. When there is no session bus,
+   as when bootstrapping from a TTY, it wraps the load in `dbus-run-session`.
+   **`51-xfconf`** (onchange) stops `xfconfd` if it is running, so that it
+   reads the new files rather than writing its copy over them. It turned out
+   to be D-Bus-activated and idle-exiting: it wasn't running mid-session when
+   tested, so the risk exists only while it is up.
 8. **`60-user-units`** (once): `systemctl --user daemon-reload` and enable
    the units. `loginctl enable-linger $USER` so `rn-backend` starts without a
    login. Leave `falkordb` and `n8n-alerts` disabled unless they were enabled
    deliberately. n8n is stopped on purpose and should stay that way.
 9. **`70-projects`** (once): clone rn to `~/rn`, create the `ca`/`cb`/`cc`
-   worktrees, run `scripts/install-node.sh` in each, `npm install` in `be/`
-   and `fe/`. Give each worktree its **own** `node_modules`: the rn
-   CLAUDE.md says the symlinked sharing was never chosen, and a rebuild is the
-   free moment to drop it.
+   worktrees (a missing branch starts at `main`), run `scripts/setup.sh` in
+   each tree (bundled runtime, `npm ci`, `.env`), `npm ci` in `fe/`, and
+   build the launcher into `~/rn/target/debug/rn`. That exact path is what
+   `rn-backend.service` runs, so the build sets `CARGO_TARGET_DIR` itself
+   rather than trusting whatever the calling pane exports. Each tree gets its
+   **own** `node_modules`: the rn CLAUDE.md says the symlinked sharing was
+   never chosen, and a rebuild is the free moment to drop it.
+   **A tree is set up only when it has neither `be/runtime` nor
+   `be/node_modules`**, which is what a fresh clone looks like. A tree with
+   one and not the other was arranged by hand. On this machine that is `~/ca`,
+   whose `node_modules` is a symlink into `~/rn`, and `npm ci` there would
+   replace the symlink with a real directory. Such a tree gets a note
+   instead.
    **Do not run a cold `dx build` here.** A from-scratch wasm build OOMs this
    machine, so leave it for the first `fe/s`, run by hand once the desktop is
    up.
