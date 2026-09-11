@@ -535,7 +535,7 @@ fn JobRow(
 
     rsx! {
         div { class: "rounded border border-gray-600 bg-gray-800 p-4",
-            div { class: PARAM_INPUT_ROW_CLASS,
+            div { class: JOB_HEADER_CLASS,
                 // `whitespace-nowrap` with `flex-wrap`, so a row too long for
                 // its column breaks *between* these items rather than inside
                 // one: without it "times out after 2m" and "View source" split
@@ -911,6 +911,20 @@ fn InputForm(
     }
 }
 
+/// A job tile's header: the name and its facts on the left, the actions on the
+/// right, top-aligned.
+///
+/// `PARAM_INPUT_ROW_CLASS` with one change, `items-start` for its `items-end`,
+/// and written out rather than appended to because two alignment utilities on
+/// one element leave the winner to the order of the generated stylesheet.
+/// Bottom alignment is right for a labelled value beside its control. It is
+/// wrong here: the two groups wrap to different heights, and a tile whose
+/// actions took three lines — Watch feeds, with "remembers 1 cursor and 45 item
+/// ids" among them — dropped its title to the third line, under its own
+/// "View source". `param-row` stays, so the last group still meets the right
+/// edge the rest of the page's buttons do.
+const JOB_HEADER_CLASS: &str = "param-row flex items-start gap-2 w-full";
+
 /// One control, chosen by the declared type.
 #[component]
 fn InputField(
@@ -919,6 +933,10 @@ fn InputField(
 ) -> Element {
     let id = field.id.clone();
     let current = draft.read().get(&field.id).cloned().unwrap_or(serde_json::Value::Null);
+    // What an empty box does, where the job said. Blank otherwise, rather
+    // than a generic "optional": a hint that says nothing trains the eye to
+    // skip the ones that do.
+    let hint = field.placeholder.clone().unwrap_or_default();
 
     match field.kind {
         JobInputType::Bool => {
@@ -947,6 +965,7 @@ fn InputField(
                     r#type: "number",
                     class: "bg-gray-900 border border-gray-600 rounded px-2 py-1 text-gray-200 text-xs w-40",
                     value: "{text}",
+                    placeholder: "{hint}",
                     onchange: move |evt| {
                         let raw = evt.value();
                         // An unparseable box is Null, which the run button
@@ -969,6 +988,7 @@ fn InputField(
                     r#type: "text",
                     class: "bg-gray-900 border border-gray-600 rounded px-2 py-1 text-gray-200 text-xs w-96",
                     value: "{text}",
+                    placeholder: "{hint}",
                     onchange: move |evt| {
                         let raw = evt.value();
                         let v = if raw.is_empty() {

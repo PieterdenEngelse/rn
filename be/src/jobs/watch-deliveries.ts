@@ -358,6 +358,7 @@ export const watchDeliveries: Job = {
             label: "Repositories",
             type: "text",
             default: "",
+            placeholder: "empty — every repository the token can see",
             info: {
                 what:
                     "Which repositories to check, as owner/name separated by commas. Empty — the " +

@@ -1559,6 +1559,19 @@ test("a scheduled job cannot declare an input the scheduler could not supply", (
     }
 });
 
+test("a placeholder is only declared where a box can show one", () => {
+    // A toggle has no empty state to describe, and the form draws none — so a
+    // placeholder on a bool input is a sentence nobody will ever see, written
+    // by someone who believed it would be read.
+    for (const job of JOBS) {
+        for (const f of job.inputs ?? []) {
+            if (f.placeholder === undefined || f.placeholder === null) continue;
+            assert.notEqual(f.type, "bool", `${job.id}.${f.id}: a toggle shows no placeholder`);
+            assert.ok(f.placeholder.length > 0, `${job.id}.${f.id}: an empty placeholder says nothing`);
+        }
+    }
+});
+
 test("every declared input carries the prose its info panel needs", () => {
     for (const job of JOBS) {
         for (const f of job.inputs ?? []) {

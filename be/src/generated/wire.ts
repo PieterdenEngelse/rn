@@ -747,7 +747,17 @@ info: JobInfo,
  * "scheduled" quietly meaning "runs with undefined everywhere" is the
  * failure worth spending a test on.
  */
-default?: JsonValue | null, };
+default?: JsonValue | null, 
+/**
+ * Grey text shown in an empty box — what leaving it empty *does*.
+ *
+ * For a field whose empty value is a choice rather than an omission,
+ * which a blank box cannot say: `watch-deliveries`' repositories,
+ * where empty means every repository the token can see. A reminder,
+ * never the explanation — that stays in `info`, since a placeholder
+ * vanishes the moment anything is typed.
+ */
+placeholder?: string | null, };
 
 /**
  * The kind of value one input takes.
