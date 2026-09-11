@@ -323,7 +323,11 @@ each other; environments can. Constraints, not preferences:
 
 The install scripts are one thing in two languages (`scripts/*.sh` and
 `scripts/*.ps1`). Change one, change the other in the same commit — a drifted
-pair is worse than a single one, because it looks maintained.
+pair is worse than a single one, because it looks maintained. `package.sh`
+and `install.sh` are the exception, and their headers say so. They build and
+install the Linux package, and Linux is the only platform in scope
+(`docs/packaging.md` §9), so a PowerShell twin arrives with a Windows build,
+not before. Writing one now would be exactly the pair that looks maintained.
 
 Detail, measured sizes and the build checklist: `docs/packaging.md`.
 
@@ -690,7 +694,9 @@ yours.
 - `docs/link-tracking.md` — click tracking on mail you send, and reading links
   out of mail that arrives. Read before either: the outbound half wants a
   public unauthenticated endpoint, which is the one thing rn has never had.
-- `docs/packaging.md` — shipping this as an installable app.
+- `docs/packaging.md` — shipping this as an installable app: the installed
+  layout, why the runtime is private, and (§11) `scripts/package.sh` and
+  `scripts/install.sh`, which build and install it.
 - `docs/os.md` — rebuilding the dev machine itself with chezmoi: what gets
   captured, the bootstrap scripts, and how to prove a restore works. Phases
   1 to 4 exist: the private `dotfiles` repo, `capture.sh`, the dotfiles, the

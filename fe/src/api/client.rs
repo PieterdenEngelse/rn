@@ -21,8 +21,10 @@ use super::wire::{
 /// Compiled in, because a wasm bundle has no environment to read at runtime:
 /// `fe/serve.sh` sets `RN_API_BASE` from the pane's port so a worktree serving
 /// itself talks to its own backend rather than to whichever one happens to
-/// hold :3010. Unset — a packaged build, or a bare `dx serve` — it stays the
-/// literal every doc names, so nothing about the default install changes.
+/// hold :3010. `scripts/package.sh` sets it to the empty string, so a packaged
+/// page asks for `/api/...` on the origin it was loaded from, which is the
+/// backend itself (be/src/web.ts). Unset, as under a bare `dx serve`, it stays
+/// the literal every doc names.
 pub const API_BASE: &str = match option_env!("RN_API_BASE") {
     Some(base) => base,
     None => "http://127.0.0.1:3010",

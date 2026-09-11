@@ -138,6 +138,7 @@ import { classifyBaseUrl } from "./tracker/base-url.ts";
 import type { Job } from "./jobs/types.ts";
 import { collect as collectNodeMetrics, lifetimeDelay } from "./node_metrics.ts";
 import { withDistribution } from "./node_history.ts";
+import { serveWeb, webRoot } from "./web.ts";
 
 function send(res: ServerResponse, code: number, body: unknown): void {
     const json = JSON.stringify(body);
@@ -359,6 +360,12 @@ function catalogueEntry(declared: Job): CatalogueJob {
     };
 }
 
+/**
+ * The page's bundle, resolved once at boot: `app/web` in a packaged install,
+ * null in the repo, where `dx serve` serves the page instead. See web.ts.
+ */
+const WEB_ROOT = webRoot();
+
 export function createApp() {
     // Async because a job runs inside the request. Every other route is
     // synchronous and unaffected; the one awaiting handler is the POST below.
@@ -368,7 +375,8 @@ export function createApp() {
 
         // The dev frontend runs on a different port (dx serve :1790), so the
         // browser treats it as cross-origin. Dev-only convenience: in a
-        // packaged install the launcher serves both from one origin.
+        // packaged install this same server hands out the page (web.ts), so
+        // page and API share one origin and none of this comes into play.
         //
         // The header carries exactly one origin — "*" is not an option once
         // credentials or a narrow allowlist are wanted — so the request's own
@@ -1496,6 +1504,13 @@ export function createApp() {
             return;
         }
 
+        // Last, after every API route: the page, in a packaged install. It
+        // declines anything under /api, so a mistyped route still gets the
+        // JSON 404 below rather than a page of HTML.
+        if (serveWeb(req, res, url.pathname, WEB_ROOT)) {
+            return done(200);
+        }
+
         send(res, 404, { error: "not found", path: url.pathname });
         done(404);
     });
@@ -1588,6 +1603,15 @@ server.on("error", (err: NodeJS.ErrnoException) => {
 });
 
 server.listen(config.port, config.host, () => {
+    // Whether this process serves the page, and from where. In the repo it
+    // does not (dx serve does); in a packaged install it must, and a package
+    // built without the page would otherwise be a blank tab with no reason.
+    step(
+        "web",
+        WEB_ROOT === null
+            ? { served: false, note: "no app/web bundle here; in development dx serve serves the page" }
+            : { served: true, dir: WEB_ROOT, url: `http://${config.host}:${config.port}/` },
+    );
     // Same host as the API, so the guard above covers both. Started here rather
     // than independently because a hooks port that outlives the API would take
     // deliveries for a process that can no longer report what it did with them.

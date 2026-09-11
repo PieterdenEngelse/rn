@@ -36,3 +36,6 @@ node_modules/
 # outside the workspace.
 /target
 /Cargo.lock.bak
+
+# scripts/package.sh output: a built package, never committed.
+/dist

@@ -45,6 +45,13 @@ cargo clippy --workspace --all-targets
 
 # Everything, Rust and Node together — run this before committing
 ./scripts/check.sh                    # Windows: .\scripts\check.ps1
+
+# Build the installable package, then install it for this user (Linux only).
+# The page is a release wasm build: memory-hungry from cold. See
+# docs/packaging.md §11 for the flags and what each step does.
+./scripts/package.sh                  # → dist/rn  (--no-web, --no-sig, --out DIR)
+dist/rn/install.sh                    # → ~/.local/share/rn + rn.service + menu entry
+~/.local/share/rn/install.sh --uninstall
 ```
 
 `./scripts/check.sh` is the one to run before committing, and running a subset

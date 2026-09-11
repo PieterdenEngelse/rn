@@ -12,18 +12,36 @@ ways a user's existing Node can still interfere, and how to stop each one.
 ## 1. What gets installed
 
 ```
-/opt/rn/                    # or ~/.local/share/rn for a per-user install
+~/.local/share/rn/          # per-user, the default; /opt/rn system-wide (§8)
 ├── rn                      # Rust launcher — THE entry point the user runs
 ├── runtime/
 │   ├── bin/node            # pinned private Node, invoked by absolute path
-│   └── LICENSE             # Node's MIT license — required for redistribution
+│   ├── LICENSE             # Node's MIT license — required for redistribution
+│   └── VERSION
 ├── app/
-│   ├── src/                # the be/ sources
-│   ├── node_modules/       # installed at build time, shipped as-is
-│   └── package.json
-└── config/
-    └── defaults.env        # shipped defaults; user config lives elsewhere
+│   ├── src/                # the be/ sources, run as TypeScript directly
+│   ├── node_modules/       # npm ci at build time, shipped as-is (§3.4)
+│   ├── web/                # the fe release bundle, served by the backend
+│   ├── package.json        # and package-lock.json
+│   ├── runtime-params.json # the parameter registry the launcher reads
+│   └── .env.example        # which settings exist; a .env beside it is the user's
+├── install.sh              # installs this tree, and later uninstalls it
+└── BUILD                   # commit, date, Node version, anything left out
 ```
+
+This is what `scripts/package.sh` builds (§11). It replaced a sketch that
+listed a `config/defaults.env` nothing ever read and had no page at all. The
+settings the user changes live in `app/.env`, which is the one file an upgrade
+carries across, and in `~/.config/rn`, which the install never touches.
+
+**The page is served by the backend.** In development `dx serve` serves the
+frontend on its own port. An install has no dev server, so the API server
+hands every GET that isn't an `/api` route to `be/src/web.ts`, which serves
+`app/web/`. Page and API then share one origin. The bundle is built with
+`RN_API_BASE=""`, so it asks for `/api/...` relative to wherever it was
+loaded from, on whatever port the install uses, with no CORS involved. In
+the repo there is no `be/web`, so nothing changes there: the backend logs
+`"step":"web","served":false` at boot and the JSON 404 answers as before.
 
 **The Rust launcher is the entry point, not a shell script.** It resolves its own
 location, spawns Node from `runtime/bin/node` by absolute path, constructs the
@@ -409,3 +427,82 @@ Only linux-x64 is in scope right now. When the others come:
 - [ ] Any native addon prebuilt against the bundled version, per platform
 - [ ] Launcher logs runtime version + path at startup
 - [ ] Installed tree contains no user data paths
+
+`scripts/package.sh` does the runtime, stripping, licence and `npm ci` items
+every time it runs. The rest are properties of the launcher and the backend,
+held by the test suite rather than by the build.
+
+---
+
+## 11. Building and installing
+
+    scripts/package.sh                          # → dist/rn
+    dist/rn/install.sh                          # → ~/.local/share/rn, rn.service, menu entry
+    ~/.local/share/rn/install.sh --uninstall    # ~/.config/rn is kept
+
+**`package.sh`** builds, in order:
+
+1. the launcher, as a release build;
+2. the runtime, through `install-node.sh --require-sig` (§4);
+3. `app/`: the backend's sources, lockfile, parameter registry and
+   `.env.example`, then `npm ci --omit=dev --ignore-scripts` under the bundled
+   node. The bundled runtime has no npm, so the npm on `PATH` runs with
+   `runtime/bin` first on `PATH`;
+4. the page: `dx bundle --web --release` with `RN_API_BASE=""`;
+5. `install.sh` and `BUILD`, copied in beside everything else.
+
+Its flags:
+
+- **`--no-web`** leaves out step 4. It is the expensive one: a release wasm
+  build, and from a cold cache that kind of build has run this machine out of
+  memory with an editor open.
+- **`--no-sig`** accepts a checksum-only runtime, for trying a package here.
+  `BUILD` records that, and it is not for shipping.
+- **`--out DIR`** builds somewhere other than `dist/rn`.
+
+Two traps it closes:
+
+- **A cached dev API address.** `RN_API_BASE` is read at compile time, and
+  cargo does not rebuild when an environment variable changes. So the script
+  touches `fe/src/api/client.rs` first, and afterwards refuses a wasm that
+  still contains `http://127.0.0.1:3010`. Otherwise the page would load from
+  the install and then call a development backend for every request.
+- **Node's release keys.** `--require-sig` fails until those GPG keys are
+  imported (§4), and as of 2026-09-11 they are not on this machine
+  (`install-node.sh` says "keys absent"). So a plain `package.sh` stops at
+  step 2 here until they are.
+
+**`install.sh`** is per-user and never needs root:
+
+- It copies the package in as a new tree and swaps it into place, so a
+  half-copied install is never the live one. It carries `app/.env` across the
+  swap.
+- It writes `rn.service`, a user unit shaped like the dev
+  `rn-backend.service`, and a menu entry that opens the page.
+- It starts the unit only if the API port is free.
+
+On a development machine that last check matters. The installed app and the
+dev backend use the same ports **and the same `~/.config/rn`**, so running
+both would have two schedulers sharing one state file. The script names
+whatever holds the port and leaves the unit stopped. It also never calls
+`rn --stop`: the launcher's pidfile is per user, not per install, so that
+command would stop the dev backend.
+
+**Tested 2026-09-11.** A `--no-web --no-sig` package came to 115M: runtime
+104M, `node_modules` 9M, launcher 868K. It was installed into a scratch
+prefix with `--no-service`, and a stand-in page was put in `app/web`. The
+installed launcher then ran on ports 3097–3099 with a scratch `HOME`, which
+also gave it a scratch pidfile. It served:
+
+- `/api/health` → 200;
+- `/` and a client route → the page, as `text/html`;
+- a `.wasm` → `application/wasm`;
+- `/api/nope` → the JSON 404;
+- an encoded-slash traversal → 404.
+
+`--status`, `--stop` and `--uninstall` all worked, and the dev backend on
+3010 stayed up throughout. **The full build, with the real page and a
+verified signature, has not been run yet.**
+
+Linux x64 only, like everything in §9. Neither script has a `.ps1` twin, and
+each says why in its header.
