@@ -99,7 +99,7 @@ done
 mkdir -p "$CACHE"
 step "Downloading"
 cd "$CACHE"
-for f in "$TARBALL" SHASUMS256.txt SHASUMS256.txt.asc; do
+for f in "$TARBALL" SHASUMS256.txt SHASUMS256.txt.sig; do
     if [[ -s "$f" && "$f" == "$TARBALL" ]]; then
         log "cached: $f"
     else
@@ -118,15 +118,28 @@ else
     die "SHA-256 mismatch for $TARBALL. Removed it; re-run to download again."
 fi
 
-if command -v gpg >/dev/null && gpg --verify SHASUMS256.txt.asc SHASUMS256.txt >/dev/null 2>&1; then
-    log "gpg signature OK"
+# SHASUMS256.txt.sig is the detached signature over the very file the checksum
+# above was read from. Until 2026-09-11 this verified SHASUMS256.txt.asc
+# instead, which is the same list *clearsigned* (text and signature in one
+# file), and gpg refuses that as a detached signature ("Packet type 63 not
+# allowed"). So the check failed with every key imported, --require-sig could
+# never pass, and the message below blamed missing keys.
+sig_status=""
+if command -v gpg >/dev/null; then
+    sig_status="$(gpg --batch --status-fd 1 --verify SHASUMS256.txt.sig SHASUMS256.txt 2>/dev/null || true)"
+fi
+# VALIDSIG's last field is the primary key's fingerprint: who signed, shown
+# rather than just "OK", so a release signed by an unexpected key is visible.
+signer="$(awk '$2 == "VALIDSIG" { print $NF; exit }' <<< "$sig_status")"
+if grep -q '^\[GNUPG:\] GOODSIG ' <<< "$sig_status" && [[ -n "$signer" ]]; then
+    log "gpg signature OK (release key $signer)"
 elif [[ $REQUIRE_SIG -eq 1 ]]; then
-    die "signature verification failed or Node release keys are not in your keyring.
-       Import them (see the nodejs/node README for the current key list), then re-run.
+    die "signature verification failed: no gpg, a bad signature, or no Node release key in your keyring.
+       Import the keys (docs/packaging.md §4 says how), then re-run.
        A checksum alone only proves the file matches a list that could itself be swapped."
 else
-    log "gpg signature NOT verified (keys absent). Fine for development;"
-    log "use --require-sig for anything you ship."
+    log "gpg signature NOT verified (no gpg, or no Node release key in the keyring)."
+    log "Fine for development; use --require-sig for anything you ship."
 fi
 
 # --- install ----------------------------------------------------------------

@@ -321,7 +321,25 @@ installed app never compiles anything and never runs npm.
 aren't the official artifacts and you can't attest to what's in them.
 
 **GPG keys**: Node's release keys are listed in the nodejs/node README. Import
-them once in the build environment.
+them once in the build environment, into the default keyring, which is where
+the script looks. Imported on this machine on 2026-09-11, cross-checked
+rather than taken from one list:
+
+- **The list:** the eight "Primary GPG keys for Node.js Releasers" in the
+  nodejs/node README, intersected with `keys.list` in nodejs/release-keys.
+  All eight agreed. The larger set in `keys.list` is older releasers, and
+  none of them was imported.
+- **Each key:** fetched as `keys/<fingerprint>.asc` from nodejs/release-keys,
+  and imported only after `gpg --show-keys` confirmed the file holds the key
+  it is named after.
+
+The script verifies the *detached* `SHASUMS256.txt.sig` against
+`SHASUMS256.txt`, and logs which release key signed. v24.20.0 was signed by
+`5BE8A3F6C8A5C01D106C0AD820B1A390B168D356` (Antoine du Hamel).
+
+One limit worth knowing: gpg accepts a good signature from *any* key in the
+keyring, not only Node's. On a build machine whose keyring holds other keys,
+the logged signer is the thing to read.
 
 ## 5. Size budget
 
@@ -467,10 +485,12 @@ Two traps it closes:
   touches `fe/src/api/client.rs` first, and afterwards refuses a wasm that
   still contains `http://127.0.0.1:3010`. Otherwise the page would load from
   the install and then call a development backend for every request.
-- **Node's release keys.** `--require-sig` fails until those GPG keys are
-  imported (§4), and as of 2026-09-11 they are not on this machine
-  (`install-node.sh` says "keys absent"). So a plain `package.sh` stops at
-  step 2 here until they are.
+- **Node's release keys.** `--require-sig` needs them in the keyring (§4).
+  They are imported on this machine, but importing them was not the whole
+  fix. `install-node.sh` had been verifying the clearsigned `.asc` as though
+  it were a detached signature, which fails with every key present, while
+  saying "keys absent". It verifies `SHASUMS256.txt.sig` now, and a plain
+  `package.sh` gets past step 2.
 
 **`install.sh`** is per-user and never needs root:
 

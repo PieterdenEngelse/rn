@@ -73,7 +73,7 @@ New-Item -ItemType Directory -Force -Path $Cache | Out-Null
 
 # --- download (cached) -------------------------------------------------------
 Write-Step "Downloading"
-foreach ($f in @($Zip, "SHASUMS256.txt", "SHASUMS256.txt.asc")) {
+foreach ($f in @($Zip, "SHASUMS256.txt", "SHASUMS256.txt.sig")) {
     $target = Join-Path $Cache $f
     if ($f -eq $Zip -and (Test-Path $target) -and (Get-Item $target).Length -gt 0) {
         Write-Log "cached: $f"
@@ -102,20 +102,28 @@ if ($actual -ne $expected.ToLower()) {
 }
 Write-Log "sha256 OK"
 
+# SHASUMS256.txt.sig is the detached signature over the very file the checksum
+# above was read from. Until 2026-09-11 this verified the clearsigned .asc
+# instead, which gpg refuses as a detached signature, so the check failed with
+# every key imported. Same fix as install-node.sh, which explains it in full.
 $gpg = Get-Command gpg -ErrorAction SilentlyContinue
-$sigOk = $false
+$signer = $null
 if ($gpg) {
-    & gpg --verify (Join-Path $Cache "SHASUMS256.txt.asc") (Join-Path $Cache "SHASUMS256.txt") 2>$null
-    $sigOk = ($LASTEXITCODE -eq 0)
+    $status = & gpg --batch --status-fd 1 --verify (Join-Path $Cache "SHASUMS256.txt.sig") (Join-Path $Cache "SHASUMS256.txt") 2>$null
+    if ($status -match '^\[GNUPG:\] GOODSIG ') {
+        # VALIDSIG's last field is the primary key's fingerprint: who signed.
+        $valid = $status | Where-Object { $_ -match '^\[GNUPG:\] VALIDSIG ' } | Select-Object -First 1
+        if ($valid) { $signer = ($valid -split '\s+')[-1] }
+    }
 }
-if ($sigOk) {
-    Write-Log "gpg signature OK"
+if ($signer) {
+    Write-Log "gpg signature OK (release key $signer)"
 } elseif ($RequireSig) {
-    Die "signature verification failed or Node release keys are not in your keyring.
-       Import them (see the nodejs/node README), then re-run."
+    Die "signature verification failed: no gpg, a bad signature, or no Node release key in your keyring.
+       Import the keys (docs/packaging.md section 4 says how), then re-run."
 } else {
-    Write-Log "gpg signature NOT verified. Fine for development;"
-    Write-Log "use -RequireSig for anything you ship."
+    Write-Log "gpg signature NOT verified (no gpg, or no Node release key in the keyring)."
+    Write-Log "Fine for development; use -RequireSig for anything you ship."
 }
 
 # --- install -----------------------------------------------------------------
