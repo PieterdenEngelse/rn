@@ -482,7 +482,21 @@ Its flags:
   `BUILD` records that, and it is not for shipping.
 - **`--out DIR`** builds somewhere other than `dist/rn`.
 
-Two traps it closes:
+Four traps it closes. The last two were found by the first full build, and
+`dx` reported neither of them as a failure:
+
+- **Debug symbols stop the optimiser.** `dx bundle` defaults to
+  `--debug-symbols=true` even with `--release`. The DWARF this leaves in the
+  wasm is a version binaryen can't read, so `wasm-opt` aborted ("compile unit
+  size was incorrect", SIGABRT), and the page shipped unoptimised at 4.1 MB.
+  `dx` still exited 0. The script passes `--debug-symbols=false`, which gives
+  **2.45 MB** optimised, and it warns if `dx`'s output ever says `wasm-opt
+  failed` again.
+- **Old bundles pile up.** `dx` never clears its release output: every
+  earlier bundle's hashed js and wasm stay in
+  `<target>/dx/fe/release/web/public`, and each bundle copies all of them
+  out. The second build shipped both wasms. The script empties that folder
+  before bundling, and stops unless `app/web` holds exactly one wasm.
 
 - **A cached dev API address.** `RN_API_BASE` is read at compile time, and
   cargo does not rebuild when an environment variable changes. So the script
@@ -525,8 +539,21 @@ also gave it a scratch pidfile. It served:
 - an encoded-slash traversal → 404.
 
 `--status`, `--stop` and `--uninstall` all worked, and the dev backend on
-3010 stayed up throughout. **The full build, with the real page and a
-verified signature, has not been run yet.**
+3010 stayed up throughout.
+
+**The full build, run the same day.** It had a verified signature and the
+real page, and came to **118M**: runtime 104M, `node_modules` 9.7M, page
+2.7M, launcher 868K.
+
+- **Memory.** It ran with `CARGO_BUILD_JOBS=2` at `nice 19`, behind a guard
+  that needed Firefox closed and 2.5 GB available. The cold wasm compile took
+  about 90 seconds, and available memory never went below 3.8 GiB. Firefox
+  had been holding 4.5 GB, and that was the difference.
+- **The page in a browser.** Installed into a scratch prefix, headless
+  Chromium rendered `/monitor/runtime`, `/monitor/jobs` and `/config`
+  (64 KB, 41 KB and 71 KB of DOM, with no "backend unreachable"). The
+  backend logged 53 same-origin `/api` requests from the page, none of them
+  carrying an Origin header.
 
 Linux x64 only, like everything in §9. Neither script has a `.ps1` twin, and
 each says why in its header.

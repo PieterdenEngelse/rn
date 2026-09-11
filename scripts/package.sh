@@ -90,12 +90,31 @@ if [ "$WEB" = 1 ]; then
     # environment variable changes. Touching the one file that reads it makes
     # sure the empty base is what gets compiled, not a cached dev address.
     touch "$REPO/fe/src/api/client.rs"
+    # dx never prunes its release output. Every bundle's hashed js and wasm
+    # stay in <target>/dx/fe/release/web/public, and the next bundle copies
+    # all of them out: on 2026-09-11 a second build shipped the old 4.1 MB
+    # wasm beside the new 2.5 MB one. Starting from an empty public/ keeps the
+    # package to what index.html loads. The dev server builds elsewhere
+    # (its own profile), so this touches nothing it serves.
+    rm -rf "$RN_TARGET_DIR/dx/fe/release/web/public"
     tmp=$(mktemp -d)
-    trap 'rm -rf "$tmp"' EXIT
-    (cd "$REPO/fe" && RN_API_BASE="" dx bundle --web --release --out-dir "$tmp")
+    dxlog=$(mktemp)
+    trap 'rm -rf "$tmp" "$dxlog"' EXIT
+    # --debug-symbols=false: dx defaults it to true even for --release, and
+    # the DWARF that leaves in the wasm is a version binaryen cannot read. So
+    # wasm-opt aborted ("compile unit size was incorrect", SIGABRT) and the
+    # page shipped unoptimised. dx carries on after that with exit status 0,
+    # which is why its output is kept and read below.
+    (cd "$REPO/fe" && RN_API_BASE="" dx bundle --web --release --debug-symbols=false --out-dir "$tmp") 2>&1 \
+        | tee "$dxlog"
+    if grep -q 'wasm-opt failed' "$dxlog"; then
+        warn "wasm-opt failed, so the page ships unoptimised: larger, still working. See the dx output above."
+    fi
     index=$(find "$tmp" -name index.html -print -quit)
     [ -n "$index" ] || die "dx bundle wrote no index.html under $tmp"
     cp -a "$(dirname "$index")" "$OUT/app/web"
+    nwasm=$(find "$OUT/app/web" -name '*.wasm' | wc -l)
+    [ "$nwasm" = 1 ] || die "app/web holds $nwasm wasm files, expected 1: leftovers from an earlier bundle"
     # The failure this catches is silent otherwise: a page that loads from the
     # install and then calls a development backend on :3010 for every request.
     if grep -rqaF --include='*.wasm' 'http://127.0.0.1:3010' "$OUT/app/web"; then
