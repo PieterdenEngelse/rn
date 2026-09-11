@@ -111,6 +111,7 @@ A **private** GitHub repo, `PieterdenEngelse/dotfiles`, checked out at
     run_once_after_30-toolchains.sh.tmpl
     run_onchange_after_31-cargo.sh.tmpl
     run_onchange_after_32-vscode.sh.tmpl
+    run_onchange_after_33-node-keys.sh.tmpl
     run_onchange_after_40-system-files.sh.tmpl
     run_onchange_after_50-dconf.sh.tmpl
     run_onchange_after_51-xfconf.sh.tmpl
@@ -267,7 +268,7 @@ and nothing about a copy of it kept somewhere else.
 
 ## Phase 4: the bootstrap scripts
 
-**Built 2026-09-11.** All thirteen scripts share one rule, enforced in
+**Built 2026-09-11.** All the scripts share one rule, enforced in
 `lib/common.sh`: check before acting, and call sudo only for something
 actually missing. chezmoi runs every script it hasn't recorded, on this
 machine as on a fresh one, so a script that assumes a blank machine would
@@ -333,6 +334,19 @@ In order:
    deno, Claude Code, then `sudo usermod -aG docker $USER`.
 5. **`31-cargo`**, **`32-vscode`** (onchange): `cargo install --locked` over
    `cargo.txt`, `code --install-extension` over the list.
+   **`33-node-keys`** (onchange, added after the others): Node's release keys
+   into the default gpg keyring, which is what rn's `install-node.sh
+   --require-sig` and therefore `package.sh` need.
+   - **Pinned:** the fingerprints live in `packages/node-release-keys.txt`,
+     so what counts as a Node key is decided in the dotfiles repo, not by a
+     list on GitHub. The script re-runs when that list changes.
+   - **Check-first:** when all eight are present it does nothing, and needs
+     no network.
+   - **Otherwise it downloads:** each missing key file comes from
+     nodejs/release-keys, and is imported only when it holds the fingerprint
+     it is named after.
+   - **A failed download stops the apply,** rather than recording the step
+     as done without the keys.
 6. **`40-system-files`** (onchange): `sudo install` the files under
    `system/<set>/` into `/etc`, `daemon-reload` if a unit changed, and enable
    the units installed. That means `audio-amp-guard`, and not `ollama`,

@@ -337,6 +337,10 @@ The script verifies the *detached* `SHASUMS256.txt.sig` against
 `SHASUMS256.txt`, and logs which release key signed. v24.20.0 was signed by
 `5BE8A3F6C8A5C01D106C0AD820B1A390B168D356` (Antoine du Hamel).
 
+On a machine built from the dotfiles repo, none of this is by hand. The
+bootstrap's `33-node-keys` imports the same eight from a pinned list, and
+docs/os.md says how.
+
 One limit worth knowing: gpg accepts a good signature from *any* key in the
 keyring, not only Node's. On a build machine whose keyring holds other keys,
 the logged signer is the thing to read.
