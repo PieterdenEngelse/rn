@@ -334,6 +334,16 @@ In order:
    deno, Claude Code, then `sudo usermod -aG docker $USER`.
 5. **`31-cargo`**, **`32-vscode`** (onchange): `cargo install --locked` over
    `cargo.txt`, `code --install-extension` over the list.
+   - **`dx` is not compiled.** A crate with a line in
+     `packages/cargo-prebuilt.txt` is installed from its upstream release
+     tarball, with the tarball's sha256 pinned. Compiling `dioxus-cli` took 23
+     minutes in the first restore test, and the tarball takes seconds.
+   - **The pinned checksum was cross-checked** against the one Dioxus
+     publishes beside the tarball, and the binary reports the same commit,
+     `57d6794`, as the one compiled here.
+   - **A download that doesn't match is refused, and the crate compiles
+     after all.** `31-cargo` and `capture.sh` recognise a prebuilt install
+     by its `--version`, since `cargo install --list` never hears of it.
    **`33-node-keys`** (onchange, added after the others): Node's release keys
    into the default gpg keyring, which is what rn's `install-node.sh
    --require-sig` and therefore `package.sh` need.
