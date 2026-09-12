@@ -10,7 +10,7 @@ use super::wire::{
     MailRuleSaveResponse, MailRulesResponse, MailTestResponse, MailTestResult, NodeHistory,
     NodeMetrics, RunsDeleteResponse, SendDetail,
     ParamsResponse, RestartOutcome, RunsResponse, SaveResponse, StateResetResponse, StatusResponse,
-    CredentialSaveResponse, CredentialsResponse, StopOutcome, TestDelivery, WebhookDef,
+    CredentialSaveResponse, CredentialsResponse, StopOutcome, TestDelivery, TokensResponse, WebhookDef,
     WebhookSaveResponse, WebhooksResponse,
 };
 
@@ -149,6 +149,21 @@ pub async fn fetch_send(id: &str) -> Result<SendDetail, String> {
 }
 
 /// What is listening, who may talk to it, and what it may reach.
+/// When each declared credential stops working, and what stops with it.
+///
+/// Derived entirely inside the backend from the token's own `exp` claim and
+/// from run history, so polling this costs no request against any provider —
+/// see `be/src/tokens.ts`.
+pub async fn fetch_tokens() -> Result<TokensResponse, String> {
+    let resp = gloo_net::http::Request::get(&format!("{API_BASE}/api/tokens"))
+        .send()
+        .await
+        .map_err(|e| format!("{e}"))?;
+    resp.json::<TokensResponse>()
+        .await
+        .map_err(|e| format!("{e}"))
+}
+
 pub async fn fetch_connection() -> Result<ConnectionResponse, String> {
     let resp = gloo_net::http::Request::get(&format!("{API_BASE}/api/connection"))
         .send()

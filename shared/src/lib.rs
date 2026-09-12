@@ -21,6 +21,7 @@ pub mod links;
 pub mod mail;
 pub mod monitor;
 pub mod params;
+pub mod tokens;
 pub mod webhooks;
 
 pub use connection::*;
@@ -31,6 +32,7 @@ pub use links::*;
 pub use mail::*;
 pub use monitor::*;
 pub use params::*;
+pub use tokens::*;
 pub use webhooks::*;
 
 /// Write every wire type to the TypeScript module, in one call.
@@ -153,6 +155,11 @@ pub fn export_all(cfg: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
 
     CredentialEntry::export_all(cfg)?;
     CredentialsResponse::export_all(cfg)?;
+    ExpirySource::export_all(cfg)?;
+    TokenExpiry::export_all(cfg)?;
+    TokenRun::export_all(cfg)?;
+    TokenEntry::export_all(cfg)?;
+    TokensResponse::export_all(cfg)?;
     CredentialSaveResponse::export_all(cfg)?;
     Ok(())
 }

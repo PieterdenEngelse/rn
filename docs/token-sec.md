@@ -176,6 +176,38 @@ and only when it is already over a published cap.
 
 ---
 
+## Metadata about a secret, which is not the secret
+
+Monitor → Connection carries a Tokens board, and it exists because of the gap
+this document leaves: the rule above keeps a value off the screen, and says
+nothing about *when the value stops working*. An expired token reads as set
+everywhere in rn, and the first evidence is a job failing at whatever hour it
+expired — a 401 in one job's log, with nothing naming the cause.
+
+What crosses the boundary there, and why each is not a value:
+
+- **An expiry instant.** Read inside the backend from the token's own `exp`
+  claim; only the timestamp is sent. Not the claim set, not the issuer, not a
+  prefix. A JWT carries one; a personal access token or an app password does
+  not, and the board says which rather than leaving a blank that reads as
+  "fine".
+- **Job ids that declare it.** Already public on Config → Jobs — this is the
+  same list, read for a different question: what stops when the credential
+  does.
+- **When a job using it last succeeded**, and **how many recent failures read
+  as a refusal**, with the failure's message. Messages go out through
+  `secrets.redact` like every other error.
+
+Nothing on that board calls a provider. It is derived from the token this
+process already holds and from runs that already happened, so an open page is
+not traffic and cannot exhaust a rate limit — and a read endpoint that hands a
+local process nothing it did not already have stays within the argument in
+`shared/src/credentials.rs`.
+
+The honest limit: a liveness probe would answer "does it work *now*", and this
+does not. What it gives instead is a countdown where one is readable, and the
+shape of a credential that has already gone where one is not.
+
 ## What this does not protect against
 
 Stated plainly, on the same principle as the equivalent section in `docs/sec.md`.

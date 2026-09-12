@@ -139,6 +139,7 @@ import type { Job } from "./jobs/types.ts";
 import { collect as collectNodeMetrics, lifetimeDelay } from "./node_metrics.ts";
 import { withDistribution } from "./node_history.ts";
 import { serveWeb, webRoot } from "./web.ts";
+import * as tokens from "./tokens.ts";
 
 function send(res: ServerResponse, code: number, body: unknown): void {
     const json = JSON.stringify(body);
@@ -1277,6 +1278,25 @@ export function createApp() {
                     ? {}
                     : { permissionWarning: state.permissionWarning }),
             } satisfies CredentialsResponse);
+            return done(200);
+        }
+
+        // The other half of the credentials board: not "is it set" but "when
+        // does it stop working, and what stops with it". Derived from the
+        // token's own exp claim and from runs that already happened — this
+        // route calls no provider, so an open page is not traffic. See
+        // be/src/tokens.ts and shared/src/tokens.rs.
+        if (url.pathname === "/api/tokens" && req.method === "GET") {
+            send(
+                res,
+                200,
+                tokens.build({
+                    entries: credentialEntries(),
+                    runs: jobHistory.list(jobHistory.capacities().runs),
+                    nowMs: Date.now(),
+                    valueOf: secrets.read,
+                }),
+            );
             return done(200);
         }
 

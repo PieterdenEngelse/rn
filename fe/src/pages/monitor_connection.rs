@@ -13,8 +13,8 @@
 //! render it.
 
 use crate::api::{
-    fetch_connection, fetch_health, fetch_node_metrics, ConnectionResponse, HealthResponse, HookOutcome, NodeMetrics,
-    TrackerOutcome, API_BASE,
+    fetch_connection, fetch_health, fetch_node_metrics, fetch_tokens, ConnectionResponse, HealthResponse, HookOutcome,
+    NodeMetrics, TokenEntry, TokensResponse, TrackerOutcome, API_BASE,
 };
 use crate::components::{Board, InfoButton, Metric, Panel};
 use dioxus::prelude::*;
@@ -30,6 +30,7 @@ pub fn MonitorConnection() -> Element {
     let mut conn = use_signal(|| Option::<Result<ConnectionResponse, String>>::None);
     let mut metrics = use_signal(|| Option::<NodeMetrics>::None);
     let mut health = use_signal(|| Option::<HealthResponse>::None);
+    let mut tokens = use_signal(|| Option::<TokensResponse>::None);
 
     use_future(move || async move {
         loop {
@@ -45,6 +46,13 @@ pub fn MonitorConnection() -> Element {
             // short of information.
             if let Ok(h) = fetch_health().await {
                 health.set(Some(h));
+            }
+            // Cheap to ask for — it reads run history and the tokens this
+            // process already holds, and calls nothing outward — so it rides
+            // the same tick as everything else rather than earning a poll of
+            // its own.
+            if let Ok(t) = fetch_tokens().await {
+                tokens.set(Some(t));
             }
             gloo_timers::future::TimeoutFuture::new(2_000).await;
         }
@@ -65,6 +73,9 @@ pub fn MonitorConnection() -> Element {
                         p { class: "text-gray-400", "Sampling…" }
                     }
                 },
+            }
+            if let Some(t) = tokens() {
+                Tokens { t }
             }
         }
     }
@@ -850,3 +861,178 @@ fn ConnectionBoards(c: ConnectionResponse, m: Option<NodeMetrics>, h: Option<Hea
         }
     }
 }
+
+/// When each declared credential stops working, and what stops with it.
+///
+/// Every duration here is worked out against the backend's own clock — the
+/// payload carries the instant it was built, and the expiry countdown is
+/// computed there — for the reason the Listeners board gives: subtracting a
+/// backend timestamp from this browser's clock adds whatever this machine's
+/// clock is off by, and a viewer elsewhere reads every figure wrong by the
+/// same amount.
+#[component]
+fn Tokens(t: TokensResponse) -> Element {
+    rsx! {
+        Panel {
+            title: "Tokens".to_string(),
+            subtitle: Some("when a credential stops working, and what stops with it".to_string()),
+            info: Some(rsx! {
+                InfoButton {
+                    title: "Tokens — set is not the same as working".to_string(),
+                    what: TOKENS_WHAT.to_string(),
+                    why: TOKENS_WHY.to_string(),
+                    if_wrong: TOKENS_IF_WRONG.to_string(),
+                }
+            }),
+            if t.entries.is_empty() {
+                p { class: "text-gray-400 max-w-3xl",
+                    "Nothing declares a credential yet. A job asks for one by naming it, and it appears here the moment it does — before it is set, which is the state worth seeing."
+                }
+            } else {
+                div { class: "overflow-x-auto",
+                    table { class: "text-sm",
+                        thead {
+                            tr { class: "text-gray-400 text-left",
+                                th { class: "pr-6 pb-2 font-normal", "Credential" }
+                                th { class: "pr-6 pb-2 font-normal", "Expires" }
+                                th { class: "pr-6 pb-2 font-normal", "Stops with it" }
+                                th { class: "pr-6 pb-2 font-normal", "Last success" }
+                                th { class: "pb-2 font-normal", "Refused, {t.window_days}d" }
+                            }
+                        }
+                        tbody {
+                            for e in t.entries.iter() {
+                                tr { key: "{e.name}", class: "border-t border-gray-700 align-top",
+                                    td { class: "pr-6 py-1 font-mono text-gray-200", "{e.name}" }
+                                    td { class: "pr-6 py-1 {expiry_class(e)}", "{expiry_word(e)}" }
+                                    td { class: "pr-6 py-1 text-gray-300", "{stops_with(e)}" }
+                                    td { class: "pr-6 py-1 text-gray-300", "{last_success(e, t.checked_at_ms)}" }
+                                    td { class: "py-1 {refused_class(e)}", "{refused(e, t.checked_at_ms)}" }
+                                }
+                            }
+                        }
+                    }
+                }
+                p { class: "mt-3 text-xs text-gray-400 max-w-3xl",
+                    "Read from {t.runs_considered} runs in the last {t.window_days} days, and from the tokens this process already holds. Nothing on this board calls a provider, so leaving the page open costs no request against anyone's rate limit."
+                }
+            }
+        }
+    }
+}
+
+/// A span of seconds as something readable: the largest two units that matter.
+fn span(secs: f64) -> String {
+    let s = secs.abs();
+    if s < 90.0 {
+        return format!("{}s", s.round() as i64);
+    }
+    let mins = (s / 60.0).floor() as i64;
+    if mins < 90 {
+        return format!("{mins}m");
+    }
+    let (h, m) = (mins / 60, mins % 60);
+    if h < 48 {
+        return if m == 0 { format!("{h}h") } else { format!("{h}h {m}m") };
+    }
+    let (d, rh) = (h / 24, h % 24);
+    if rh == 0 { format!("{d}d") } else { format!("{d}d {rh}h") }
+}
+
+/// The expiry column: a countdown, or the reason there is not one.
+fn expiry_word(e: &TokenEntry) -> String {
+    match &e.expiry {
+        Some(x) if x.in_seconds < 0.0 => format!("expired {} ago", span(x.in_seconds)),
+        Some(x) => format!("in {}", span(x.in_seconds)),
+        None => e
+            .expiry_unknown
+            .clone()
+            .unwrap_or_else(|| "unknown".to_string()),
+    }
+}
+
+/// Red once past, amber inside a week — the point at which rotating it is a
+/// task rather than a surprise. Everything else stays quiet: an unreadable
+/// expiry is the ordinary case, not a fault.
+fn expiry_class(e: &TokenEntry) -> &'static str {
+    match &e.expiry {
+        Some(x) if x.in_seconds < 0.0 => "text-red-400",
+        Some(x) if x.in_seconds < 7.0 * 86_400.0 => "text-amber-400",
+        Some(_) => "text-gray-200",
+        None => "text-gray-400",
+    }
+}
+
+/// What breaks when it goes. Names them rather than counting them: "3 jobs" is
+/// a number to go and look up at the moment you least want to.
+fn stops_with(e: &TokenEntry) -> String {
+    if e.declared_by.is_empty() {
+        return "nothing declares it".to_string();
+    }
+    e.declared_by.join(", ")
+}
+
+fn last_success(e: &TokenEntry, now: f64) -> String {
+    match &e.last_success {
+        Some(r) => format!("{} ago · {}", span((now - r.at_ms) / 1000.0), r.job_id),
+        None if !e.set => "never — not set".to_string(),
+        None => "no successful run in the window".to_string(),
+    }
+}
+
+fn refused(e: &TokenEntry, now: f64) -> String {
+    if e.auth_failures == 0 {
+        return "none".to_string();
+    }
+    match &e.last_auth_failure {
+        Some(r) => {
+            let msg = r.error.clone().unwrap_or_default();
+            let short: String = msg.chars().take(60).collect();
+            format!(
+                "{} · last {} ago: {short}",
+                e.auth_failures,
+                span((now - r.at_ms) / 1000.0)
+            )
+        }
+        None => format!("{}", e.auth_failures),
+    }
+}
+
+fn refused_class(e: &TokenEntry) -> &'static str {
+    if e.auth_failures == 0 {
+        "text-gray-400"
+    } else {
+        "text-red-400"
+    }
+}
+
+const TOKENS_WHAT: &str =
+    "One row per credential this install declares. Whether it is set, when it expires if that \
+     can be read at all, which jobs stop when it does, when a job that uses it last succeeded, \
+     and how many recent failures read as a refusal rather than a fault.\n\nThe expiry comes \
+     from the token's own exp claim: a JWT carries one, a personal access token or an app \
+     password does not, and the row says which rather than leaving a blank that reads as \
+     \"fine\". The rest is derived from runs that already happened. Nothing here calls a \
+     provider, so an open page is not traffic and cannot exhaust anyone's rate limit.";
+
+const TOKENS_WHY: &str =
+    "Set is not working, and until this board existed nothing in rn ever tried the difference. \
+     An expired token reads as set on Config → Jobs; the first evidence is a job failing at \
+     whatever hour it expired, as an ordinary 401 in that job's own log, with nothing anywhere \
+     saying the cause was a credential that needed rotating.\n\nThis is where that becomes \
+     visible beforehand: a countdown while there is one to show, amber inside a week, and the \
+     names of the automations that stop when it reaches zero. Where there is no countdown, the \
+     refused column is the next best thing — repeated 401s against one credential are the shape \
+     of a token that has already gone, however the library worded it.";
+
+const TOKENS_IF_WRONG: &str =
+    "Two ways to misread it.\n\n\"Not a JWT: no expiry to read\" is not \"never expires\". A \
+     GitHub token can be revoked, or time out on the provider's side, with nothing in the token \
+     itself to say so. What you get here for those is the refused column and the last success — \
+     evidence after the fact, not warning before it.\n\n\"Refused: none\" means none in the \
+     window, and the window is as long as run history reaches — the count of runs it actually \
+     held is printed under the table for that reason. On a young install, or one whose history \
+     capacity is small, it can mean \"nothing to go on\" rather than \"nothing wrong\".\n\nThe \
+     failure classifier is a guess at prose from whatever library made the call: it reads 401, \
+     403, invalid token, bad credentials and their neighbours. A provider that words a refusal \
+     differently will land in the job's error log without being counted here.";

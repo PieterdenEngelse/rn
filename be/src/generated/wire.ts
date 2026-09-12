@@ -505,6 +505,16 @@ entries: Array<EnvEntry>,
 drifted: number, };
 
 /**
+ * How an expiry was learned.
+ *
+ * One variant today, and an enum rather than a bare timestamp because the
+ * next source — a stored `expires_at` written beside a refresh token —
+ * answers a different question about trust: the token says when it dies,
+ * whereas a file says when something last believed it would.
+ */
+export type ExpirySource = "jwt";
+
+/**
  * One live handle and whatever distinguishes it from the others of its kind.
  *
  * `kind` uses the same vocabulary as the keys of `active_resources`, so a
@@ -1871,6 +1881,85 @@ sentAs: string,
  * operator is entitled to.
  */
 detail: string, };
+
+/**
+ * One credential, seen as a thing that expires and that jobs depend on.
+ */
+export type TokenEntry = { 
+/**
+ * As a job spells it — `githubToken`.
+ */
+name: string, 
+/**
+ * Whether the running process has a value. Never the value.
+ */
+set: boolean, 
+/**
+ * Whether the credentials file has a line for it.
+ */
+inFile: boolean, 
+/**
+ * Jobs and webhooks that declare it: what stops when it expires.
+ */
+declaredBy: Array<string>, expiry?: TokenExpiry | null, 
+/**
+ * Why there is no expiry, when there is none. "not a JWT" is the
+ * common answer and an honest one: a GitHub token carries no expiry a
+ * machine can read, so the board says so instead of implying the
+ * credential is safe forever.
+ */
+expiryUnknown?: string | null, 
+/**
+ * The most recent successful run of a job that declares it. The
+ * closest thing to "this worked" without calling a provider.
+ */
+lastSuccess?: TokenRun | null, 
+/**
+ * Failures in the window whose error reads as an authentication
+ * refusal — a 401, a 403, an invalid or expired token.
+ */
+authFailures: number, lastAuthFailure?: TokenRun | null, };
+
+/**
+ * When a credential stops working.
+ */
+export type TokenExpiry = { 
+/**
+ * Unix milliseconds, as everything else on the monitor pages.
+ */
+atMs: number, 
+/**
+ * Seconds from the moment the backend answered — negative once past,
+ * which is the state worth colouring red rather than hiding.
+ */
+inSeconds: number, source: ExpirySource, };
+
+/**
+ * One run that touched a credential: which job, when, and how it ended.
+ */
+export type TokenRun = { jobId: string, atMs: number, 
+/**
+ * The failure's message, already redacted by the backend. Absent on a
+ * successful run.
+ */
+error?: string | null, };
+
+/**
+ * `GET /api/tokens`.
+ */
+export type TokensResponse = { entries: Array<TokenEntry>, 
+/**
+ * How far back the run history was read, in days. Sent rather than
+ * assumed, so "0 auth failures" can be read as "none in 30 days"
+ * instead of "none ever", which the history cannot support.
+ */
+windowDays: number, 
+/**
+ * How many runs that window actually held. A young install, or one
+ * whose history capacity is small, answers "none" for a reason worth
+ * showing.
+ */
+runsConsidered: number, checkedAtMs: number, };
 
 /**
  * One link minted into one message.

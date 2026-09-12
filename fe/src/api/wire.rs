@@ -38,6 +38,12 @@ pub use shared::mail::*;
 
 pub use shared::monitor::*;
 
+// When a credential stops working, and what stops with it. Its own module in
+// `shared/` because it is governed by a different document — `docs/token-sec.md`
+// — and encodes the same rule `credentials.rs` does one step further on: a
+// timestamp and a job id may cross this boundary, a value never may.
+pub use shared::tokens::*;
+
 // The webhooks made on Config → Jobs. Deliberately the same crate as the job
 // surface above, because they are the same feature seen from two sides: a
 // `WebhookInfo` on a `CatalogueJob` is a hook a job declares in code, and a
