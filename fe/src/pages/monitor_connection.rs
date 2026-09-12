@@ -62,7 +62,7 @@ pub fn MonitorConnection() -> Element {
     rsx! {
         div { class: "p-6 w-full space-y-4",
             match conn() {
-                Some(Ok(c)) => rsx! { ConnectionBoards { c, m: metrics(), h: health() } },
+                Some(Ok(c)) => rsx! { ConnectionBoards { c, m: metrics(), h: health(), t: tokens() } },
                 Some(Err(e)) => rsx! {
                     Panel { title: "Connection".to_string(),
                         p { class: "text-red-400", "Backend unreachable" }
@@ -71,26 +71,6 @@ pub fn MonitorConnection() -> Element {
                 },
                 None => rsx! {
                     Panel { title: "Connection".to_string(),
-                        p { class: "text-gray-400", "Sampling…" }
-                    }
-                },
-            }
-            match tokens() {
-                Some(Ok(t)) => rsx! { Tokens { t } },
-                Some(Err(e)) => rsx! {
-                    Panel { title: "Tokens".to_string(),
-                        subtitle: Some("when a credential stops working, and what stops with it".to_string()),
-                        p { class: "text-amber-400", "This backend did not answer /api/tokens." }
-                        p { class: "text-gray-300 mt-1 max-w-3xl",
-                            "A backend that started before this board existed has no such route — the launcher does not watch source, so it serves whatever it was started with. Restart it with "
-                            span { class: "font-mono text-gray-200", "be/r" }
-                            " and this board fills in by itself."
-                        }
-                        p { class: "text-gray-400 mt-1 text-xs", "{e}" }
-                    }
-                },
-                None => rsx! {
-                    Panel { title: "Tokens".to_string(),
                         p { class: "text-gray-400", "Sampling…" }
                     }
                 },
@@ -200,7 +180,12 @@ fn is_loopback(addr: &str) -> bool {
 }
 
 #[component]
-fn ConnectionBoards(c: ConnectionResponse, m: Option<NodeMetrics>, h: Option<HealthResponse>) -> Element {
+fn ConnectionBoards(
+    c: ConnectionResponse,
+    m: Option<NodeMetrics>,
+    h: Option<HealthResponse>,
+    t: Option<Result<TokensResponse, String>>,
+) -> Element {
     let handles = m
         .as_ref()
         .map(|m| m.concurrency.handles.clone())
@@ -821,7 +806,14 @@ fn ConnectionBoards(c: ConnectionResponse, m: Option<NodeMetrics>, h: Option<Hea
             }
         }
 
+        // Side by side, and stretched: the two answer neighbouring questions —
+        // who is connected to this process, and which credentials let it connect
+        // outward — and a row of equal height reads as one comparison rather
+        // than two unrelated tiles. `min-w-96` is what makes the pair wrap to a
+        // column on a narrow window instead of crushing both tables.
+        div { class: "flex flex-wrap gap-4 items-stretch",
         Panel {
+            class: "flex-1 min-w-96".to_string(),
             title: "Open connections".to_string(),
             subtitle: Some(format!("{} right now", sockets.len())),
             info: Some(rsx! {
@@ -877,6 +869,32 @@ fn ConnectionBoards(c: ConnectionResponse, m: Option<NodeMetrics>, h: Option<Hea
                 }
             }
         }
+
+            match t {
+                Some(Ok(t)) => rsx! { Tokens { t, class: "flex-1 min-w-96".to_string() } },
+                Some(Err(e)) => rsx! {
+                    Panel {
+                        class: "flex-1 min-w-96".to_string(),
+                        title: "Tokens".to_string(),
+                        subtitle: Some("when a credential stops working, and what stops with it".to_string()),
+                        p { class: "text-amber-400", "This backend did not answer /api/tokens." }
+                        p { class: "text-gray-300 mt-1",
+                            "A backend that started before this board existed has no such route — the launcher does not watch source, so it serves whatever it was started with. Restart it with "
+                            span { class: "font-mono text-gray-200", "be/r" }
+                            " and this board fills in by itself."
+                        }
+                        p { class: "text-gray-400 mt-1 text-xs", "{e}" }
+                    }
+                },
+                None => rsx! {
+                    Panel {
+                        class: "flex-1 min-w-96".to_string(),
+                        title: "Tokens".to_string(),
+                        p { class: "text-gray-400", "Sampling…" }
+                    }
+                },
+            }
+        }
     }
 }
 
@@ -889,9 +907,10 @@ fn ConnectionBoards(c: ConnectionResponse, m: Option<NodeMetrics>, h: Option<Hea
 /// clock is off by, and a viewer elsewhere reads every figure wrong by the
 /// same amount.
 #[component]
-fn Tokens(t: TokensResponse) -> Element {
+fn Tokens(t: TokensResponse, #[props(default = String::new())] class: String) -> Element {
     rsx! {
         Panel {
+            class,
             title: "Tokens".to_string(),
             subtitle: Some("when a credential stops working, and what stops with it".to_string()),
             info: Some(rsx! {
