@@ -526,6 +526,25 @@ whatever holds the port and leaves the unit stopped. It also never calls
 `rn --stop`: the launcher's pidfile is per user, not per install, so that
 command would stop the dev backend.
 
+
+**`release.sh`** is the third piece, and the one that makes an install
+possible on a machine with no toolchains:
+
+    scripts/release.sh                 # build, tarball, checksum, publish
+    scripts/install.sh --from-release  # on any machine with gh signed in
+
+It builds the package (unless `--from` names one), tars it with a
+`.sha256` beside it, and publishes both as a GitHub release tagged
+`v<version>` from `launcher/Cargo.toml`. It refuses a dirty tree, a package
+without a page, and one whose runtime signature was not verified — a release
+nobody can rebuild from a commit is not a release.
+
+`install.sh --from-release` downloads that asset with `gh`, because the repo
+is private, checks it against the published sha256, unpacks it and installs
+it exactly as it installs a locally built package. So the machine that
+installs rn needs neither Rust, nor Node, nor `dx`, nor a checkout — only
+`gh`, signed in.
+
 **Tested 2026-09-11.** A `--no-web --no-sig` package came to 115M: runtime
 104M, `node_modules` 9M, launcher 868K. It was installed into a scratch
 prefix with `--no-service`, and a stand-in page was put in `app/web`. The

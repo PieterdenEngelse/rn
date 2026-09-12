@@ -4,6 +4,9 @@
 # scripts/package.sh, which copies this file into the package it builds.
 #
 #   dist/rn/install.sh                 install from the package it sits in
+#   scripts/install.sh --from-release  fetch the latest GitHub release and
+#                                      install that: no toolchains needed
+#   scripts/install.sh --from-release v0.1.0   a particular release
 #   dist/rn/install.sh --prefix DIR    somewhere other than ~/.local/share/rn
 #   dist/rn/install.sh --no-service    files only: no systemd unit, no menu entry
 #   dist/rn/install.sh --no-start      install and enable, but do not start
@@ -29,12 +32,15 @@ UNIT=rn.service
 SERVICE=1
 START=1
 UNINSTALL=0
+FROM_RELEASE=0
+TAG=""                       # empty means the latest release
+REPO=PieterdenEngelse/rn      # where --from-release downloads from
 
 log()  { printf '  %s\n' "$*"; }
 step() { printf '\n==> %s\n' "$*"; }
 warn() { printf '  ! %s\n' "$*"; }
 die()  { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
-usage() { sed -n '3,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '3,15p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 while [ $# -gt 0 ]; do
     case $1 in
@@ -42,11 +48,36 @@ while [ $# -gt 0 ]; do
         --no-service) SERVICE=0; START=0; shift ;;
         --no-start)   START=0; shift ;;
         --uninstall)  UNINSTALL=1; shift ;;
+        --from-release)
+            FROM_RELEASE=1; shift
+            case ${1:-} in -*|"") ;; *) TAG=$1; shift ;; esac ;;
+        --repo)       REPO="$2"; shift 2 ;;
         -h|--help)    usage; exit 0 ;;
         *)            echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
     esac
 done
 PREFIX="$(realpath -m "$PREFIX")"
+
+# --from-release: the package comes from GitHub rather than from beside this
+# script, so a machine with no Rust, Node or dx can install rn. The repo is
+# private, so gh does the authenticating; the checksum published with the
+# tarball is verified before anything is unpacked.
+if [ "$FROM_RELEASE" = 1 ]; then
+    command -v gh >/dev/null || die "--from-release needs gh (sudo apt-get install -y gh; gh auth login)"
+    gh auth status >/dev/null 2>&1 || die "gh is not signed in: run gh auth login"
+    dl=$(mktemp -d)
+    trap 'rm -rf "$dl"' EXIT
+    step "Downloading ${TAG:-the latest release} from $REPO"
+    gh release download ${TAG:+"$TAG"} --repo "$REPO" --dir "$dl" \
+        --pattern 'rn-linux-x64.tar.gz' --pattern 'rn-linux-x64.tar.gz.sha256' \
+        || die "no release asset to download from $REPO"
+    ( cd "$dl" && sha256sum -c rn-linux-x64.tar.gz.sha256 >/dev/null ) \
+        || die "the download does not match its published sha256; refusing it"
+    log "sha256 ok"
+    mkdir -p "$dl/x" && tar xzf "$dl/rn-linux-x64.tar.gz" -C "$dl/x"
+    PKG=$(find "$dl/x" -maxdepth 2 -name rn -type f -printf '%h\n' | head -1)
+    [ -n "$PKG" ] || die "the tarball holds no rn launcher"
+fi
 
 # The install directory gets deleted and replaced, so be sure it is ours.
 case "$PREFIX" in

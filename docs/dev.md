@@ -52,6 +52,11 @@ cargo clippy --workspace --all-targets
 ./scripts/package.sh                  # → dist/rn  (--no-web, --no-sig, --out DIR)
 dist/rn/install.sh                    # → ~/.local/share/rn + rn.service + menu entry
 ~/.local/share/rn/install.sh --uninstall
+
+# Publish that package as a GitHub release, and install it on a machine that
+# has no toolchains at all (needs gh, signed in; the repo is private).
+./scripts/release.sh                  # build, checksum, publish v<version>
+./scripts/install.sh --from-release   # download that release and install it
 ```
 
 `./scripts/check.sh` is the one to run before committing, and running a subset
