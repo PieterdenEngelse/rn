@@ -437,6 +437,15 @@ The first run took about 90 minutes: `20-apt`, installing 1,980 packages,
 took 53 of them, and building `dioxus-cli` took 23. It used about 11 GB of
 disk at peak.
 
+**A second run, on a faster connection, took 45 minutes**, with the same apt
+step taking 12. Every step matched the first run, and the second pass again
+installed nothing. It showed three smaller faults, since fixed: `capture.sh`
+could not find cargo in a shell that never read the profile, so it skipped
+that section; and `21-snap` and `99-checklist` each sat through snapd's full
+two-minute timeout rather than giving up in ten seconds. `run.sh` also prints
+a progress line every minute now — the step, what it has done, and the host's
+free disk and memory — because an hour of silence reads as a hang.
+
 **Results, first pass:**
 
 | Step | Result |
