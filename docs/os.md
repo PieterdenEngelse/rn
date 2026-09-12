@@ -82,6 +82,7 @@ A **private** GitHub repo, `PieterdenEngelse/dotfiles`, checked out at
         snap.txt
         vscode-extensions.txt
         cargo.txt                   # dioxus-cli
+        cargo-prebuilt.txt          # dx's release binary, pinned by sha256
     desktop/
         dconf.ini                   # filtered `dconf dump`
     system/                         # mirrors /etc paths; installed with sudo
