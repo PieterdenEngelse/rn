@@ -30,7 +30,7 @@ pub fn MonitorConnection() -> Element {
     let mut conn = use_signal(|| Option::<Result<ConnectionResponse, String>>::None);
     let mut metrics = use_signal(|| Option::<NodeMetrics>::None);
     let mut health = use_signal(|| Option::<HealthResponse>::None);
-    let mut tokens = use_signal(|| Option::<TokensResponse>::None);
+    let mut tokens = use_signal(|| Option::<Result<TokensResponse, String>>::None);
 
     use_future(move || async move {
         loop {
@@ -50,10 +50,11 @@ pub fn MonitorConnection() -> Element {
             // Cheap to ask for — it reads run history and the tokens this
             // process already holds, and calls nothing outward — so it rides
             // the same tick as everything else rather than earning a poll of
-            // its own.
-            if let Ok(t) = fetch_tokens().await {
-                tokens.set(Some(t));
-            }
+            // its own. The error is kept, not dropped: a backend started
+            // before this route existed answers 404, and a board that merely
+            // vanishes for that reason is indistinguishable from a board with
+            // nothing to say. It cost a rebuild and a puzzled look once.
+            tokens.set(Some(fetch_tokens().await));
             gloo_timers::future::TimeoutFuture::new(2_000).await;
         }
     });
@@ -74,8 +75,25 @@ pub fn MonitorConnection() -> Element {
                     }
                 },
             }
-            if let Some(t) = tokens() {
-                Tokens { t }
+            match tokens() {
+                Some(Ok(t)) => rsx! { Tokens { t } },
+                Some(Err(e)) => rsx! {
+                    Panel { title: "Tokens".to_string(),
+                        subtitle: Some("when a credential stops working, and what stops with it".to_string()),
+                        p { class: "text-amber-400", "This backend did not answer /api/tokens." }
+                        p { class: "text-gray-300 mt-1 max-w-3xl",
+                            "A backend that started before this board existed has no such route — the launcher does not watch source, so it serves whatever it was started with. Restart it with "
+                            span { class: "font-mono text-gray-200", "be/r" }
+                            " and this board fills in by itself."
+                        }
+                        p { class: "text-gray-400 mt-1 text-xs", "{e}" }
+                    }
+                },
+                None => rsx! {
+                    Panel { title: "Tokens".to_string(),
+                        p { class: "text-gray-400", "Sampling…" }
+                    }
+                },
             }
         }
     }
