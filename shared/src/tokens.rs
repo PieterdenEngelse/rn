@@ -33,6 +33,28 @@ wire! {
     pub enum ExpirySource {
         /// The credential is a JWT and its payload carries `exp`.
         Jwt,
+        /// Another tool's config file records when its token dies — rclone
+        /// writes `expiry` beside each remote's token. Second-hand, and worth
+        /// separating: the token says when it dies, a file says when something
+        /// last believed it would.
+        Rclone,
+    }
+}
+
+wire! {
+    /// Where a row comes from.
+    ///
+    /// rn's own credentials are the point of the board. The rest are tokens
+    /// other tools own, read for their expiry alone because rn depends on what
+    /// they unlock — the rclone mounts are two units in `60-user-units`, and
+    /// when their tokens lapse the mounts go quiet rather than loud.
+    #[derive(Copy, Eq)]
+    #[serde(rename_all = "kebab-case")]
+    pub enum TokenOrigin {
+        /// Declared by a job or webhook, and kept in `~/.config/rn/credentials`.
+        Credential,
+        /// An rclone remote, read from `~/.config/rclone/rclone.conf`.
+        Rclone,
     }
 }
 
@@ -66,8 +88,10 @@ wire! {
     /// One credential, seen as a thing that expires and that jobs depend on.
     #[serde(rename_all = "camelCase")]
     pub struct TokenEntry {
-        /// As a job spells it — `githubToken`.
+        /// As a job spells it — `githubToken`. For an rclone remote, the
+        /// remote's own name.
         pub name: String,
+        pub origin: TokenOrigin,
         /// Whether the running process has a value. Never the value.
         pub set: bool,
         /// Whether the credentials file has a line for it.

@@ -14,7 +14,7 @@
 
 use crate::api::{
     fetch_connection, fetch_health, fetch_node_metrics, fetch_tokens, ConnectionResponse, HealthResponse, HookOutcome,
-    NodeMetrics, TokenEntry, TokensResponse, TrackerOutcome, API_BASE,
+    NodeMetrics, TokenEntry, TokenOrigin, TokensResponse, TrackerOutcome, API_BASE,
 };
 use crate::components::{Board, InfoButton, Metric, Panel};
 use dioxus::prelude::*;
@@ -1003,21 +1003,31 @@ fn expiry_class(e: &TokenEntry) -> &'static str {
 /// What breaks when it goes. Names them rather than counting them: "3 jobs" is
 /// a number to go and look up at the moment you least want to.
 fn stops_with(e: &TokenEntry) -> String {
-    if e.declared_by.is_empty() {
-        return "nothing declares it".to_string();
+    match e.origin {
+        // rn neither holds nor uses this one. What it holds up is the mount,
+        // and a lapsed mount goes quiet rather than loud — which is the whole
+        // reason the row is here.
+        TokenOrigin::Rclone => "an rclone mount, not a job".to_string(),
+        TokenOrigin::Credential if e.declared_by.is_empty() => "nothing declares it".to_string(),
+        TokenOrigin::Credential => e.declared_by.join(", "),
     }
-    e.declared_by.join(", ")
 }
 
 fn last_success(e: &TokenEntry, now: f64) -> String {
     match &e.last_success {
         Some(r) => format!("{} ago · {}", span((now - r.at_ms) / 1000.0), r.job_id),
+        // No rn job runs with it, so run history has nothing to say either
+        // way. Its expiry is the whole of what this board knows.
+        None if e.origin == TokenOrigin::Rclone => "—".to_string(),
         None if !e.set => "never — not set".to_string(),
         None => "no successful run in the window".to_string(),
     }
 }
 
 fn refused(e: &TokenEntry, now: f64) -> String {
+    if e.origin == TokenOrigin::Rclone {
+        return "—".to_string();
+    }
     if e.auth_failures == 0 {
         return "none".to_string();
     }
@@ -1050,7 +1060,12 @@ const TOKENS_WHAT: &str =
      from the token's own exp claim: a JWT carries one, a personal access token or an app \
      password does not, and the row says which rather than leaving a blank that reads as \
      \"fine\". The rest is derived from runs that already happened. Nothing here calls a \
-     provider, so an open page is not traffic and cannot exhaust anyone's rate limit.";
+     provider, so an open page is not traffic and cannot exhaust anyone's rate limit.\n\nThe \
+     last rows are not rn's at all: rclone's remotes, read from its own config for their expiry \
+     and nothing else. They are here because this machine depends on them — the Drive and \
+     OneDrive mounts are two of the user units — and because they are the only tokens on it \
+     that say when they die. A lapsed mount goes quiet rather than loud, which is the sort of \
+     failure a countdown is for.";
 
 const TOKENS_WHY: &str =
     "Set is not working, and until this board existed nothing in rn ever tried the difference. \
@@ -1072,4 +1087,8 @@ const TOKENS_IF_WRONG: &str =
      capacity is small, it can mean \"nothing to go on\" rather than \"nothing wrong\".\n\nThe \
      failure classifier is a guess at prose from whatever library made the call: it reads 401, \
      403, invalid token, bad credentials and their neighbours. A provider that words a refusal \
-     differently will land in the job's error log without being counted here.";
+     differently will land in the job's error log without being counted here.\n\nAn rclone row \
+     is second-hand in a way the others are not. Its expiry is what rclone last wrote down, so \
+     a refresh rclone performed without rn watching leaves the file — and this row — describing \
+     an older token than the one in use. Treat it as the floor: past that instant something had \
+     to have been renewed.";

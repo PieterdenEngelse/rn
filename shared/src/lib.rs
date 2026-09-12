@@ -156,6 +156,7 @@ pub fn export_all(cfg: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     CredentialEntry::export_all(cfg)?;
     CredentialsResponse::export_all(cfg)?;
     ExpirySource::export_all(cfg)?;
+    TokenOrigin::export_all(cfg)?;
     TokenExpiry::export_all(cfg)?;
     TokenRun::export_all(cfg)?;
     TokenEntry::export_all(cfg)?;

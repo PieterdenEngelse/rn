@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { build, isAuthFailure, jwtExpiry, WINDOW_DAYS } from "../src/tokens.ts";
+import { build, isAuthFailure, jwtExpiry, rcloneExpiries, WINDOW_DAYS } from "../src/tokens.ts";
 import type { CredentialEntry, JobRun } from "../src/generated/wire.ts";
 
 const NOW = 1_800_000_000_000;
@@ -143,4 +143,56 @@ test("a credential that is not set says that, rather than reading as immortal", 
     });
     assert.match(out.entries[0]!.expiryUnknown!, /not set/);
     assert.equal(out.entries[0]!.expiry, undefined);
+});
+
+test("rclone's remotes bring the only real expiry on this kind of machine", () => {
+    const conf = [
+        "[gdrive]",
+        "type = drive",
+        "scope = drive",
+        'token = {"access_token":"ya29.SECRET","refresh_token":"1//SECRET","expiry":"2026-09-12T10:00:00.000000000Z"}',
+        "",
+        "[onedrive]",
+        "type = onedrive",
+        'token = {"access_token":"EwB.SECRET","expiry":"2026-09-13T11:30:00Z"}',
+        "",
+        "[local]",
+        "type = local",
+    ].join("\n");
+
+    const rows = rcloneExpiries(conf, Date.parse("2026-09-12T09:00:00Z"));
+    assert.deepEqual(
+        rows.map((r) => r.name),
+        ["gdrive (drive)", "onedrive (onedrive)"],
+    );
+    // A remote with no token is not a row: nothing expires.
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0]!.origin, "rclone");
+    assert.equal(rows[0]!.expiry?.source, "rclone");
+    assert.equal(rows[0]!.expiry?.inSeconds, 3600);
+    assert.equal(rows[1]!.expiry?.inSeconds, 95400);
+
+    // The tokens sit on the same line as the expiry and must not come with it.
+    const serialised = JSON.stringify(rows);
+    assert.doesNotMatch(serialised, /SECRET|access_token|refresh_token/);
+});
+
+test("a broken or tokenless rclone config yields rows for what it can, and no throw", () => {
+    assert.deepEqual(rcloneExpiries("", Date.now()), []);
+    assert.deepEqual(rcloneExpiries("[half]\ntype = drive\ntoken = {not json", Date.now()), []);
+    assert.deepEqual(rcloneExpiries('[x]\ntoken = {"expiry":"not-a-date"}', Date.now()), []);
+});
+
+test("rclone rows join the credentials rather than replacing them", () => {
+    const out = build({
+        entries: [credential("githubToken", ["watch-deliveries"])],
+        runs: [],
+        nowMs: NOW,
+        valueOf: () => "ghp_opaque",
+        rcloneConf: '[gdrive]\ntype = drive\ntoken = {"expiry":"2026-09-12T10:00:00Z"}',
+    });
+    assert.deepEqual(
+        out.entries.map((e) => [e.name, e.origin]),
+        [["githubToken", "credential"], ["gdrive (drive)", "rclone"]],
+    );
 });

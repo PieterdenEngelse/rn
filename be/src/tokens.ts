@@ -74,6 +74,61 @@ function runOf(run: JobRun): TokenRun {
 }
 
 /**
+ * Expiries out of an rclone config, one row per remote that holds a token.
+ *
+ * rn does not use rclone, and depends on it anyway: the Drive and OneDrive
+ * mounts are two of the user units the bootstrap enables, and when their
+ * tokens lapse the mounts go quiet rather than loud. These are also the only
+ * tokens on this machine that say when they die — everything rn declares is a
+ * personal access token or an app password, which carry no expiry at all.
+ *
+ * Read for `expiry` and nothing else. The access and refresh tokens sit on the
+ * same line and never leave this function: it returns a remote's name, its
+ * type, and an instant.
+ */
+export function rcloneExpiries(conf: string, nowMs: number): TokenEntry[] {
+    const out: TokenEntry[] = [];
+    let name: string | undefined;
+    let type: string | undefined;
+    let expiry: string | undefined;
+
+    const flush = () => {
+        if (name === undefined || expiry === undefined) return;
+        const atMs = Date.parse(expiry);
+        if (Number.isNaN(atMs)) return;
+        out.push({
+            name: type === undefined ? name : `${name} (${type})`,
+            origin: "rclone",
+            set: true,
+            inFile: true,
+            declaredBy: [],
+            authFailures: 0,
+            expiry: { atMs, inSeconds: (atMs - nowMs) / 1000, source: "rclone" },
+        });
+    };
+
+    for (const raw of conf.split("\n")) {
+        const line = raw.trim();
+        const section = /^\[(.+)\]$/.exec(line);
+        if (section) {
+            flush();
+            name = section[1];
+            type = undefined;
+            expiry = undefined;
+            continue;
+        }
+        const t = /^type\s*=\s*(\S+)/.exec(line);
+        if (t) type = t[1];
+        // The token is one JSON object on one line. Only its expiry is read,
+        // by a pattern narrow enough that it cannot match the tokens beside it.
+        const e = /"expiry"\s*:\s*"([^"]+)"/.exec(line);
+        if (e) expiry = e[1];
+    }
+    flush();
+    return out;
+}
+
+/**
  * Build the board.
  *
  * `valueOf` is injected rather than imported so a test can exercise expiry
@@ -86,6 +141,10 @@ export function build(opts: {
     nowMs: number;
     windowDays?: number;
     valueOf: (name: string) => string | undefined;
+    /// The contents of rclone.conf, when there is one. Passed in rather than
+    /// read here so a test needs no file and the one place rn reads another
+    /// tool's config stays visible in the caller.
+    rcloneConf?: string | undefined;
 }): TokensResponse {
     const windowDays = opts.windowDays ?? WINDOW_DAYS;
     const since = opts.nowMs - windowDays * 24 * 60 * 60 * 1000;
@@ -102,6 +161,7 @@ export function build(opts: {
 
         const entry: TokenEntry = {
             name: c.name,
+            origin: "credential",
             set: c.set,
             inFile: c.inFile,
             declaredBy: c.declaredBy,
@@ -128,8 +188,10 @@ export function build(opts: {
         return entry;
     });
 
+    const rows = [...entries, ...(opts.rcloneConf ? rcloneExpiries(opts.rcloneConf, opts.nowMs) : [])];
+
     return {
-        entries,
+        entries: rows,
         windowDays,
         runsConsidered: inWindow.length,
         checkedAtMs: opts.nowMs,

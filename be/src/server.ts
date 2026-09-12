@@ -21,6 +21,7 @@
  * own port with one route — see be/src/hooks/server.ts.
  */
 
+import { readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
 import { RUNTIME_PARAMS, WITHHELD } from "./runtime-params.ts";
@@ -208,6 +209,16 @@ function declaredBy(name: string): string[] {
  * Every credential worth a row: everything declared, plus everything the file
  * names, sorted so the board does not reshuffle between polls.
  */
+/** rclone's config, when there is one. Never parsed here — see tokens.ts. */
+function readRcloneConf(): string | undefined {
+    const path = `${process.env.HOME ?? "."}/.config/rclone/rclone.conf`;
+    try {
+        return readFileSync(path, "utf8");
+    } catch {
+        return undefined;
+    }
+}
+
 function credentialEntries() {
     const declarations = credentialDeclarations();
     const names = new Set(declarations.keys());
@@ -1295,6 +1306,12 @@ export function createApp() {
                     runs: jobHistory.list(jobHistory.capacities().runs),
                     nowMs: Date.now(),
                     valueOf: secrets.read,
+                    // rclone's own config, read for its remotes' expiry alone.
+                    // Its mounts are two of the user units this machine runs,
+                    // and their tokens are the only ones here that say when
+                    // they die — see tokens.rcloneExpiries, which reads that
+                    // field and nothing beside it. Absent file, absent rows.
+                    rcloneConf: readRcloneConf(),
                 }),
             );
             return done(200);

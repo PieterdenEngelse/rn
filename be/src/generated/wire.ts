@@ -512,7 +512,7 @@ drifted: number, };
  * answers a different question about trust: the token says when it dies,
  * whereas a file says when something last believed it would.
  */
-export type ExpirySource = "jwt";
+export type ExpirySource = "jwt" | "rclone";
 
 /**
  * One live handle and whatever distinguishes it from the others of its kind.
@@ -1887,9 +1887,10 @@ detail: string, };
  */
 export type TokenEntry = { 
 /**
- * As a job spells it — `githubToken`.
+ * As a job spells it — `githubToken`. For an rclone remote, the
+ * remote's own name.
  */
-name: string, 
+name: string, origin: TokenOrigin, 
 /**
  * Whether the running process has a value. Never the value.
  */
@@ -1933,6 +1934,16 @@ atMs: number,
  * which is the state worth colouring red rather than hiding.
  */
 inSeconds: number, source: ExpirySource, };
+
+/**
+ * Where a row comes from.
+ *
+ * rn's own credentials are the point of the board. The rest are tokens
+ * other tools own, read for their expiry alone because rn depends on what
+ * they unlock — the rclone mounts are two units in `60-user-units`, and
+ * when their tokens lapse the mounts go quiet rather than loud.
+ */
+export type TokenOrigin = "credential" | "rclone";
 
 /**
  * One run that touched a credential: which job, when, and how it ended.
