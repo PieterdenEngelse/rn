@@ -14,7 +14,7 @@
 
 use crate::api::{
     fetch_connection, fetch_health, fetch_node_metrics, fetch_tokens, ConnectionResponse, HealthResponse, HookOutcome,
-    NodeMetrics, TokenEntry, TokenOrigin, TokensResponse, TrackerOutcome, API_BASE,
+    NodeMetrics, probe_token, TokenEntry, TokenOrigin, TokenProbe, TokensResponse, TrackerOutcome, API_BASE,
 };
 use crate::components::{Board, InfoButton, Metric, Panel};
 use dioxus::prelude::*;
@@ -934,7 +934,8 @@ fn Tokens(t: TokensResponse, #[props(default = String::new())] class: String) ->
                                 th { class: "pr-6 pb-2 font-normal", "Expires" }
                                 th { class: "pr-6 pb-2 font-normal", "Stops with it" }
                                 th { class: "pr-6 pb-2 font-normal", "Last success" }
-                                th { class: "pb-2 font-normal", "Refused, {t.window_days}d" }
+                                th { class: "pr-6 pb-2 font-normal", "Refused, {t.window_days}d" }
+                                th { class: "pb-2 font-normal", "Works now" }
                             }
                         }
                         tbody {
@@ -944,7 +945,35 @@ fn Tokens(t: TokensResponse, #[props(default = String::new())] class: String) ->
                                     td { class: "pr-6 py-1 {expiry_class(e)}", "{expiry_word(e)}" }
                                     td { class: "pr-6 py-1 text-gray-300", "{stops_with(e)}" }
                                     td { class: "pr-6 py-1 text-gray-300", "{last_success(e, t.checked_at_ms)}" }
-                                    td { class: "py-1 {refused_class(e)}", "{refused(e, t.checked_at_ms)}" }
+                                    td { class: "pr-6 py-1 {refused_class(e)}", "{refused(e, t.checked_at_ms)}" }
+                                    td { class: "py-1",
+                                        if e.probable {
+                                            div { class: "flex items-center gap-2",
+                                                {
+                                                    let name = e.name.clone();
+                                                    rsx! {
+                                                        button {
+                                                            class: "text-xs text-[#22d3ee] hover:text-[#67e8f9]",
+                                                            // The result lands on the next poll, two
+                                                            // seconds away, rather than being threaded
+                                                            // back through this click: the board is
+                                                            // already the thing that shows it.
+                                                            onclick: move |_| {
+                                                                let name = name.clone();
+                                                                spawn(async move { let _ = probe_token(&name).await; });
+                                                            },
+                                                            if e.probe.is_some() { "Try again" } else { "Try it" }
+                                                        }
+                                                    }
+                                                }
+                                                if let Some(p) = e.probe.as_ref() {
+                                                    span { class: probe_class(p), "{probe_word(p, t.checked_at_ms)}" }
+                                                }
+                                            }
+                                        } else {
+                                            span { class: "text-gray-400", "{not_probable(e)}" }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1045,6 +1074,29 @@ fn refused(e: &TokenEntry, now: f64) -> String {
     }
 }
 
+/// What the last probe said, and how long ago it said it.
+fn probe_word(p: &TokenProbe, now: f64) -> String {
+    let when = span((now - p.at_ms) / 1000.0);
+    if p.ok {
+        format!("worked {when} ago · {}", p.detail)
+    } else {
+        format!("refused {when} ago · {}", p.detail)
+    }
+}
+
+fn probe_class(p: &TokenProbe) -> &'static str {
+    if p.ok { "text-green-400 text-xs" } else { "text-red-400 text-xs" }
+}
+
+/// Why a row has no button. Untestable is not untested, and the difference is
+/// the reason this says something rather than leaving the cell empty.
+fn not_probable(e: &TokenEntry) -> &'static str {
+    match e.origin {
+        TokenOrigin::Rclone => "rclone refreshes it",
+        TokenOrigin::Credential => "no probe: nothing outward accepts it",
+    }
+}
+
 fn refused_class(e: &TokenEntry) -> &'static str {
     if e.auth_failures == 0 {
         "text-gray-400"
@@ -1065,7 +1117,12 @@ const TOKENS_WHAT: &str =
      and nothing else. They are here because this machine depends on them — the Drive and \
      OneDrive mounts are two of the user units — and because they are the only tokens on it \
      that say when they die. A lapsed mount goes quiet rather than loud, which is the sort of \
-     failure a countdown is for.";
+     failure a countdown is for.\n\nWorks now is the one column that costs something. Pressing \
+     it asks the provider: for the GitHub token, the one endpoint GitHub exempts from its own \
+     rate limit, so asking cannot spend the budget the token is for; for the mailbox password, \
+     a login and an immediate logout, opening nothing and reading nothing. The probe belongs to \
+     the job that declares the credential, because only it knows what working means for its own \
+     provider — and a credential no job can probe says so instead of showing an empty cell.";
 
 const TOKENS_WHY: &str =
     "Set is not working, and until this board existed nothing in rn ever tried the difference. \
@@ -1075,7 +1132,10 @@ const TOKENS_WHY: &str =
      visible beforehand: a countdown while there is one to show, amber inside a week, and the \
      names of the automations that stop when it reaches zero. Where there is no countdown, the \
      refused column is the next best thing — repeated 401s against one credential are the shape \
-     of a token that has already gone, however the library worded it.";
+     of a token that has already gone, however the library worded it.\n\nAnd where neither is \
+     available, Works now is: the only thing that proves a credential works is something using \
+     it. That is a button rather than a poll on purpose — a page left open would otherwise \
+     spend a rate limit all day to tell you what one click tells you when you want to know.";
 
 const TOKENS_IF_WRONG: &str =
     "Two ways to misread it.\n\n\"Not a JWT: no expiry to read\" is not \"never expires\". A \
@@ -1091,4 +1151,9 @@ const TOKENS_IF_WRONG: &str =
      is second-hand in a way the others are not. Its expiry is what rclone last wrote down, so \
      a refresh rclone performed without rn watching leaves the file — and this row — describing \
      an older token than the one in use. Treat it as the floor: past that instant something had \
-     to have been renewed.";
+     to have been renewed.\n\nA probe result is a moment, not a guarantee: it says the \
+     credential worked when asked, and a token can be revoked a second later. A refusal can \
+     also be the network rather than the credential — the detail beside it is the provider's \
+     own words, and \"ENOTFOUND\" is a different problem from \"401\". Results live in memory \
+     and are gone after a restart, for the same reason the listener counts are: an answer from \
+     before a restart would be older than the process reporting it.";

@@ -494,5 +494,32 @@ export interface Job {
      * reading `process.env` directly.
      */
     credentials?: string[];
+    /**
+     * The cheapest call that proves a credential this job declares still
+     * works, keyed by the credential's name.
+     *
+     * Declared here because the job is the only thing that knows what "works"
+     * means for its own credential: a token for an HTTP API is one request, a
+     * mailbox password is a login, and an inbound signing secret cannot be
+     * probed at all — nothing outward accepts it. A credential with no probe
+     * says so on the tokens board rather than showing an empty column that
+     * reads as untested-and-fine.
+     *
+     * It runs when somebody asks, from Monitor → Connection. Keep it to one
+     * request against the cheapest endpoint the provider has: it is allowed to
+     * cost a token's rate limit, not a meaningful part of it.
+     */
+    probes?: Record<string, (ctx: ProbeContext) => Promise<ProbeResult>>;
     run(ctx: JobContext): Promise<JobResult>;
+}
+
+/** What a probe is given: the same secret accessor a run gets, and nothing else. */
+export interface ProbeContext {
+    secret(name: string): string | undefined;
+}
+
+/** What a probe reports. `detail` is shown verbatim, so keep it short and specific. */
+export interface ProbeResult {
+    ok: boolean;
+    detail: string;
 }

@@ -182,6 +182,33 @@ export const readMail: Job = {
     // credential, SMTP and IMAP both. docs/link-tracking.md §1.
     credentials: ["gmailAppPassword"],
 
+    probes: {
+        // A login and an immediate logout, against the same host and port a
+        // run would use. It proves the one thing a run proves and nothing
+        // else: no mailbox is opened, no message is read, nothing is marked.
+        gmailAppPassword: async (ctx) => {
+            const password = ctx.secret("gmailAppPassword");
+            if (password === undefined) return { ok: false, detail: "not set" };
+            const { ImapFlow } = await import("imapflow");
+            const client = new ImapFlow({
+                host: config.imapHost,
+                port: config.imapPort,
+                secure: config.imapPort === 993,
+                auth: { user: config.mailUser, pass: password },
+                logger: false,
+                socketTimeout: 15_000,
+            });
+            try {
+                await client.connect();
+                await client.logout();
+                return { ok: true, detail: `${config.mailUser} on ${config.imapHost}` };
+            } catch (err) {
+                client.close();
+                return { ok: false, detail: String((err as Error).message ?? err) };
+            }
+        },
+    },
+
     inputs: [
         {
             id: "mailbox",

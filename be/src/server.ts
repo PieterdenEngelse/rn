@@ -1292,6 +1292,26 @@ export function createApp() {
             return done(200);
         }
 
+        // Ask a provider whether one credential still works. A POST because
+        // it is an outward call somebody chose to make, not a reading that
+        // refreshing the page repeats: the board is derived and free, and this
+        // is the one thing on it that costs a request.
+        if (url.pathname.startsWith("/api/tokens/") && url.pathname.endsWith("/probe") && req.method === "POST") {
+            const name = decodeURIComponent(
+                url.pathname.slice("/api/tokens/".length, -"/probe".length),
+            );
+            const probe = await tokens.runProbe(name, secrets.read, Date.now());
+            if (probe === undefined) {
+                send(res, 404, {
+                    error: `nothing can probe ${name}`,
+                    hint: "only a credential a job declares a probe for can be tried; an inbound signing secret has no outward endpoint that would accept it",
+                });
+                return done(404);
+            }
+            send(res, 200, probe);
+            return done(200);
+        }
+
         // The other half of the credentials board: not "is it set" but "when
         // does it stop working, and what stops with it". Derived from the
         // token's own exp claim and from runs that already happened — this

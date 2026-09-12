@@ -10,7 +10,7 @@ use super::wire::{
     MailRuleSaveResponse, MailRulesResponse, MailTestResponse, MailTestResult, NodeHistory,
     NodeMetrics, RunsDeleteResponse, SendDetail,
     ParamsResponse, RestartOutcome, RunsResponse, SaveResponse, StateResetResponse, StatusResponse,
-    CredentialSaveResponse, CredentialsResponse, StopOutcome, TestDelivery, TokensResponse, WebhookDef,
+    CredentialSaveResponse, CredentialsResponse, StopOutcome, TestDelivery, TokenProbe, TokensResponse, WebhookDef,
     WebhookSaveResponse, WebhooksResponse,
 };
 
@@ -149,6 +149,22 @@ pub async fn fetch_send(id: &str) -> Result<SendDetail, String> {
 }
 
 /// What is listening, who may talk to it, and what it may reach.
+/// Ask a provider whether one credential still works.
+///
+/// A POST because it is an outward call somebody chose to make. The board
+/// itself is derived and free; this is the one thing on it that costs a
+/// request, so it happens on a click and never on a poll.
+pub async fn probe_token(name: &str) -> Result<TokenProbe, String> {
+    let resp = gloo_net::http::Request::post(&format!("{API_BASE}/api/tokens/{name}/probe"))
+        .send()
+        .await
+        .map_err(|e| format!("{e}"))?;
+    if !resp.ok() {
+        return Err(format!("backend returned {}", resp.status()));
+    }
+    resp.json::<TokenProbe>().await.map_err(|e| format!("{e}"))
+}
+
 /// When each declared credential stops working, and what stops with it.
 ///
 /// Derived entirely inside the backend from the token's own `exp` claim and

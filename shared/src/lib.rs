@@ -158,6 +158,7 @@ pub fn export_all(cfg: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     ExpirySource::export_all(cfg)?;
     TokenOrigin::export_all(cfg)?;
     TokenExpiry::export_all(cfg)?;
+    TokenProbe::export_all(cfg)?;
     TokenRun::export_all(cfg)?;
     TokenEntry::export_all(cfg)?;
     TokensResponse::export_all(cfg)?;

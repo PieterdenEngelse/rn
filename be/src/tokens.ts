@@ -16,7 +16,9 @@
  * one number; nothing else here ever sees one, and failure messages go out
  * through `secrets.redact` as everywhere else.
  */
-import type { CredentialEntry, JobRun, TokenEntry, TokenRun, TokensResponse } from "./generated/wire.ts";
+import type { CredentialEntry, JobRun, TokenEntry, TokenProbe, TokenRun, TokensResponse } from "./generated/wire.ts";
+import { JOBS } from "./jobs/index.ts";
+import type { ProbeResult } from "./jobs/types.ts";
 import * as secrets from "./secrets.ts";
 
 /** How far back run history is read. */
@@ -74,6 +76,67 @@ function runOf(run: JobRun): TokenRun {
 }
 
 /**
+ * Who can answer for a credential, and what they last said.
+ *
+ * The probe itself belongs to the job that declares the credential — only it
+ * knows what "works" means for its own provider (see `Job.probes`). This is
+ * the lookup and the memory of the last answer, kept in this process and lost
+ * on restart, exactly like the listener counts on the same page: a probe is a
+ * question about right now, and a stored answer from before a restart would be
+ * older than the process reporting it.
+ */
+const lastProbes = new Map<string, TokenProbe>();
+
+/** The job that can probe this credential, if any declares it. */
+export function probeOwner(name: string): (typeof JOBS)[number] | undefined {
+    return JOBS.find((j) => j.probes?.[name] !== undefined);
+}
+
+export function lastProbe(name: string): TokenProbe | undefined {
+    return lastProbes.get(name);
+}
+
+/** For tests, and for nothing else: the store is process memory by design. */
+export function resetProbes(): void {
+    lastProbes.clear();
+}
+
+/**
+ * Ask the provider. Returns undefined when nothing can ask — an inbound
+ * signing secret has no outward endpoint that would accept it.
+ *
+ * A throwing probe is a failed probe, not a failed request: the point is to
+ * report what happened, and an exception is what "the host does not resolve"
+ * looks like from here.
+ */
+export async function runProbe(
+    name: string,
+    secret: (n: string) => string | undefined,
+    nowMs: number,
+    // The registry, injected so a test can exercise the recording and the
+    // failure path without a network or a real provider.
+    lookup: (n: string) => ((ctx: { secret: typeof secret }) => Promise<ProbeResult>) | undefined = (n) =>
+        probeOwner(n)?.probes?.[n],
+): Promise<TokenProbe | undefined> {
+    const probe = lookup(name);
+    if (probe === undefined) return undefined;
+
+    let result: ProbeResult;
+    try {
+        result = await probe({ secret });
+    } catch (err) {
+        result = { ok: false, detail: String((err as Error)?.message ?? err) };
+    }
+    const record: TokenProbe = {
+        atMs: nowMs,
+        ok: result.ok,
+        detail: secrets.redact(result.detail).slice(0, 200),
+    };
+    lastProbes.set(name, record);
+    return record;
+}
+
+/**
  * Expiries out of an rclone config, one row per remote that holds a token.
  *
  * rn does not use rclone, and depends on it anyway: the Drive and OneDrive
@@ -102,6 +165,7 @@ export function rcloneExpiries(conf: string, nowMs: number): TokenEntry[] {
             set: true,
             inFile: true,
             declaredBy: [],
+            probable: false,
             authFailures: 0,
             expiry: { atMs, inSeconds: (atMs - nowMs) / 1000, source: "rclone" },
         });
@@ -159,13 +223,16 @@ export function build(opts: {
         );
         const failures = byNewest.filter((r) => isAuthFailure(r.error));
 
+        const probe = lastProbes.get(c.name);
         const entry: TokenEntry = {
             name: c.name,
             origin: "credential",
             set: c.set,
             inFile: c.inFile,
             declaredBy: c.declaredBy,
+            probable: probeOwner(c.name) !== undefined,
             authFailures: failures.length,
+            ...(probe === undefined ? {} : { probe }),
         };
         if (success) entry.lastSuccess = runOf(success);
         if (failures[0]) entry.lastAuthFailure = runOf(failures[0]);

@@ -1918,8 +1918,12 @@ lastSuccess?: TokenRun | null,
 /**
  * Failures in the window whose error reads as an authentication
  * refusal — a 401, a 403, an invalid or expired token.
+ * Whether anything can ask a provider about this one. False for an
+ * inbound signing secret, which nothing outward accepts — an empty
+ * probe column on such a row would read as untested rather than
+ * untestable.
  */
-authFailures: number, lastAuthFailure?: TokenRun | null, };
+probable: boolean, probe?: TokenProbe | null, authFailures: number, lastAuthFailure?: TokenRun | null, };
 
 /**
  * When a credential stops working.
@@ -1944,6 +1948,20 @@ inSeconds: number, source: ExpirySource, };
  * when their tokens lapse the mounts go quiet rather than loud.
  */
 export type TokenOrigin = "credential" | "rclone";
+
+/**
+ * The last time somebody asked a provider whether a credential still works.
+ *
+ * In memory only, and gone on restart, like the listener counts on the
+ * same page: a probe is a question about right now, and a stored answer
+ * from before a restart would be older than the process reporting it.
+ */
+export type TokenProbe = { atMs: number, ok: boolean, 
+/**
+ * What the provider said, short: a rate-limit remainder, a mailbox
+ * and host, or the refusal itself. Redacted like any other message.
+ */
+detail: string, };
 
 /**
  * One run that touched a credential: which job, when, and how it ended.

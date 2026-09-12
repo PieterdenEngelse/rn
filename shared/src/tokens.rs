@@ -85,6 +85,22 @@ wire! {
 }
 
 wire! {
+    /// The last time somebody asked a provider whether a credential still works.
+    ///
+    /// In memory only, and gone on restart, like the listener counts on the
+    /// same page: a probe is a question about right now, and a stored answer
+    /// from before a restart would be older than the process reporting it.
+    #[serde(rename_all = "camelCase")]
+    pub struct TokenProbe {
+        pub at_ms: f64,
+        pub ok: bool,
+        /// What the provider said, short: a rate-limit remainder, a mailbox
+        /// and host, or the refusal itself. Redacted like any other message.
+        pub detail: String,
+    }
+}
+
+wire! {
     /// One credential, seen as a thing that expires and that jobs depend on.
     #[serde(rename_all = "camelCase")]
     pub struct TokenEntry {
@@ -113,6 +129,13 @@ wire! {
         pub last_success: Option<TokenRun>,
         /// Failures in the window whose error reads as an authentication
         /// refusal — a 401, a 403, an invalid or expired token.
+        /// Whether anything can ask a provider about this one. False for an
+        /// inbound signing secret, which nothing outward accepts — an empty
+        /// probe column on such a row would read as untested rather than
+        /// untestable.
+        pub probable: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub probe: Option<TokenProbe>,
         pub auth_failures: u32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub last_auth_failure: Option<TokenRun>,

@@ -352,6 +352,38 @@ export const watchDeliveries: Job = {
 
     credentials: ["githubToken"],
 
+    probes: {
+        // The cheapest authenticated call GitHub has: /rate_limit is itself
+        // exempt from the rate limit, so asking whether the token works cannot
+        // cost the budget the token is for. A 401 here is the answer the board
+        // exists to give — the same refusal that would otherwise surface at
+        // 04:00 as a failed run with nothing naming the cause.
+        githubToken: async (ctx) => {
+            const token = ctx.secret("githubToken");
+            if (token === undefined) return { ok: false, detail: "not set" };
+            const res = await fetch("https://api.github.com/rate_limit", {
+                headers: {
+                    authorization: `Bearer ${token}`,
+                    accept: "application/vnd.github+json",
+                    "user-agent": "rn",
+                },
+                signal: AbortSignal.timeout(10_000),
+            });
+            if (!res.ok) {
+                return { ok: false, detail: `${res.status} ${res.statusText}` };
+            }
+            const body = (await res.json()) as { rate?: { remaining?: number; limit?: number } };
+            const rate = body.rate;
+            return {
+                ok: true,
+                detail:
+                    rate === undefined
+                        ? "accepted"
+                        : `accepted · ${rate.remaining ?? "?"}/${rate.limit ?? "?"} left this hour`,
+            };
+        },
+    },
+
     inputs: [
         {
             id: "repos",

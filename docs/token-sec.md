@@ -204,9 +204,18 @@ not traffic and cannot exhaust a rate limit — and a read endpoint that hands a
 local process nothing it did not already have stays within the argument in
 `shared/src/credentials.rs`.
 
-The honest limit: a liveness probe would answer "does it work *now*", and this
-does not. What it gives instead is a countdown where one is readable, and the
-shape of a credential that has already gone where one is not.
+**The probe is the one thing there that uses a value.** "Works now" asks the
+provider, from the backend, with the secret never leaving the process: what
+crosses the boundary is `ok` and one short line of the provider's own words,
+redacted like any other message. It is a button and never a poll — a page left
+open would otherwise spend a token's rate limit all day — and the call is
+chosen to be the cheapest the provider has: GitHub's `/rate_limit`, which
+GitHub exempts from the limit it reports, and for a mailbox a login followed
+immediately by a logout, opening nothing.
+
+A credential nothing can probe says so. An inbound signing secret has no
+outward endpoint that would accept it, and an empty cell there would read as
+untested rather than untestable.
 
 ## What this does not protect against
 

@@ -1,6 +1,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { build, isAuthFailure, jwtExpiry, rcloneExpiries, WINDOW_DAYS } from "../src/tokens.ts";
+import {
+    build,
+    isAuthFailure,
+    jwtExpiry,
+    lastProbe,
+    probeOwner,
+    rcloneExpiries,
+    resetProbes,
+    runProbe,
+    WINDOW_DAYS,
+} from "../src/tokens.ts";
 import type { CredentialEntry, JobRun } from "../src/generated/wire.ts";
 
 const NOW = 1_800_000_000_000;
@@ -195,4 +205,52 @@ test("rclone rows join the credentials rather than replacing them", () => {
         out.entries.map((e) => [e.name, e.origin]),
         [["githubToken", "credential"], ["gdrive (drive)", "rclone"]],
     );
+});
+
+test("the job that declares a credential is the thing that can probe it", () => {
+    // Wiring, asserted against the real registry: probes live on jobs, so a
+    // credential nothing declares a probe for is untestable by design.
+    assert.equal(probeOwner("githubToken")?.id, "watch-deliveries");
+    assert.equal(probeOwner("gmailAppPassword")?.id, "read-mail");
+    // An inbound signing secret has no outward endpoint that would accept it.
+    assert.equal(probeOwner("notifyWebhook"), undefined);
+});
+
+test("a probe's answer is remembered, and a throw is an answer", async () => {
+    resetProbes();
+    const ok = await runProbe("stubToken", () => "value", 1000, () => async () => ({
+        ok: true,
+        detail: "accepted · 4999/5000 left this hour",
+    }));
+    assert.deepEqual(ok, { atMs: 1000, ok: true, detail: "accepted · 4999/5000 left this hour" });
+    assert.deepEqual(lastProbe("stubToken"), ok);
+
+    const bad = await runProbe("stubToken", () => "value", 2000, () => async () => {
+        throw new Error("getaddrinfo ENOTFOUND api.example.com");
+    });
+    assert.equal(bad?.ok, false);
+    assert.match(bad!.detail, /ENOTFOUND/);
+    assert.equal(lastProbe("stubToken")?.atMs, 2000);
+});
+
+test("nothing to ask means nothing recorded, rather than a false negative", async () => {
+    resetProbes();
+    assert.equal(await runProbe("notifyWebhook", () => "v", 1000), undefined);
+    assert.equal(lastProbe("notifyWebhook"), undefined);
+});
+
+test("a row says whether it can be probed at all, and carries the last answer", async () => {
+    resetProbes();
+    await runProbe("githubToken", () => "v", 5000, () => async () => ({ ok: true, detail: "accepted" }));
+    const out = build({
+        entries: [credential("githubToken", ["watch-deliveries"]), credential("notifyWebhook", ["notify"])],
+        runs: [],
+        nowMs: NOW,
+        valueOf: () => "ghp_opaque",
+    });
+    const [gh, hook] = out.entries;
+    assert.equal(gh!.probable, true);
+    assert.deepEqual(gh!.probe, { atMs: 5000, ok: true, detail: "accepted" });
+    assert.equal(hook!.probable, false);
+    assert.equal(hook!.probe, undefined);
 });
