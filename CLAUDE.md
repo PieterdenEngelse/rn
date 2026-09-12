@@ -695,13 +695,15 @@ yours.
   out of mail that arrives. Read before either: the outbound half wants a
   public unauthenticated endpoint, which is the one thing rn has never had.
 - `docs/packaging.md` — shipping this as an installable app: the installed
-  layout, why the runtime is private, and (§11) `scripts/package.sh` and
-  `scripts/install.sh`, which build and install it.
+  layout, why the runtime is private, and (§11) `scripts/package.sh`,
+  `scripts/install.sh` and `scripts/release.sh`, which build it, install it,
+  and publish it so a machine with no toolchains can install it too.
 - `docs/os.md` — rebuilding the dev machine itself with chezmoi: what gets
   captured, the bootstrap scripts, and how to prove a restore works. Phases
-  1 to 4 exist: the private `dotfiles` repo, `capture.sh`, the dotfiles, the
-  age-encrypted secrets and the bootstrap scripts. The Phase 5 restore has
-  run in a container; a VM run is still open.
+  1 to 5 exist: the private `dotfiles` repo, `capture.sh`, the dotfiles, the
+  age-encrypted secrets and the bootstrap scripts. The restore has been run
+  in a container and in a VM, the second proving snaps, the user units and
+  the desktop login.
 - `docs/n8n.md` — what is worth borrowing from n8n and what is not, with steps.
 - `docs/todo.md` — open work, each item saying what goes wrong while it stays
   open.

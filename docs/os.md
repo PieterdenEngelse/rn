@@ -1,13 +1,13 @@
 # Rebuilding this machine with chezmoi
 
-Plan, written 2026-09-11. **Phases 1 to 4 exist:** the private source repo
+Written 2026-09-11, and **all five phases now exist**: the private source repo
 `PieterdenEngelse/dotfiles`, checked out at `~/.local/share/chezmoi`, holds
 `capture.sh`, the curated package lists, the dotfiles, the age-encrypted
-secrets and the bootstrap scripts. chezmoi v2.72.1 is in `~/.local/bin`.
-The restore test (Phase 5) has run in a container, which leaves snaps, user
-services and the desktop login for a VM run that is still open. It's about the
-machine rn runs on, not about rn itself, but it lives here because
-rebuilding the machine is mostly rebuilding what rn needs.
+secrets and the bootstrap scripts; chezmoi v2.72.1 is in `~/.local/bin`; and
+the restore has been run twice, in a container and in a VM, the second
+proving the parts a container cannot reach. It is about the machine rn runs
+on, not about rn itself, but it lives here because rebuilding the machine is
+mostly rebuilding what rn needs.
 
 Decided so far:
 
@@ -475,37 +475,85 @@ installed anything.
 - **The harness's own bug:** its test step ran without nvm loaded and
   reported "npm: command not found" as a failure. Fixed in the harness.
 
-**Still unproven:**
+**Everything above was then proven in a VM** — see below — including the five
+things a container cannot do: snaps, the user units, linger, a real LightDM
+login into XFCE, and the documented one-liner against GitHub.
 
-- snaps actually installing;
-- the five user units enabling and linger switching on;
-- a real LightDM login into XFCE;
-- `50-dconf` against a live session;
-- the real one-liner, with `gh auth login` and a clone from GitHub.
+### Run in a VM, 2026-09-12
 
-That is the VM run below.
+**What it took.** 27 GB freed by deleting stale build directories, then
+`sudo apt-get install -y qemu-system-x86 qemu-utils cloud-image-utils` (the
+only sudo needed: `/dev/kvm` is already granted to this user by an ACL). No
+libvirt, no virt-manager. The rest is a 26.04 **cloud image** grown to a
+20 GB disk, booted headless by plain QEMU with 2.5 GB and 2 CPUs, cloud-init
+creating `pde` at uid 1000 with the host's ssh key, and port 2222 forwarded
+in. Screens come from QEMU's own monitor socket (`screendump`), so no VM
+viewer is needed either.
 
-### The VM run, still open
+**It ran the documented restore, not a substitute**: `gh auth login` with a
+real device code, then
 
-It needs about 30 GB free and VM software installed, and neither is true here
-yet.
+    sh -c "$(curl -fsLS get.chezmoi.io)" -- init --apply PieterdenEngelse/dotfiles
 
-1. A fresh Ubuntu 26.04 VM, installed with the defaults.
-2. Before the first XFCE login, run the one-liner, give it the age key, and
-   answer the prompts.
-3. Check:
-   - `chezmoi verify` exits 0.
-   - The panel, keyboard shortcuts and window rules look like this machine's.
-   - `systemctl --user --failed` is empty. Expect the audio units to be
-     *absent*, not failed, because the VM isn't a BOHB-WAX9. That checks the
-     gate.
-   - `~/rn/scripts/check.sh` passes.
-4. Run `chezmoi apply` a second time. It must do nothing. If a `run_once_`
-   runs again or a `run_onchange_` fires with no change, the ordering or the
-   hashing is wrong.
+with the age key copied in first. The private dotfiles repo was cloned from
+GitHub, and later so was rn.
 
-Re-run this after any change to the scripts, and at least once before each
-Ubuntu LTS upgrade.
+**What the container could not prove, and the VM did:**
+
+| | Result |
+|---|---|
+| `21-snap` | firefox, thunderbird, chromium and htop really installed |
+| `60-user-units` | all four units enabled, `Linger=yes` |
+| after a reboot | `rn-backend` started with nobody logged in, and answered `{"status":"ok","node":"v24.20.0"}` with the hooks listener on 3011 |
+| LightDM | active at boot; the greeter rendered, and typing the password landed in **XFCE**, with the restored `start-firefox` autostart entry opening by itself |
+| the hardware gate | skipped the ES8336 files by name on real other hardware ("Ubuntu 26.04 PC (i440FX + PIIX, 1996)"), no faking |
+| rn | cloned from GitHub over HTTPS, four worktrees with their own runtimes and `node_modules`, launcher built |
+
+`chezmoi verify` was clean and every secret decrypted, as in the container.
+
+**It found a fault the container had hidden.** The Claude Code installer
+span at 100% CPU with no output and no network, indefinitely — reproducibly,
+twice. Because `chezmoi apply` stops at the first failing script, twenty-one
+minutes of restore ended with *nothing* after `30-toolchains`: no Node keys,
+no `/etc` files, no user units, no rn. A tool that is not part of rn must not
+be able to do that, so it now runs under `timeout 300`, a failure is a
+warning, and `99-checklist` lists it as missing. Fixed mid-test; the VM then
+pulled the fix with `chezmoi update` and finished in 7 minutes.
+
+**One thing that looked like a gap and was not.** LightDM was inactive after
+the restore, because a *server* cloud image has no graphical target reached
+at boot — `ubuntu-desktop` had already set `graphical.target` as the default,
+and one reboot was enough. A real Ubuntu Desktop install starts there.
+
+**The remaining manual steps** were exactly the ones `99-checklist` names:
+tailscale, the rclone tokens, and the binaries this repo cannot rebuild.
+
+**What the VM run did not cover**, and the container did: a second `apply`
+proving nothing changes (`restore-test/run.sh` does that every time), and
+`scripts/check.sh` in the restored `~/rn`. Nor was the restored XFCE panel
+compared against this machine's, only seen to render.
+
+### Running either test again
+
+    ~/.local/share/chezmoi/restore-test/run.sh      # container, ~45 min, no sudo
+
+For the VM, the recipe above in short:
+
+    sudo apt-get install -y qemu-system-x86 qemu-utils cloud-image-utils
+    # cloud image + 20 GB disk + cloud-init seed, then:
+    qemu-system-x86_64 -enable-kvm -m 2560 -smp 2 \
+        -drive file=disk.qcow2,if=virtio -drive file=seed.img,if=virtio,format=raw \
+        -nic user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:2222-:22 \
+        -vga std -display none -monitor unix:monitor.sock,server,nowait
+
+Run it under `systemd-run --user --unit=rn-vmtest` so it survives a killed
+shell and stops with `systemctl --user stop rn-vmtest`, and watch the host's
+free disk and memory while it runs — 2.5 GB for the guest is most of what a
+7 GB laptop can spare.
+
+Re-run the container test after any change to the scripts. The VM run is
+worth repeating before an Ubuntu LTS upgrade, or when something it alone can
+prove changes: snaps, the user units, or the login.
 
 ## Keeping it current
 

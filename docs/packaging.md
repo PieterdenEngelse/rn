@@ -574,5 +574,26 @@ real page, and came to **118M**: runtime 104M, `node_modules` 9.7M, page
   backend logged 53 same-origin `/api` requests from the page, none of them
   carrying an Origin header.
 
+**v0.1.0 is published, and the release path is proven end to end** (2026-09-12).
+`release.sh` built the package from a clean tree, tarred it to 42 MB with its
+sha256, and published both to the repo's releases. Then, inside the VM that
+the dotfiles bootstrap had just built from nothing:
+
+    ~/rn/scripts/install.sh --from-release
+
+downloaded it, reported `sha256 ok`, installed 118M into
+`~/.local/share/rn`, wrote `rn.service` and the menu entry — and **declined
+to start**, because the development backend already held port 3010, naming
+the process that had it. That guard is the one that matters on a machine
+which is both a developer's and a user's.
+
+With the dev backend stopped, the installed service served its own page: the
+API answered, `index.html` and the wasm came back 200, and the boot log said
+`"step":"web","served":true,"dir":"/home/pde/.local/share/rn/app/web"`.
+Opened in the VM's own Firefox, the page rendered with its status light green
+— the page reaching the backend that served it:
+
+![rn installed from the v0.1.0 release, running in a VM built by the bootstrap](installed-rn-in-a-restored-vm.png)
+
 Linux x64 only, like everything in §9. Neither script has a `.ps1` twin, and
 each says why in its header.
