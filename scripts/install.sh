@@ -61,9 +61,12 @@ done
 PREFIX="$(realpath -m "$PREFIX")"
 
 # --from-release: the package comes from GitHub rather than from beside this
-# script, so a machine with no Rust, Node or dx can install rn. The repo is
-# private, so gh does the authenticating; the checksum published with the
-# tarball is verified before anything is unpacked.
+# script, so a machine with no Rust, Node or dx can install rn. gh does the
+# downloading — it resolves "the latest release" and picks the asset by name,
+# which a bare curl would need the API and some jq for. The repo is public now,
+# so it is convenience rather than authentication, and a curl fallback is
+# possible if gh ever becomes the thing standing in the way. The checksum
+# published with the tarball is verified before anything is unpacked.
 if [ "$FROM_RELEASE" = 1 ]; then
     command -v gh >/dev/null || die "--from-release needs gh (sudo apt-get install -y gh; gh auth login)"
     gh auth status >/dev/null 2>&1 || die "gh is not signed in: run gh auth login"

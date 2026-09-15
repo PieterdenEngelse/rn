@@ -44,10 +44,32 @@ rn carries its own Node, so **nothing needs to be installed first** on the
 machine that runs it. The install is per-user, needs no root, and an uninstall
 is a delete.
 
+There is one install script per platform:
+
+| | | |
+|---|---|---|
+| Linux | [`scripts/install.sh`](scripts/install.sh) | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install.sh) |
+| Windows | [`scripts/install.ps1`](scripts/install.ps1) | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install.ps1) |
+
+**Only the Linux one is useful on its own.** `install.sh` can fetch a published
+release and install it, so the single file is enough. `install.ps1` builds rn
+from the checkout it sits in — there is no Windows release for it to download —
+so downloading that one file alone gets you a script with nothing to build.
+For Windows, take the whole repository:
+[Download ZIP](https://github.com/PieterdenEngelse/rn/archive/refs/heads/main.zip),
+or `git clone https://github.com/PieterdenEngelse/rn.git`.
+
 ### Linux (x86-64)
 
 From a published release, which needs no toolchain at all — only `gh`, signed
-in, because the repo is private:
+in, because that is what `install.sh` downloads the release asset with:
+
+    curl -fsSLO https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install.sh
+    chmod +x install.sh
+    ./install.sh --from-release
+
+It verifies the asset against the sha256 published beside it before unpacking
+anything. From a clone, it is the same script:
 
     scripts/install.sh --from-release
 
@@ -69,6 +91,12 @@ pass. That means the machine needs Rust, Node and — unless you pass `-NoWeb` �
 
     .\scripts\install.ps1
     .\scripts\install.ps1 -Uninstall
+
+If you downloaded the repository as a ZIP, Windows marks everything in it as
+coming from the internet and PowerShell will refuse to run it. Clear that
+first, from the repository root:
+
+    Unblock-File .\scripts\*.ps1
 
 You get `%LOCALAPPDATA%\Programs\rn`, a scheduled task that starts it at logon,
 and a Start Menu entry. **This path has not been run on Windows yet**; the
