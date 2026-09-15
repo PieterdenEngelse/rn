@@ -104,14 +104,14 @@ machine itself:
 Either way you get `%LOCALAPPDATA%\Programs\rn`, a scheduled task that starts
 it at logon, and a Start Menu entry.
 
-Two caveats, both real rather than ceremonial. **`-FromRelease` needs a release
-carrying `rn-windows-x64.zip`**, and v0.1.0 predates the Windows build — it
-ships Linux assets only, so there is nothing for that flag to fetch until the
-next release. And **none of this has been run on Windows yet**: the package is
-cross-built on Linux and the scripts were written there. The launcher compiles
-and links for Windows, the scripts parse and lint clean, but nobody has watched
-them install anything. `-NoWeb -NoAutostart -NoStart` is the smallest first
-step. The Linux install is the tested one.
+One caveat, and it is a real one: **none of this has been run on Windows yet.**
+The package is cross-built on Linux and the scripts were written there. What
+has been checked is everything up to the install itself — the launcher compiles
+and links for Windows, the scripts parse and lint clean, and the whole
+`-FromRelease` path was run against the live release in PowerShell: download,
+checksum, unpack, every expected file in place. What nobody has watched is the
+installing. `-NoWeb -NoAutostart -NoStart` is the smallest first step, and the
+Linux install remains the tested one.
 
 ## After installing
 
