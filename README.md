@@ -58,6 +58,20 @@ anything. `install.ps1` additionally knows how to build rn from a checkout,
 for when you have one — [Download ZIP](https://github.com/PieterdenEngelse/rn/archive/refs/heads/main.zip)
 or `git clone https://github.com/PieterdenEngelse/rn.git`.
 
+The packages they fetch, if you would rather take one by hand. These links
+always resolve to the newest release, so they do not go stale here:
+
+| platform | package | | |
+|---|---|---|---|
+| Linux | `rn-linux-x64.tar.gz` | [download](https://github.com/PieterdenEngelse/rn/releases/latest/download/rn-linux-x64.tar.gz) | [sha256](https://github.com/PieterdenEngelse/rn/releases/latest/download/rn-linux-x64.tar.gz.sha256) |
+| Windows | `rn-windows-x64.zip` | [download](https://github.com/PieterdenEngelse/rn/releases/latest/download/rn-windows-x64.zip) | [sha256](https://github.com/PieterdenEngelse/rn/releases/latest/download/rn-windows-x64.zip.sha256) |
+
+Each package is the whole installed tree — launcher, private Node runtime,
+backend and page — about 40 MB compressed. Unpack one and run the install
+script inside it. [All releases](https://github.com/PieterdenEngelse/rn/releases):
+[v0.1.1](https://github.com/PieterdenEngelse/rn/releases/tag/v0.1.1) is the
+first to carry a Windows package, cross-built on Linux.
+
 ### Linux (x86-64)
 
 From a published release, which needs no toolchain at all — only `gh`, signed
