@@ -76,24 +76,47 @@ if [[ -z "$PLATFORM" ]]; then
     PLATFORM="$os-$arch"
 fi
 
-TARBALL="node-$VERSION-$PLATFORM.tar.xz"
+# Windows ships a zip laid out flat — node.exe at the root, no bin/ — where
+# every other platform ships a tar.xz with bin/node inside. Both are normalised
+# to $DEST/bin/<exe> below, so the launcher's path is the same everywhere
+# (launcher/src/layout.rs resolves runtime/bin/node.exe there, runtime/bin/node
+# here). install-node.ps1 does the same normalisation on the machine itself.
+case "$PLATFORM" in
+    win-*) IS_WIN=1; TARBALL="node-$VERSION-$PLATFORM.zip";   NODE_EXE=node.exe ;;
+    *)     IS_WIN=0; TARBALL="node-$VERSION-$PLATFORM.tar.xz"; NODE_EXE=node ;;
+esac
 BASE_URL="https://nodejs.org/dist/$VERSION"
 
 step "Node $VERSION for $PLATFORM -> $DEST"
 
 # --- already installed? -----------------------------------------------------
-if [[ $FORCE -eq 0 && -x "$DEST/bin/node" ]]; then
-    have="$("$DEST/bin/node" --version 2>/dev/null || true)"
+if [[ $FORCE -eq 0 && -e "$DEST/bin/$NODE_EXE" ]]; then
+    # A cross-built runtime cannot be asked its version — this machine cannot
+    # execute it — so the VERSION file written beside it answers instead. It is
+    # written last, after the binary is in place, so its presence means the
+    # install completed rather than merely started.
+    if [[ $IS_WIN -eq 1 ]]; then
+        have="$(cat "$DEST/VERSION" 2>/dev/null || true)"
+    else
+        have="$("$DEST/bin/$NODE_EXE" --version 2>/dev/null || true)"
+    fi
     if [[ "$have" == "$VERSION" ]]; then
         log "already installed ($have) — nothing to do. Use --force to reinstall."
         exit 0
     fi
-    log "replacing $have with $VERSION"
+    log "replacing ${have:-an unknown version} with $VERSION"
 fi
 
-for tool in curl sha256sum tar xz; do
+for tool in curl sha256sum; do
     command -v "$tool" >/dev/null || die "required tool not found: $tool"
 done
+if [[ $IS_WIN -eq 1 ]]; then
+    command -v unzip >/dev/null || die "required tool not found: unzip (needed for a win-* runtime)"
+else
+    for tool in tar xz; do
+        command -v "$tool" >/dev/null || die "required tool not found: $tool"
+    done
+fi
 
 # --- download (cached) ------------------------------------------------------
 mkdir -p "$CACHE"
@@ -146,28 +169,53 @@ fi
 step "Installing"
 workdir="$(mktemp -d)"
 trap 'rm -rf "$workdir"' EXIT
-tar -xJf "$TARBALL" -C "$workdir"
+if [[ $IS_WIN -eq 1 ]]; then
+    unzip -q "$TARBALL" -d "$workdir"
+else
+    tar -xJf "$TARBALL" -C "$workdir"
+fi
 src="$workdir/node-$VERSION-$PLATFORM"
 
 rm -rf "$DEST"
 mkdir -p "$DEST/bin"
-cp "$src/bin/node" "$DEST/bin/node"
+if [[ $IS_WIN -eq 1 ]]; then
+    cp "$src/node.exe" "$DEST/bin/node.exe"
+else
+    cp "$src/bin/node" "$DEST/bin/node"
+fi
 cp "$src/LICENSE"  "$DEST/LICENSE"      # MIT — required when redistributing
-printf '%s\n' "$VERSION" > "$DEST/VERSION"
 
 # Dropped on purpose: include/ (C++ headers, ~57 MB), lib/node_modules/ (npm,
 # ~13 MB), share/ (man pages). The installed app never compiles or runs npm.
 
-if command -v strip >/dev/null; then
+# No strip on Windows: the official node.exe ships without separate debug
+# symbols, and a host strip has no business rewriting a PE anyway.
+if [[ $IS_WIN -eq 0 ]] && command -v strip >/dev/null; then
     before=$(stat -c%s "$DEST/bin/node")
     strip "$DEST/bin/node" || true
     after=$(stat -c%s "$DEST/bin/node")
     log "stripped: $((before/1048576)) MB -> $((after/1048576)) MB"
 fi
 
-# --- prove it runs ----------------------------------------------------------
-got="$("$DEST/bin/node" --version)"
-[[ "$got" == "$VERSION" ]] || die "installed binary reports $got, expected $VERSION"
+# --- prove it is what it claims ---------------------------------------------
+if [[ $IS_WIN -eq 1 ]]; then
+    # It cannot be run here, so check the two things that can be checked: it is
+    # a PE executable rather than an error page or an empty file, and it is big
+    # enough to be a runtime. Running it is the installer's first act on the
+    # machine itself, and install.ps1 fails loudly there if it is not.
+    head -c2 "$DEST/bin/node.exe" | grep -q '^MZ' \
+        || die "$DEST/bin/node.exe is not a PE executable"
+    size=$(stat -c%s "$DEST/bin/node.exe")
+    [[ $size -gt 20000000 ]] || die "node.exe is only $size bytes; that is not a runtime"
+    got="$VERSION"
+else
+    got="$("$DEST/bin/$NODE_EXE" --version)"
+    [[ "$got" == "$VERSION" ]] || die "installed binary reports $got, expected $VERSION"
+fi
+
+# Written last, so its presence means a finished install — the check above
+# relies on that for a runtime this machine cannot execute.
+printf '%s\n' "$VERSION" > "$DEST/VERSION"
 
 step "Done"
-log "$DEST/bin/node  ($got)"
+log "$DEST/bin/$NODE_EXE  ($got)"

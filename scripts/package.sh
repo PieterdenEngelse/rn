@@ -8,6 +8,9 @@
 #   scripts/package.sh --no-web      leave out the page (the wasm build, below)
 #   scripts/package.sh --no-sig      runtime checked by checksum only: for
 #                                    trying the package here, never for shipping
+#   scripts/package.sh --target windows
+#                                    dist/rn-win: the same tree for Windows,
+#                                    cross-built from here (see below)
 #
 # Then:  dist/rn/install.sh
 #
@@ -16,31 +19,53 @@
 # open, so close heavy things first. Nothing else depends on it, so --no-web
 # packages everything else in a few minutes.
 #
-# Linux x64 only (docs/packaging.md §9). There is still no package.ps1: on
-# Windows, scripts/install.ps1 does this job inline against the checkout it
-# sits in, which is the stopgap its own header explains.
+# Two targets, one build machine. Only two files in the tree below are
+# platform-specific — the launcher and the Node binary — and both can be
+# produced here: cargo-xwin links a real PE against the Microsoft CRT without
+# leaving Linux, and install-node.sh takes --platform win-x64. Everything else
+# (app/src, app/node_modules, app/web) is byte-identical on either target,
+# because the backend has no native addons and the page is wasm. Verified: the
+# only platform-gated packages in be/package-lock.json are the @typescript/*
+# binaries, which are devDependencies and never reach --omit=dev.
+#
+# So there is still no package.ps1, and now there is less reason for one. A
+# Windows package built here can be published like the Linux one, which is what
+# lets scripts/install.ps1 -FromRelease install on a machine with no toolchain.
+# Building on Windows instead remains possible; nothing here prevents it.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OUT="$REPO/dist/rn"
+OUT=""
 WEB=1
 SIG=1
+TARGET=linux
 
 log()  { printf '  %s\n' "$*"; }
 step() { printf '\n==> %s\n' "$*"; }
 warn() { printf '  ! %s\n' "$*"; }
 die()  { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
-usage() { sed -n '3,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '3,15p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 while [ $# -gt 0 ]; do
     case $1 in
         --out)     OUT="$2"; shift 2 ;;
         --no-web)  WEB=0; shift ;;
         --no-sig)  SIG=0; shift ;;
+        --target)  TARGET="$2"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *)         echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
     esac
 done
+case "$TARGET" in
+    linux)
+        LAUNCHER=rn; NODE_PLATFORM=""; INSTALLER=install.sh
+        DEFAULT_OUT="$REPO/dist/rn" ;;
+    windows)
+        LAUNCHER=rn.exe; NODE_PLATFORM=win-x64; INSTALLER=install.ps1
+        DEFAULT_OUT="$REPO/dist/rn-win" ;;
+    *) die "unknown --target $TARGET (linux or windows)" ;;
+esac
+OUT="${OUT:-$DEFAULT_OUT}"
 OUT="$(realpath -m "$OUT")"
 case "$OUT" in
     / | "$HOME" | "$REPO" | "$REPO/be" | "$REPO/fe") die "refusing to build into $OUT, which gets deleted first" ;;
@@ -50,6 +75,10 @@ esac
 # on PATH does the one build-time install, running under the bundled node.
 command -v npm >/dev/null || die "npm is not on PATH; it builds app/node_modules"
 [ "$WEB" = 0 ] || command -v dx >/dev/null || die "dx is not on PATH; it builds the page (or pass --no-web)"
+if [ "$TARGET" = windows ]; then
+    command -v cargo-xwin >/dev/null \
+        || die "cargo-xwin is not on PATH; it links the Windows launcher: cargo install cargo-xwin"
+fi
 
 # Where this worktree's cargo writes, the same rule check.sh and serve.sh use.
 # shellcheck source=dev-target.sh
@@ -59,18 +88,31 @@ step "Output: $OUT"
 rm -rf "$OUT"
 mkdir -p "$OUT/app"
 
-step "Launcher (release build)"
-(cd "$REPO" && cargo build --release -p rn)
-install -m 755 "$RN_TARGET_DIR/release/rn" "$OUT/rn"
-log "rn  $(du -h "$OUT/rn" | cut -f1)"
+step "Launcher (release build, $TARGET)"
+if [ "$TARGET" = windows ]; then
+    # MSVC ABI rather than gnu: it is what a Windows user's tooling expects,
+    # and cargo-xwin fetches the CRT and SDK headers itself, so this needs no
+    # mingw and no root. The launcher's own Windows code paths are compiled
+    # for the first time by this command — on Linux they are only parsed.
+    (cd "$REPO" && cargo xwin build --release -p rn --target x86_64-pc-windows-msvc)
+    src_exe="$RN_TARGET_DIR/x86_64-pc-windows-msvc/release/rn.exe"
+    head -c2 "$src_exe" | grep -q '^MZ' || die "$src_exe is not a PE executable"
+else
+    (cd "$REPO" && cargo build --release -p rn)
+    src_exe="$RN_TARGET_DIR/release/rn"
+fi
+install -m 755 "$src_exe" "$OUT/$LAUNCHER"
+log "$LAUNCHER  $(du -h "$OUT/$LAUNCHER" | cut -f1)"
 
 step "Runtime"
+node_args=(--dest "$OUT/runtime")
+[ -n "$NODE_PLATFORM" ] && node_args+=(--platform "$NODE_PLATFORM")
 if [ "$SIG" = 1 ]; then
-    "$REPO/scripts/install-node.sh" --dest "$OUT/runtime" --require-sig
+    node_args+=(--require-sig)
 else
     warn "--no-sig: the runtime is checked by checksum only. Try it here; do not ship it."
-    "$REPO/scripts/install-node.sh" --dest "$OUT/runtime"
 fi
+"$REPO/scripts/install-node.sh" "${node_args[@]}"
 
 step "Backend (app/)"
 cp -a "$REPO/be/src" "$OUT/app/src"
@@ -81,8 +123,27 @@ cp "$REPO/be/package.json" "$REPO/be/package-lock.json" \
 # §3.4: npm ci at build time against the bundled runtime, and ship the tree,
 # so the installed app never runs npm. --ignore-scripts because an install
 # script is arbitrary code, and none of the dependencies needs one.
+# The PATH prefix puts the bundled runtime in front for a linux package, so
+# npm runs under the Node that ships. For a windows one the directory holds
+# node.exe, which this machine cannot run and which PATH lookup ignores, so
+# npm falls through to the ambient Node — which changes nothing about the tree
+# it writes: no native addons, --ignore-scripts, and npm only unpacks tarballs.
 (cd "$OUT/app" && PATH="$OUT/runtime/bin:$PATH" \
     npm ci --omit=dev --ignore-scripts --no-audit --no-fund --loglevel=error)
+# node_modules/.bin holds Unix symlinks — npm writes .cmd and .ps1 shims
+# there on Windows instead — and a symlink in a zip either arrives as a broken
+# stub or refuses to extract. Nothing in the installed app runs a CLI from it:
+# the launcher spawns node against app/src/server.ts and that is the whole of
+# it. So the directory is dropped from a windows package rather than shipped
+# meaning nothing. Verified before removing: the only entry is pino's
+# pretty-printer, which no file under be/src references.
+if [ "$TARGET" = windows ] && [ -d "$OUT/app/node_modules/.bin" ]; then
+    rm -rf "$OUT/app/node_modules/.bin"
+    log "dropped app/node_modules/.bin (Unix symlinks, unused, unzippable on Windows)"
+fi
+if [ "$TARGET" = windows ] && [ -n "$(find "$OUT" -type l)" ]; then
+    die "the windows package still holds symlinks: $(find "$OUT" -type l | head -3 | tr '\n' ' ')"
+fi
 log "app/node_modules  $(du -sh "$OUT/app/node_modules" | cut -f1)"
 
 if [ "$WEB" = 1 ]; then
@@ -127,10 +188,10 @@ else
     warn "--no-web: no page in this package. The installed backend runs, and says at boot that it has none."
 fi
 
-cp "$REPO/scripts/install.sh" "$OUT/install.sh"
-chmod 755 "$OUT/install.sh"
+cp "$REPO/scripts/$INSTALLER" "$OUT/$INSTALLER"
+chmod 755 "$OUT/$INSTALLER"
 {
-    echo "rn $(git -C "$REPO" describe --always --dirty), built $(date -u +%Y-%m-%dT%H:%MZ)"
+    echo "rn $(git -C "$REPO" describe --always --dirty), built $(date -u +%Y-%m-%dT%H:%MZ) for $TARGET"
     echo "node $(cat "$OUT/runtime/VERSION" 2>/dev/null || echo unknown)"
     echo "page $([ -d "$OUT/app/web" ] && echo included || echo "not included (--no-web)")"
     echo "runtime signature $([ "$SIG" = 1 ] && echo verified || echo "NOT verified (--no-sig)")"
@@ -140,5 +201,11 @@ step "Done: $(du -sh "$OUT" | cut -f1)"
 # The splitting is the point: one argument when the page is there, none when
 # it is not. Quoting it would hand du an empty argument to fail on.
 # shellcheck disable=SC2046
-(cd "$OUT" && du -sh rn runtime app/node_modules app/src $([ -d app/web ] && echo app/web) | sed 's/^/  /')
-log "install:  $OUT/install.sh"
+(cd "$OUT" && du -sh "$LAUNCHER" runtime app/node_modules app/src $([ -d app/web ] && echo app/web) | sed 's/^/  /')
+log "install:  $OUT/$INSTALLER"
+# An if, not `[ ] && log`: as the last statement in the file that would make
+# the script exit 1 on every linux build, since the status of the last command
+# is the status of the script.
+if [ "$TARGET" = windows ]; then
+    log "          (on the Windows machine: .\\install.ps1 -SkipBuild -Out .)"
+fi

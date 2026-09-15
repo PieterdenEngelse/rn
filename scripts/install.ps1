@@ -3,18 +3,27 @@
     Build rn from this checkout and install it for the current user, on Windows.
 
 .DESCRIPTION
-    This is NOT the twin of scripts/install.sh, and the difference is the whole
-    point of the file. On Linux the flow is two scripts: package.sh builds a
-    self-contained tree, install.sh installs it, and a user with no toolchain
-    can install a published release. There is no Windows packager and no
-    Windows release asset, so this script does both halves in one pass —
-    building from the checkout it sits in, then installing the result.
+    Three ways in, in the order you probably want them:
 
-    That trade is deliberate and it has a cost: the machine running this needs
-    Rust, Node and (unless -NoWeb) dioxus-cli. That is acceptable for a machine
-    you own and wrong for a machine you hand to someone else. When a Windows
-    package.ps1 exists, the install half below splits out of this file and the
-    build half moves into it.
+    -FromRelease   downloads the Windows package published on GitHub and
+                   installs it. Needs nothing on this machine — no Rust, no
+                   Node, no git, not even gh, because the repository is public
+                   and the asset is fetched over plain HTTPS. This is the one
+                   that makes the file useful on its own: save install.ps1
+                   anywhere and run it.
+    -SkipBuild     installs a package tree you already have, built here or
+                   carried over from elsewhere.
+    (neither)      builds rn from the checkout this script sits in, then
+                   installs that. Needs Rust, Node and — unless -NoWeb — dx.
+
+    The Windows package it installs is cross-built on Linux by
+    `scripts/package.sh --target windows`: only the launcher and node.exe are
+    platform-specific, and both can be produced there, so there is no Windows
+    build machine anywhere in this path.
+
+    This is still not the twin of scripts/install.sh. That one installs; this
+    one can also build, because there is no package.ps1 to do it. When one
+    exists, the build half moves into it and what is left here is the twin.
 
     The intermediate tree is left behind in dist\rn, exactly the layout
     docs/packaging.md §1 describes, so -SkipBuild can reinstall it without
@@ -43,7 +52,9 @@
         powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
 
 .EXAMPLE
-    .\scripts\install.ps1
+    .\install.ps1 -FromRelease                   # no toolchain needed at all
+    .\install.ps1 -FromRelease v0.1.0            # a particular release
+    .\scripts\install.ps1                        # build from this checkout
     .\scripts\install.ps1 -NoWeb                 # skip the wasm page build
     .\scripts\install.ps1 -SkipBuild             # install dist\rn as it stands
     .\scripts\install.ps1 -Prefix D:\apps\rn
@@ -64,6 +75,11 @@ param(
     # Windows box; on for anything you would hand to someone else.
     [switch] $RequireSig,
     [switch] $SkipBuild,
+    # Download a published package instead of building one. Takes an optional
+    # tag; without one it resolves to the latest release.
+    [switch] $FromRelease,
+    [string] $Tag,
+    [string] $Repo = "PieterdenEngelse/rn",
     [switch] $Uninstall
 )
 
@@ -194,6 +210,65 @@ if ($Uninstall) {
     }
     Write-Log "kept $ConfigDir (settings, state, credentials); delete it by hand to forget everything"
     exit 0
+}
+
+# ---------------------------------------------------------------------------
+# -FromRelease — the package comes from GitHub instead of from a build here
+#
+# The Linux twin shells out to gh for this. Windows does not have gh by
+# default and the repository is public, so plain HTTPS is both simpler and one
+# fewer thing to install: the release endpoints below need no token. The
+# checksum published beside the zip is verified before anything is unpacked,
+# which is the whole reason this is not a two-line Invoke-WebRequest.
+# ---------------------------------------------------------------------------
+
+$Asset = "rn-windows-x64.zip"
+
+if ($FromRelease) {
+    if ($SkipBuild) { Die "-FromRelease and -SkipBuild both say where the package comes from; pick one" }
+    $base = if ($Tag) { "https://github.com/$Repo/releases/download/$Tag" }
+            else      { "https://github.com/$Repo/releases/latest/download" }
+    $dl = Join-Path ([System.IO.Path]::GetTempPath()) ("rn-rel-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Force -Path $dl | Out-Null
+
+    Write-Step "Downloading $(if ($Tag) { $Tag } else { 'the latest release' }) from $Repo"
+    $zip = Join-Path $dl $Asset
+    $sum = "$zip.sha256"
+    # The progress bar makes Invoke-WebRequest an order of magnitude slower on
+    # a file this size — the same note install-node.ps1 carries.
+    $old = $ProgressPreference; $ProgressPreference = "SilentlyContinue"
+    try {
+        foreach ($pair in @(@($Asset, $zip), @("$Asset.sha256", $sum))) {
+            Write-Log "fetch: $($pair[0])"
+            try { Invoke-WebRequest -Uri "$base/$($pair[0])" -OutFile $pair[1] -UseBasicParsing }
+            catch { Die "download failed: $base/$($pair[0])`n       $($_.Exception.Message)" }
+        }
+    } finally { $ProgressPreference = $old }
+
+    Write-Step "Verifying"
+    # The .sha256 is written by sha256sum on Linux: "<hash>  <filename>", and
+    # its hash is lowercase where Get-FileHash returns uppercase. -ne is
+    # case-insensitive, so they compare equal — verified, both ways round.
+    # Do not "tighten" this to -cne: that is case-sensitive and would reject
+    # every honest download.
+    $expected = ((Get-Content $sum -Raw) -split '\s+')[0]
+    $actual = (Get-FileHash -Path $zip -Algorithm SHA256).Hash
+    if ($actual -ne $expected) {
+        Remove-Item $zip -Force      # never leave a bad artifact where it may be reused
+        Die ("sha256 mismatch: the download does not match its published checksum, so it was deleted.`n" +
+             "       expected $expected`n       got      $actual")
+    }
+    Write-Log "sha256 OK"
+
+    Write-Step "Unpacking"
+    $unpacked = Join-Path $dl "x"
+    Expand-Archive -Path $zip -DestinationPath $unpacked -Force
+    # The zip holds one directory; the package is inside it.
+    $found = Get-ChildItem $unpacked -Recurse -Filter "rn.exe" | Select-Object -First 1
+    if (-not $found) { Die "the archive holds no rn.exe" }
+    $Out = $found.Directory.FullName
+    Write-Log "package: $Out"
+    $SkipBuild = $true               # there is nothing left to build
 }
 
 # ---------------------------------------------------------------------------
@@ -375,7 +450,7 @@ Write-Step "Checking the build"
 foreach ($f in @("rn.exe", "runtime\bin\node.exe", "app\src\server.ts",
                  "app\runtime-params.json", "app\node_modules")) {
     if (-not (Test-Path (Join-Path $Out $f))) {
-        Die "not a complete build: $Out\$f is missing (drop -SkipBuild to build it)"
+        Die "not a complete package: $Out\$f is missing (build one, or use -FromRelease)"
     }
 }
 if ($Out -eq $Prefix) { Die "this build already is the install at $Prefix" }
@@ -486,5 +561,5 @@ if (-not $NoStart) {
 Write-Step "Done"
 Write-Log "launcher:  $Prefix\rn.exe  (--status, --print-env)"
 Write-Log "settings:  $ConfigDir  (never touched by install or uninstall)"
-Write-Log "rebuild:   .\scripts\install.ps1        reinstall: .\scripts\install.ps1 -SkipBuild"
+Write-Log "update:    .\install.ps1 -FromRelease   rebuild: .\scripts\install.ps1"
 Write-Log "remove:    .\scripts\install.ps1 -Uninstall"

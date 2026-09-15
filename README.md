@@ -51,12 +51,11 @@ There is one install script per platform:
 | Linux | [`scripts/install.sh`](scripts/install.sh) | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install.sh) |
 | Windows | [`scripts/install.ps1`](scripts/install.ps1) | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install.ps1) |
 
-**Only the Linux one is useful on its own.** `install.sh` can fetch a published
-release and install it, so the single file is enough. `install.ps1` builds rn
-from the checkout it sits in — there is no Windows release for it to download —
-so downloading that one file alone gets you a script with nothing to build.
-For Windows, take the whole repository:
-[Download ZIP](https://github.com/PieterdenEngelse/rn/archive/refs/heads/main.zip),
+Either one is enough on its own: both download a published package and install
+it, needing no toolchain, no clone and nothing else on the machine, and both
+verify the download against the checksum published beside it before unpacking
+anything. `install.ps1` additionally knows how to build rn from a checkout,
+for when you have one — [Download ZIP](https://github.com/PieterdenEngelse/rn/archive/refs/heads/main.zip)
 or `git clone https://github.com/PieterdenEngelse/rn.git`.
 
 ### Linux (x86-64)
@@ -85,23 +84,34 @@ login, and a menu entry that opens the page.
 
 ### Windows (x86-64)
 
-There is no Windows package yet, so one script builds and installs in a single
-pass. That means the machine needs Rust, Node and — unless you pass `-NoWeb` —
-`dx`:
+Nothing needs to be installed first here either — not even `gh`, since the
+asset is fetched over plain HTTPS:
 
-    .\scripts\install.ps1
+    iwr -useb https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install.ps1 -OutFile install.ps1
+    Unblock-File .\install.ps1
+    .\install.ps1 -FromRelease
+
+`Unblock-File` is not optional: a file downloaded from the internet is marked
+as such, and PowerShell refuses to run what is marked. The same applies to
+every `.ps1` in the repository if you take it as a ZIP.
+
+Or build it from a checkout, which needs Rust, Node and `dx` on the Windows
+machine itself:
+
+    .\scripts\install.ps1              # -NoWeb skips the wasm page build
     .\scripts\install.ps1 -Uninstall
 
-If you downloaded the repository as a ZIP, Windows marks everything in it as
-coming from the internet and PowerShell will refuse to run it. Clear that
-first, from the repository root:
+Either way you get `%LOCALAPPDATA%\Programs\rn`, a scheduled task that starts
+it at logon, and a Start Menu entry.
 
-    Unblock-File .\scripts\*.ps1
-
-You get `%LOCALAPPDATA%\Programs\rn`, a scheduled task that starts it at logon,
-and a Start Menu entry. **This path has not been run on Windows yet**; the
-script's own header says so and suggests `-NoWeb -NoAutostart -NoStart` as a
-first step. The Linux install is the tested one.
+Two caveats, both real rather than ceremonial. **`-FromRelease` needs a release
+carrying `rn-windows-x64.zip`**, and v0.1.0 predates the Windows build — it
+ships Linux assets only, so there is nothing for that flag to fetch until the
+next release. And **none of this has been run on Windows yet**: the package is
+cross-built on Linux and the scripts were written there. The launcher compiles
+and links for Windows, the scripts parse and lint clean, but nobody has watched
+them install anything. `-NoWeb -NoAutostart -NoStart` is the smallest first
+step. The Linux install is the tested one.
 
 ## After installing
 

@@ -328,15 +328,20 @@ and `install.sh` are the exception, and their headers say so: they build and
 install the *Linux package*, and there is still no Windows packager to be the
 twin of.
 
-`install.ps1` is therefore not their twin either, and does not pretend to be.
-It builds from the checkout and installs in one pass, because there is no
-Windows package for an installer to consume. That makes a toolchain a
-requirement on the machine being installed to, which is fine for a machine you
-own and wrong for one you hand to someone else — so it is a stopgap with a
-stated end: when a Windows `package.ps1` exists, the install half splits out of
-it and the build half moves in. Until then the pairing to keep honest is
-`install.ps1` against `packaging.md` §1, whose layout it has to produce
-exactly, rather than against `install.sh`.
+`install.ps1` is therefore not their twin either, and does not pretend to be:
+it installs like `install.sh`, and can also *build*, which `install.sh` never
+does. The build half exists because there is no `package.ps1` — and now needs
+to less, because `package.sh --target windows` cross-builds the Windows package
+from here. Only the launcher and `node.exe` are platform-specific, `cargo-xwin`
+and `install-node.sh --platform win-x64` produce both without leaving Linux,
+and everything else in the tree is identical on either target. A release
+carries both assets, so `install.ps1 -FromRelease` installs on a Windows
+machine with no toolchain on it.
+
+What that leaves: the pairing to keep honest is `install.ps1` against
+`packaging.md` §1, whose layout it has to produce exactly, rather than against
+`install.sh`. And every `.ps1` here is still written on Linux and unrun on
+Windows — they parse and lint clean, which is not the same claim.
 
 Detail, measured sizes and the build checklist: `docs/packaging.md`.
 

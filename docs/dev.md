@@ -53,10 +53,15 @@ cargo clippy --workspace --all-targets
 dist/rn/install.sh                    # → ~/.local/share/rn + rn.service + menu entry
 ~/.local/share/rn/install.sh --uninstall
 
-# Windows has no packager, so one script builds and installs (packaging.md §9).
-# Needs Rust, Node and — unless -NoWeb — dx on the machine being installed to.
-.\scripts\install.ps1                 # → dist\rn → %LOCALAPPDATA%\Programs\rn + logon task
-.\scripts\install.ps1 -SkipBuild      # reinstall dist\rn without rebuilding it
+# The Windows package is cross-built from here — no Windows machine involved.
+# Needs cargo-xwin (cargo install cargo-xwin); everything else is shared.
+./scripts/package.sh --target windows # → dist/rn-win
+./scripts/release.sh                  # publishes both assets (--no-windows for Linux only)
+
+# On the Windows machine itself, in order of least effort:
+.\install.ps1 -FromRelease            # download the published package; no toolchain at all
+.\scripts\install.ps1 -SkipBuild      # install a package tree you carried over
+.\scripts\install.ps1                 # build from the checkout (needs Rust, Node, dx)
 .\scripts\install.ps1 -Uninstall
 
 # Publish that package as a GitHub release, and install it on a machine that

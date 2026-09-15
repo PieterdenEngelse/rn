@@ -434,11 +434,31 @@ Only linux-x64 is in scope right now. When the others come:
   `layout.rs` resolves `runtime\bin\node.exe`, and `pidfile.rs` answers
   "is it alive" through `tasklist`.
 
-  What does **not** exist is a Windows packager, so there is no tarball, no
-  release asset and no toolchain-free install. `scripts/install.ps1` stands in
-  for both scripts: it builds from a checkout and installs the result, which
-  means the target machine needs Rust, Node and (for the page) `dx`. Four
-  things behave differently enough there to be worth naming:
+  **The Windows package is cross-built on Linux.** Only two files in the tree
+  are platform-specific — the launcher and the Node binary — and both can be
+  produced here: `cargo-xwin` links a real PE against the Microsoft CRT with no
+  mingw and no root, and `install-node.sh --platform win-x64` fetches and
+  verifies the Windows runtime, normalising its flat zip to `runtime/bin/
+  node.exe`. Everything else is byte-identical on either target: the backend
+  has no native addons (checked: no `.node` files anywhere in the tree, and the
+  only platform-gated packages in `be/package-lock.json` are the
+  `@typescript/*` binaries, which are devDependencies `--omit=dev` never
+  installs), and the page is wasm.
+
+      scripts/package.sh --target windows      # → dist/rn-win
+      scripts/release.sh                       # publishes both assets
+
+  One thing is dropped for Windows that ships on Linux: `app/node_modules/
+  .bin`, which holds Unix symlinks — npm writes `.cmd` and `.ps1` shims there
+  on Windows — and a symlink in a zip arrives broken or refuses to extract.
+  Nothing in the installed app runs a CLI from it. The build fails if any
+  symlink survives into a Windows package.
+
+  So `install.ps1 -FromRelease` installs on a machine with no toolchain, no
+  git and no `gh`: the repository is public, so the asset and its checksum come
+  over plain HTTPS. Building from a checkout still works and is what the other
+  two modes do. Four things behave differently enough from Linux to be worth
+  naming:
 
   1. **No systemd.** A logon **scheduled task** replaces the user unit —
      it survives a logout, restarts on failure and needs no administrator.
