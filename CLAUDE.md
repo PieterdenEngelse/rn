@@ -682,6 +682,9 @@ yours.
 
 ## Docs
 
+- `README.md` — the front door, and the only file here written for someone who
+  has not read the others: what rn is, what ships today, and how to install it
+  on Linux and on Windows.
 - `docs/dev.md` — commands, and the hex values for raw-CSS surfaces.
 - `docs/setup-js.md` — the Node driver in `be/`, and the reasoning behind each
   setting. Start here.
