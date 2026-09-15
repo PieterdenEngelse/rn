@@ -429,7 +429,35 @@ Only linux-x64 is in scope right now. When the others come:
   APIs, so networking and TLS fail in confusing ways. `SYSTEMROOT` (and usually
   `TEMP`/`TMP`) must be re-added to the allowlist on that platform. The
   allowlist approach handles this correctly; a naive `env_clear()` with nothing
-  added back does not.
+  added back does not. All of that is *done*: `launcher/src/node_command.rs`
+  re-adds `SYSTEMROOT`/`SystemRoot`/`TEMP`/`TMP`/`USERPROFILE`,
+  `layout.rs` resolves `runtime\bin\node.exe`, and `pidfile.rs` answers
+  "is it alive" through `tasklist`.
+
+  What does **not** exist is a Windows packager, so there is no tarball, no
+  release asset and no toolchain-free install. `scripts/install.ps1` stands in
+  for both scripts: it builds from a checkout and installs the result, which
+  means the target machine needs Rust, Node and (for the page) `dx`. Four
+  things behave differently enough there to be worth naming:
+
+  1. **No systemd.** A logon **scheduled task** replaces the user unit —
+     it survives a logout, restarts on failure and needs no administrator.
+     A real service would need admin *and* a launcher that speaks the service
+     control protocol, which `rn.exe` does not.
+  2. **Running files are locked.** The Linux install renames the live tree out
+     from under a running process; Windows refuses to delete a directory
+     holding a running `.exe`. So the install stops the task and waits for
+     every process under the prefix to exit *before* it touches anything, and
+     retries the delete a few times because the handle outlives the process.
+  3. **`$env:RN_API_BASE = ""` deletes the variable** rather than setting it
+     empty — documented .NET behaviour. `option_env!` then answers `None` and
+     the page compiles with the development address baked in
+     (`fe/src/api/client.rs:28`). The build hands the compiler an environment
+     constructed by hand so an empty value survives, and then greps the wasm
+     for `http://127.0.0.1:3010` as the backstop, exactly as `package.sh` does.
+  4. **Console window.** `rn.exe` is a console program, so the logon task shows
+     one. Hiding it needs a windowless launcher, which is a change to the
+     launcher, not to the installer.
 
 ---
 
@@ -461,6 +489,12 @@ held by the test suite rather than by the build.
     scripts/package.sh                          # → dist/rn
     dist/rn/install.sh                          # → ~/.local/share/rn, rn.service, menu entry
     ~/.local/share/rn/install.sh --uninstall    # ~/.config/rn is kept
+
+On Windows, one script does both halves (§9):
+
+    .\scripts\install.ps1                       # build dist\rn, install to %LOCALAPPDATA%\Programs\rn
+    .\scripts\install.ps1 -SkipBuild            # reinstall what is already in dist\rn
+    .\scripts\install.ps1 -Uninstall            # %USERPROFILE%\.config\rn is kept
 
 **`package.sh`** builds, in order:
 

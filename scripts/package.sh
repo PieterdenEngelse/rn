@@ -16,8 +16,9 @@
 # open, so close heavy things first. Nothing else depends on it, so --no-web
 # packages everything else in a few minutes.
 #
-# Linux x64 only (docs/packaging.md §9). No package.ps1, for the reason
-# install.sh gives.
+# Linux x64 only (docs/packaging.md §9). There is still no package.ps1: on
+# Windows, scripts/install.ps1 does this job inline against the checkout it
+# sits in, which is the stopgap its own header explains.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

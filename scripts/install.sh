@@ -19,9 +19,11 @@
 # never touches. The one file carried across an upgrade is app/.env, because
 # the launcher reads its ports from there.
 #
-# Linux only, like the package (docs/packaging.md §9). There is deliberately no
-# install.ps1: a twin for a platform nobody here can build or run would look
-# maintained without being so, which CLAUDE.md calls worse than no twin.
+# Linux only, like the package (docs/packaging.md §9). scripts/install.ps1 is
+# not a twin of this file and should not be read as one: with no Windows
+# packager it builds from the checkout and installs in one pass, so it has no
+# --from-release and no package to verify. Its header says so, and says what
+# would have to exist for the two to converge.
 set -euo pipefail
 
 PKG="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

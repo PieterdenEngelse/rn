@@ -53,6 +53,12 @@ cargo clippy --workspace --all-targets
 dist/rn/install.sh                    # → ~/.local/share/rn + rn.service + menu entry
 ~/.local/share/rn/install.sh --uninstall
 
+# Windows has no packager, so one script builds and installs (packaging.md §9).
+# Needs Rust, Node and — unless -NoWeb — dx on the machine being installed to.
+.\scripts\install.ps1                 # → dist\rn → %LOCALAPPDATA%\Programs\rn + logon task
+.\scripts\install.ps1 -SkipBuild      # reinstall dist\rn without rebuilding it
+.\scripts\install.ps1 -Uninstall
+
 # Publish that package as a GitHub release, and install it on a machine that
 # has no toolchains at all (needs gh, signed in; the repo is private).
 ./scripts/release.sh                  # build, checksum, publish v<version>

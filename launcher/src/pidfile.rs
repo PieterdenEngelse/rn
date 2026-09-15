@@ -40,6 +40,12 @@ pub fn is_alive(pid: i32) -> bool {
 pub fn is_alive(pid: i32) -> bool {
     // Best effort: ask the task list. Windows has no signal-0 equivalent here
     // without pulling in the Win32 API.
+    //
+    // clippy.toml bans Command::new so that every *Node* spawn goes through
+    // NodeCommand with a sealed environment. This is not a Node spawn: it runs
+    // a Windows tool, reads its output and exits. NodeCommand would be the
+    // wrong thing here — it seals an environment for a child that is ours.
+    #[allow(clippy::disallowed_methods)]
     std::process::Command::new("tasklist")
         .args(["/FI", &format!("PID eq {pid}"), "/NH"])
         .output()
@@ -199,6 +205,8 @@ pub fn stop(pid: i32, wait: std::time::Duration) -> Result<(), String> {
 
 #[cfg(windows)]
 pub fn stop(pid: i32, _wait: std::time::Duration) -> Result<(), String> {
+    // A Windows tool, not Node — see the note on is_alive above.
+    #[allow(clippy::disallowed_methods)]
     let ok = std::process::Command::new("taskkill")
         .args(["/PID", &pid.to_string(), "/T"])
         .status()

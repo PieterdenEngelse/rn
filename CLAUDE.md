@@ -324,10 +324,19 @@ each other; environments can. Constraints, not preferences:
 The install scripts are one thing in two languages (`scripts/*.sh` and
 `scripts/*.ps1`). Change one, change the other in the same commit — a drifted
 pair is worse than a single one, because it looks maintained. `package.sh`
-and `install.sh` are the exception, and their headers say so. They build and
-install the Linux package, and Linux is the only platform in scope
-(`docs/packaging.md` §9), so a PowerShell twin arrives with a Windows build,
-not before. Writing one now would be exactly the pair that looks maintained.
+and `install.sh` are the exception, and their headers say so: they build and
+install the *Linux package*, and there is still no Windows packager to be the
+twin of.
+
+`install.ps1` is therefore not their twin either, and does not pretend to be.
+It builds from the checkout and installs in one pass, because there is no
+Windows package for an installer to consume. That makes a toolchain a
+requirement on the machine being installed to, which is fine for a machine you
+own and wrong for one you hand to someone else — so it is a stopgap with a
+stated end: when a Windows `package.ps1` exists, the install half splits out of
+it and the build half moves in. Until then the pairing to keep honest is
+`install.ps1` against `packaging.md` §1, whose layout it has to produce
+exactly, rather than against `install.sh`.
 
 Detail, measured sizes and the build checklist: `docs/packaging.md`.
 
