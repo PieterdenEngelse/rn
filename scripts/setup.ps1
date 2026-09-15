@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Development setup for be\ on Windows.
 

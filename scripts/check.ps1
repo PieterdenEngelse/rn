@@ -1,4 +1,4 @@
-# Everything, in one command.
+﻿# Everything, in one command.
 #
 # This exists because a subset quietly became "the tests". The Rust crates and
 # the Node backend have separate runners, and for a whole session only one of

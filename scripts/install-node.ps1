@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Install a private Node runtime on Windows.
 

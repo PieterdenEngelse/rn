@@ -34,8 +34,9 @@
     Saved as UTF-8 *with* a BOM, deliberately: Windows PowerShell 5.1 — what a
     stock Windows box runs — reads a BOM-less file as the system ANSI codepage,
     which turns every em dash and section sign in the output below into
-    mojibake. Do not let an editor strip it. (check.ps1, setup.ps1 and
-    install-node.ps1 still have this problem.)
+    mojibake. Do not let an editor strip it — every .ps1 here carries one for
+    the same reason, and a .sh file must never be given one, because a shebang
+    has to be the literal first bytes of the file.
 
     PowerShell may refuse to run this at all if the repo came off the internet:
         Unblock-File .\scripts\*.ps1
