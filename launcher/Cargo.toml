@@ -1,6 +1,6 @@
 [package]
 name = "rn"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["pde"]
 edition = "2021"
 
