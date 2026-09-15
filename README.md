@@ -19,7 +19,7 @@ Ten jobs ship. The runner has three front doors — by hand from the page, the
 scheduler, or an inbound webhook — and a job says for itself which of them
 apply to it.
 
-| | |
+| job | what it does |
 |---|---|
 | `watch-upstreams` | the versions rn pins, and when one of them moves |
 | `watch-feeds` | feeds, reporting only what you have not been told about |
@@ -46,7 +46,7 @@ is a delete.
 
 There is one install script per platform:
 
-| | | |
+| platform | script | |
 |---|---|---|
 | Linux | [`scripts/install.sh`](scripts/install.sh) | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install.sh) |
 | Windows | [`scripts/install.ps1`](scripts/install.ps1) | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install.ps1) |
