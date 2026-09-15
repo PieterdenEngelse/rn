@@ -62,7 +62,15 @@ fi
 # --- 5. prove it works -------------------------------------------------------
 step "Verifying"
 log "typecheck"; npm run --silent typecheck
-log "tests";     npm test --silent >/dev/null 2>&1 && log "  pass" || log "  (no tests yet)"
+# Not `&& pass || "(no tests yet)"`: every non-zero exit took that branch, so
+# a suite that genuinely failed reported the one thing that reads as fine. It
+# was true when be/ had no tests and stopped being true the day it got some.
+log "tests"
+if npm test --silent >/dev/null 2>&1; then
+    log "  pass"
+else
+    log "  FAILED — see: cd be && npm test"
+fi
 log "run against the bundled runtime"
 ./runtime/bin/node --env-file-if-exists=.env src/main.ts | sed 's/^/    /'
 

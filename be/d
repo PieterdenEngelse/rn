@@ -10,7 +10,7 @@
 # Between this and fe/s a change becomes visible without anyone merging it
 # anywhere: dx rebuilds the frontend it watches, `node --watch` restarts the
 # backend it watches, and both are the ones sitting in the tree being edited.
-cd "$(dirname "$0")"
+cd "$(dirname "$0")" || exit 1
 
 # shellcheck source=../scripts/dev-ports.sh
 . ../scripts/dev-ports.sh

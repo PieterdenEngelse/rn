@@ -52,6 +52,7 @@ command -v npm >/dev/null || die "npm is not on PATH; it builds app/node_modules
 [ "$WEB" = 0 ] || command -v dx >/dev/null || die "dx is not on PATH; it builds the page (or pass --no-web)"
 
 # Where this worktree's cargo writes, the same rule check.sh and serve.sh use.
+# shellcheck source=dev-target.sh
 . "$REPO/scripts/dev-target.sh"
 
 step "Output: $OUT"
@@ -136,5 +137,8 @@ chmod 755 "$OUT/install.sh"
 } > "$OUT/BUILD"
 
 step "Done: $(du -sh "$OUT" | cut -f1)"
+# The splitting is the point: one argument when the page is there, none when
+# it is not. Quoting it would hand du an empty argument to fail on.
+# shellcheck disable=SC2046
 (cd "$OUT" && du -sh rn runtime app/node_modules app/src $([ -d app/web ] && echo app/web) | sed 's/^/  /')
 log "install:  $OUT/install.sh"

@@ -76,7 +76,14 @@ try {
     Write-Log "typecheck"; & npm run --silent typecheck
     Write-Log "tests"
     & npm test --silent 2>$null | Out-Null
-    if ($LASTEXITCODE -eq 0) { Write-Log "  pass" } else { Write-Log "  (no tests yet)" }
+    # Not "(no tests yet)" on any failure — that was true when be/ had no tests
+    # and now hides a real one behind a line that reads as fine. Same fix as
+    # setup.sh, in the same commit, as the twin rule requires.
+    if ($LASTEXITCODE -eq 0) {
+        Write-Log "  pass"
+    } else {
+        Write-Log "  FAILED — see: cd be; npm test"
+    }
 
     Write-Log "run against the bundled runtime"
     & (Join-Path $Be "runtime\bin\node.exe") --env-file-if-exists=.env "src\main.ts" |

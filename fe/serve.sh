@@ -10,7 +10,7 @@
 # 1792, ~/cc 1793, and the ~/rn panes 1790, which are the four RN_CORS_ORIGIN
 # allows. Nothing here reproduces that mapping: a second copy of it could only
 # ever disagree with the first.
-cd "$(dirname "$0")"
+cd "$(dirname "$0")" || exit 1
 
 # Which backend this build talks to. fe compiles the address in, so it has to
 # be decided here rather than in the browser — and it has to agree with what
@@ -26,6 +26,13 @@ cd "$(dirname "$0")"
 # looked in a directory nothing had ever written to.
 # shellcheck source=../scripts/dev-target.sh
 . ../scripts/dev-target.sh
+
+# Named for the banner below. dev-target.sh works this out too, but unsets its
+# copy on the way out, so the name has to be taken from the value it exports
+# rather than from a variable that no longer exists by the time this runs —
+# which is why the banner printed "serving  on ..." with a hole in it. be/d
+# derives the same name a second way; the exported root is the one source.
+worktree="$(basename "$RN_WORKTREE_ROOT")"
 
 port="${PORT:-1790}"
 
@@ -105,7 +112,6 @@ npm run css:build >/dev/null 2>&1 || echo "serve.sh: css:build failed — the pa
 fifo="$(mktemp -u)"
 mkfifo "$fifo"
 npm run css:watch < "$fifo" >/dev/null 2>&1 &
-css_watch=$!
 exec 3> "$fifo"
 rm -f "$fifo"
 
