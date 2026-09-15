@@ -1,0 +1,35 @@
+[Desktop Entry]
+# The Linux counterpart of scripts/install-rn.cmd: the file that exists to be
+# clicked. Double-clicking a .sh opens an editor on every desktop worth the
+# name, so the clickable thing has to be a launcher that runs the script rather
+# than the script itself.
+#
+# Exec carries no path into this repository on purpose. It fetches the
+# installer over HTTPS and pipes it to bash with --from-release, so the same
+# file works from a checkout, from a download, or copied to another machine
+# that has never seen rn. install.sh knows it is being piped and says so if the
+# flag is missing.
+#
+# The quoting in Exec is the desktop-entry spec's, not the shell's: only double
+# quotes count, and space | ; ' are reserved characters that must sit inside
+# them. Single quotes around the whole command — the obvious shell instinct —
+# is rejected outright by desktop-file-validate.
+#
+# Terminal=true because an install that reports nothing is an install you
+# cannot trust; the read at the end keeps the window open after it finishes,
+# which a terminal started by a launcher does not do on its own.
+#
+# To use it: copy to ~/.local/share/applications/ and it appears in the menu,
+# or to ~/Desktop and `chmod +x` it, which is what xfdesktop wants before it
+# will launch a file rather than open it.
+Type=Application
+Version=1.0
+Name=Install rn
+GenericName=rn installer
+Comment=Download the latest rn release and install it for this user
+Exec=bash -c "curl -fsSL https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install.sh | bash -s -- --from-release; echo; read -rsp 'Press Enter to close. '"
+Icon=system-software-install
+Terminal=true
+Categories=System;
+Keywords=rn;install;automation;
+StartupNotify=false

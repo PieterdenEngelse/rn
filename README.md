@@ -56,6 +56,14 @@ click there either:
 
     curl -fsSL https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install.sh | bash -s -- --from-release
 
+Or a clickable icon, if you would rather have one:
+[`scripts/rn-install.desktop`](scripts/rn-install.desktop) is a launcher that
+runs exactly that line in a terminal and waits before closing, so you can read
+what it did. Copy it to `~/.local/share/applications/` for a menu entry, or to
+`~/Desktop` and `chmod +x` it for an icon on the desktop. Unlike the Windows
+`.cmd`, this one needs `gh` signed in, because that is what `install.sh` uses
+to fetch the release.
+
 The scripts behind both, to read before running either — which is the better
 habit with anything that installs software:
 
@@ -64,6 +72,7 @@ habit with anything that installs software:
 | Windows | [`scripts/install-rn.cmd`](scripts/install-rn.cmd) | the double-clickable one | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install-rn.cmd) |
 | Windows | [`scripts/install.ps1`](scripts/install.ps1) | what it runs | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install.ps1) |
 | Linux | [`scripts/install.sh`](scripts/install.sh) | what the line above runs | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install.sh) |
+| Linux | [`scripts/rn-install.desktop`](scripts/rn-install.desktop) | a clickable launcher for it | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/rn-install.desktop) |
 
 Either one is enough on its own: both download a published package and install
 it, needing no toolchain, no clone and nothing else on the machine, and both
