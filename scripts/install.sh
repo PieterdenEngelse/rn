@@ -26,7 +26,18 @@
 # would have to exist for the two to converge.
 set -euo pipefail
 
-PKG="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Piped rather than saved — `curl ... | bash` — means there is no script file,
+# so BASH_SOURCE is unset and there is no package sitting beside it either.
+# That is a supported way in, and the only mode that can work from it is
+# --from-release, which brings its own package. Under `set -u` the old
+# unguarded expansion aborted on line one with "unbound variable", which is a
+# confusing way to learn that.
+SELF="${BASH_SOURCE[0]:-}"
+if [ -n "$SELF" ]; then
+    PKG="$(cd "$(dirname "$SELF")" && pwd)"
+else
+    PKG=""
+fi
 PREFIX="${XDG_DATA_HOME:-$HOME/.local/share}/rn"
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 APPS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
@@ -37,12 +48,29 @@ UNINSTALL=0
 FROM_RELEASE=0
 TAG=""                       # empty means the latest release
 REPO=PieterdenEngelse/rn      # where --from-release downloads from
+RAW_URL=https://raw.githubusercontent.com/$REPO/main/scripts/install.sh
 
 log()  { printf '  %s\n' "$*"; }
 step() { printf '\n==> %s\n' "$*"; }
 warn() { printf '  ! %s\n' "$*"; }
 die()  { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
-usage() { sed -n '3,15p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() {
+    if [ -n "$SELF" ] && [ -f "$SELF" ]; then
+        sed -n '3,15p' "$SELF" | sed 's/^# \{0,1\}//'
+    else
+        # Read from a pipe: the file is not on disk to quote from.
+        printf '%s\n' \
+            "install rn for the current user" \
+            "" \
+            "  curl -fsSL $RAW_URL | bash -s -- --from-release" \
+            "" \
+            "  --from-release [TAG]   fetch a published release and install it" \
+            "  --prefix DIR           somewhere other than ~/.local/share/rn" \
+            "  --no-service           files only: no systemd unit, no menu entry" \
+            "  --no-start             install and enable, but do not start" \
+            "  --uninstall            remove it again; ~/.config/rn is kept"
+    fi
+}
 
 while [ $# -gt 0 ]; do
     case $1 in
@@ -124,6 +152,12 @@ if [ "$UNINSTALL" = 1 ]; then
     log "removed the install, $UNIT and the menu entry"
     log "kept ~/.config/rn (settings, state, credentials); delete it by hand to forget everything"
     exit 0
+fi
+
+if [ -z "$PKG" ]; then
+    die "there is no package here to install.
+       Reading from a pipe, so nothing sits beside this script — add --from-release:
+         curl -fsSL $RAW_URL | bash -s -- --from-release"
 fi
 
 step "Checking the package"

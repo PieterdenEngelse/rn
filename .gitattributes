@@ -1,0 +1,12 @@
+# Line endings that are load-bearing rather than cosmetic.
+#
+# cmd.exe needs CRLF: a .cmd checked out with LF endings misreads labels and
+# goto, and one that gains a BOM tries to execute the BOM as part of its first
+# line. A shell script needs the opposite — a CRLF .sh fails with "bad
+# interpreter: /usr/bin/env bash^M", which names nothing useful.
+#
+# Pinned here because the defaults only hold by luck: a clone on a machine with
+# core.autocrlf=true rewrites both, and nothing in the repository would notice
+# until someone on Windows double-clicked a file that no longer runs.
+*.cmd text eol=crlf
+*.sh  text eol=lf

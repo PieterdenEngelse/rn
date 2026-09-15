@@ -44,12 +44,26 @@ rn carries its own Node, so **nothing needs to be installed first** on the
 machine that runs it. The install is per-user, needs no root, and an uninstall
 is a delete.
 
-There is one install script per platform:
+**Windows: download
+[install-rn.cmd](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install-rn.cmd)
+and double-click it.** It fetches the installer and the published package,
+checks the package against its published checksum, and installs. Windows asks
+once whether you meant to run a file you downloaded; that prompt is the
+mark-of-the-web check doing its job, and Run is the answer.
 
-| platform | script | |
-|---|---|---|
-| Linux | [`scripts/install.sh`](scripts/install.sh) | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install.sh) |
-| Windows | [`scripts/install.ps1`](scripts/install.ps1) | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install.ps1) |
+**Linux: one line**, because nothing a browser downloads is executable on a
+click there either:
+
+    curl -fsSL https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install.sh | bash -s -- --from-release
+
+The scripts behind both, to read before running either — which is the better
+habit with anything that installs software:
+
+| platform | file | | |
+|---|---|---|---|
+| Windows | [`scripts/install-rn.cmd`](scripts/install-rn.cmd) | the double-clickable one | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install-rn.cmd) |
+| Windows | [`scripts/install.ps1`](scripts/install.ps1) | what it runs | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install.ps1) |
+| Linux | [`scripts/install.sh`](scripts/install.sh) | what the line above runs | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install.sh) |
 
 Either one is enough on its own: both download a published package and install
 it, needing no toolchain, no clone and nothing else on the machine, and both
@@ -77,6 +91,10 @@ first to carry a Windows package, cross-built on Linux.
 From a published release, which needs no toolchain at all — only `gh`, signed
 in, because that is what `install.sh` downloads the release asset with:
 
+    curl -fsSL https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install.sh | bash -s -- --from-release
+
+Or saved first, if you would rather read it before it runs:
+
     curl -fsSLO https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install.sh
     chmod +x install.sh
     ./install.sh --from-release
@@ -98,16 +116,21 @@ login, and a menu entry that opens the page.
 
 ### Windows (x86-64)
 
-Nothing needs to be installed first here either — not even `gh`, since the
-asset is fetched over plain HTTPS:
+Double-clicking
+[install-rn.cmd](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install-rn.cmd)
+is the whole of it, and nothing needs to be installed first — not even `gh`,
+since the asset comes over plain HTTPS.
+
+The same thing by hand, if you would rather watch each step:
 
     iwr -useb https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install.ps1 -OutFile install.ps1
     Unblock-File .\install.ps1
     .\install.ps1 -FromRelease
 
-`Unblock-File` is not optional: a file downloaded from the internet is marked
-as such, and PowerShell refuses to run what is marked. The same applies to
-every `.ps1` in the repository if you take it as a ZIP.
+`Unblock-File` is not optional there: a file downloaded from the internet is
+marked as such, and PowerShell refuses to run what is marked. The `.cmd` avoids
+it by fetching the script itself rather than having you download it. The same
+mark applies to every `.ps1` in the repository if you take it as a ZIP.
 
 Or build it from a checkout, which needs Rust, Node and `dx` on the Windows
 machine itself:
