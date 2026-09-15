@@ -60,9 +60,7 @@ Or a clickable icon, if you would rather have one:
 [`scripts/rn-install.desktop`](scripts/rn-install.desktop) is a launcher that
 runs exactly that line in a terminal and waits before closing, so you can read
 what it did. Copy it to `~/.local/share/applications/` for a menu entry, or to
-`~/Desktop` and `chmod +x` it for an icon on the desktop. Unlike the Windows
-`.cmd`, this one needs `gh` signed in, because that is what `install.sh` uses
-to fetch the release.
+`~/Desktop` and `chmod +x` it for an icon on the desktop.
 
 The scripts behind both, to read before running either — which is the better
 habit with anything that installs software:
@@ -97,8 +95,9 @@ first to carry a Windows package, cross-built on Linux.
 
 ### Linux (x86-64)
 
-From a published release, which needs no toolchain at all — only `gh`, signed
-in, because that is what `install.sh` downloads the release asset with:
+From a published release, which needs no toolchain and no account. `install.sh`
+uses `gh` when it is installed and signed in, and plain `curl` otherwise —
+release assets on a public repository need no token:
 
     curl -fsSL https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install.sh | bash -s -- --from-release
 

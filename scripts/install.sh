@@ -89,25 +89,56 @@ done
 PREFIX="$(realpath -m "$PREFIX")"
 
 # --from-release: the package comes from GitHub rather than from beside this
-# script, so a machine with no Rust, Node or dx can install rn. gh does the
-# downloading — it resolves "the latest release" and picks the asset by name,
-# which a bare curl would need the API and some jq for. The repo is public now,
-# so it is convenience rather than authentication, and a curl fallback is
-# possible if gh ever becomes the thing standing in the way. The checksum
-# published with the tarball is verified before anything is unpacked.
+# script, so a machine with no Rust, Node or dx can install rn. Either way the
+# checksum published beside the tarball is verified before anything is
+# unpacked.
+#
+# Two ways to fetch it, and the fallback is the point. gh is preferred when it
+# is there and signed in: it resolves "the latest release" and picks assets by
+# pattern, and it keeps working if this repository is ever made private again.
+# Without it, curl against releases/latest/download does the same job, because
+# the repository is public — which is what lets the desktop launcher install rn
+# on a machine with nothing on it, the way install.ps1 -FromRelease already
+# could. Requiring gh here made the Linux path the harder of the two for no
+# reason anyone could act on.
+ASSET=rn-linux-x64.tar.gz
+
 if [ "$FROM_RELEASE" = 1 ]; then
-    command -v gh >/dev/null || die "--from-release needs gh (sudo apt-get install -y gh; gh auth login)"
-    gh auth status >/dev/null 2>&1 || die "gh is not signed in: run gh auth login"
+    # Named before they are needed: tar failing inside a pipeline reports
+    # "gzip: Cannot exec: No such file or directory", which names the wrong
+    # program and no remedy at all. Observed while testing this path.
+    for tool in sha256sum tar gzip; do
+        command -v "$tool" >/dev/null || die "--from-release needs $tool, which is not on PATH"
+    done
     dl=$(mktemp -d)
     trap 'rm -rf "$dl"' EXIT
     step "Downloading ${TAG:-the latest release} from $REPO"
-    gh release download ${TAG:+"$TAG"} --repo "$REPO" --dir "$dl" \
-        --pattern 'rn-linux-x64.tar.gz' --pattern 'rn-linux-x64.tar.gz.sha256' \
-        || die "no release asset to download from $REPO"
-    ( cd "$dl" && sha256sum -c rn-linux-x64.tar.gz.sha256 >/dev/null ) \
+    if command -v gh >/dev/null && gh auth status >/dev/null 2>&1; then
+        log "using gh"
+        gh release download ${TAG:+"$TAG"} --repo "$REPO" --dir "$dl" \
+            --pattern "$ASSET" --pattern "$ASSET.sha256" \
+            || die "no release asset to download from $REPO"
+    else
+        command -v curl >/dev/null \
+            || die "--from-release needs curl, or gh signed in. Neither is here."
+        # The same two URLs install.ps1 uses, and the same reason they need no
+        # token: a public repository serves release assets to anyone.
+        if [ -n "$TAG" ]; then
+            base="https://github.com/$REPO/releases/download/$TAG"
+        else
+            base="https://github.com/$REPO/releases/latest/download"
+        fi
+        log "using curl ($base)"
+        for f in "$ASSET" "$ASSET.sha256"; do
+            curl -fsSL --retry 3 -o "$dl/$f" "$base/$f" \
+                || die "download failed: $base/$f
+       If this release has no Linux asset, or the tag is wrong, that is what a 404 here means."
+        done
+    fi
+    ( cd "$dl" && sha256sum -c "$ASSET.sha256" >/dev/null ) \
         || die "the download does not match its published sha256; refusing it"
     log "sha256 ok"
-    mkdir -p "$dl/x" && tar xzf "$dl/rn-linux-x64.tar.gz" -C "$dl/x"
+    mkdir -p "$dl/x" && tar xzf "$dl/$ASSET" -C "$dl/x"
     PKG=$(find "$dl/x" -maxdepth 2 -name rn -type f -printf '%h\n' | head -1)
     [ -n "$PKG" ] || die "the tarball holds no rn launcher"
 fi
