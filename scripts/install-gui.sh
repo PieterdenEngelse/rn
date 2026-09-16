@@ -105,12 +105,24 @@ fi
 
 # Returns 0 for yes. kdialog's own exit codes match, so this is only a spelling
 # difference.
+#
+# $4 is the icon, and it is not decoration: --question draws a question mark,
+# which is right for "shall I install this?" and wrong for both of the windows
+# that report a result. A finished install under a question mark reads as one
+# more thing to decide, and a failure under one reads as a query rather than as
+# something that went wrong — seen in a screenshot of exactly these two
+# dialogs, which is the only way that kind of mistake shows up.
 ask() {
     case $GUI in
         zenity|yad) "$GUI" --question --title="$TITLE" --width=460 \
+                        ${4:+--icon="$4"} \
                         --ok-label="$2" --cancel-label="$3" --text="$1" ;;
-        kdialog)    kdialog --title "$TITLE" --yes-label "$2" --no-label "$3" \
-                        --yesno "$1" ;;
+        # kdialog picks the icon from the dialog type instead of a flag, so
+        # the failure case is a different subcommand rather than an argument.
+        kdialog)    local kind=--yesno
+                    [ "${4:-}" = dialog-error ] && kind=--warningyesno
+                    kdialog --title "$TITLE" --yes-label "$2" --no-label "$3" \
+                        "$kind" "$1" ;;
     esac
 }
 
@@ -304,7 +316,7 @@ if [ "$rc" -ne 0 ]; then
 
 $last
 
-The full log is at $LOG" "Show the log" "Close"; then
+The full log is at $LOG" "Show the log" "Close" dialog-error; then
         show_log
     fi
     exit 1
@@ -327,7 +339,7 @@ $warnings"
 if [ -n "$url" ] && command -v xdg-open >/dev/null; then
     if ask "$done_text
 
-It is running at $url" "Open rn" "Close"; then
+It is running at $url" "Open rn" "Close" dialog-information; then
         xdg-open "$url" >/dev/null 2>&1 &
     fi
 else
