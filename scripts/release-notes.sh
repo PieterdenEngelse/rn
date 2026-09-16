@@ -9,9 +9,10 @@
 # now. It used to be a heredoc inside release.sh; it moved out when the build
 # did, so the text lives in one file whichever way a release gets made.
 #
-# --signed says whether the Windows files went through SignPath. The notes
-# say which, because the difference is whether Smart App Control lets rn run
-# at all, and a reader deciding whether to download has to know that first.
+# --signed says whether the Windows files were signed (the WINDOWS_PFX_BASE64
+# secret was set). The notes say which, because with a trusted certificate the
+# difference is whether Smart App Control lets rn run at all, and a reader
+# deciding whether to download has to know that first.
 set -euo pipefail
 
 REPO=PieterdenEngelse/rn
@@ -54,10 +55,10 @@ NOTES
 
 if [ "$SIGNED" = yes ]; then
 cat <<NOTES
-The MSI and the \`rn.exe\` inside it are code-signed: free code signing provided
-by [SignPath.io](https://about.signpath.io), certificate by
-[SignPath Foundation](https://signpath.org). That signature is what lets rn
-install and run on a PC with Smart App Control turned on.
+The MSI and the \`rn.exe\` inside it are code-signed and timestamped. Check the
+signer under the MSI's Properties → Digital Signatures: only a certificate that
+Windows trusts gets rn past Smart App Control, and
+[docs/signing.md](https://github.com/$REPO/blob/main/docs/signing.md) says why.
 
 NOTES
 else
@@ -66,8 +67,7 @@ cat <<NOTES
 > **This release is not code-signed.** On a PC with Smart App Control on,
 > Windows blocks both the MSI and \`rn.exe\`, and there is no Run anyway. Check
 > Windows Security → App & browser control → Smart App Control settings first.
-> Signing through SignPath Foundation is being set up; the
-> [README](https://github.com/$REPO#smart-app-control) has the detail.
+> The [README](https://github.com/$REPO#smart-app-control) has the detail.
 
 NOTES
 fi

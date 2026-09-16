@@ -52,8 +52,7 @@ it finishes. Remove it from Settings → Apps. **Releases are not code-signed
 yet, and with Smart App Control on Windows blocks them** — see
 [Smart App Control](#smart-app-control) below before you start.
 
-The MSI comes with the first release after v0.1.5, and the link above answers
-404 until that release exists. v0.1.5 and earlier have only the
+The MSI arrived with v0.1.6. v0.1.5 and earlier have only the
 [`install-rn.cmd`](https://github.com/PieterdenEngelse/rn/releases/latest/download/install-rn.cmd)
 route, which asks before installing anything and names each step, and which the
 [Windows](#windows-x86-64) section below still describes.
@@ -217,9 +216,9 @@ nothing yet, but Windows can switch it on later, and rn would then stop
 starting.
 
 Smart App Control lets a program run when it is signed with a certificate
-Windows trusts, and no release of rn has been. The fix is under way — see
-[Code signing policy](#code-signing-policy) — and until a signed release exists
-everything below still holds. The MSI does not change it on its own: an
+Windows trusts, and no release of rn has been — see
+[Code signing](#code-signing). Until a signed release exists, everything below
+still holds. The MSI does not change it on its own: an
 unsigned MSI is blocked like any other untrusted download, and it installs the
 same unsigned `rn.exe`.
 
@@ -245,8 +244,8 @@ Until the launcher is signed, the only way to run rn on such a machine is to
 turn Smart App Control off on that same settings page. **Read what the page
 says before you do:** Smart App Control has historically been impossible to turn
 back on without resetting Windows. The fix belongs on this side: a signed MSI
-with a signed `rn.exe` inside it. The MSI and the signing pipeline exist; the
-certificate does not yet ([`docs/signing.md`](docs/signing.md)).
+with a signed `rn.exe` inside it. The MSI and the signing pipeline exist; a
+certificate Windows trusts does not yet ([`docs/signing.md`](docs/signing.md)).
 
 The same thing by hand, if you would rather watch each step:
 
@@ -343,42 +342,21 @@ boundary is defined once in `shared/`, and the launcher spawns Node with an
 environment built from nothing rather than inherited — `docs/packaging.md`
 says why both of those are load-bearing rather than fastidious.
 
-## Code signing policy
+## Code signing
 
-**Status: being set up, not yet applied for.** No release of rn is code-signed
-yet. The
-Windows files are meant to be signed through the
-[SignPath Foundation](https://signpath.org), which gives open-source projects a
-code-signing certificate and signs with it through
-[SignPath.io](https://about.signpath.io). Once a signed release exists, this
-section will say: *Free code signing provided by SignPath.io, certificate by
-SignPath Foundation.* Until then that sentence would be a claim, and it is not
-made here.
+**Status: no release of rn is code-signed yet.** The release workflow can sign
+the Windows files — the installer `rn-windows-x64.msi`, the `rn.exe` inside it,
+and the `rn.exe` inside `rn-windows-x64.zip` — with a certificate kept in the
+repository's secrets, and no certificate is configured. Every release's notes
+say whether its Windows files are signed.
 
-What gets signed: the Windows installer `rn-windows-x64.msi`, the `rn.exe`
-launcher inside it, and the `rn.exe` inside `rn-windows-x64.zip`. Nothing else.
-The bundled `node.exe` is Node's own, already signed by the OpenJS Foundation,
-and is shipped as Node publishes it; SignPath's terms do not allow re-signing
-another project's binaries.
+A signature only gets rn past Smart App Control when the certificate chains to
+a root Windows trusts; a self-signed one proves the pipeline and changes nothing
+for a user. The bundled `node.exe` is not re-signed: it is Node's own, already
+signed by the OpenJS Foundation. [`docs/signing.md`](docs/signing.md) has the
+pipeline, what the certificate has to be, and how to set it up.
 
-How a signed release is made, so it can be checked: the
-[release workflow](.github/workflows/release.yml) builds every asset on
-GitHub-hosted runners from a tagged commit in this repository, installs the MSI
-on a clean Windows runner, and only then submits the Windows files to SignPath.
-Every signing request waits for a person to approve it. `docs/signing.md` has
-the whole path and the SignPath configuration.
-
-**Team roles**
-
-| role | who |
-|---|---|
-| Committers and reviewers | [PieterdenEngelse](https://github.com/PieterdenEngelse) |
-| Approvers | [PieterdenEngelse](https://github.com/PieterdenEngelse) |
-
-Changes from anyone else are reviewed by a committer before they are merged.
-Everyone in a role uses multi-factor authentication on GitHub and on SignPath.
-
-**Privacy policy**
+## Privacy
 
 This program will not transfer any information to other networked systems
 unless specifically requested by the user or the person installing or operating

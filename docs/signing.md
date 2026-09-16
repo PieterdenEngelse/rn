@@ -14,130 +14,113 @@ with none of the file's cached verdicts, ran too. So Microsoft's cloud trusts
 that one build, and its reputation belongs to its exact bytes. It says nothing
 about the next build of anything, rn included, so it is not a route.
 
-## What is in place, and what is not
+## The pipeline
 
-| piece | state |
-|---|---|
-| An MSI, which can be signed where a `.cmd` never can | `scripts/package-msi.sh`, `scripts/rn.wxs` |
-| Version information in `rn.exe`, which SignPath requires | `launcher/build.rs`; `package.sh` refuses to ship without it |
-| An OSI license with no commercial dual-licensing | MIT OR Apache-2.0, `LICENSE-MIT` and `LICENSE-APACHE` |
-| Builds on GitHub-hosted runners from a tagged commit | `.github/workflows/release.yml` |
-| The MSI installed and uninstalled on real Windows before publishing | the `windows-test` job |
-| The signing step, off until configured | the `sign` job |
-| A "Code signing policy" section on the project page | README.md |
-| **A SignPath Foundation certificate** | **not yet — steps below** |
+RERAG's, carried over. In `.github/workflows/release.yml`:
 
-## The order it has to happen in
+1. **Configure code signing** decodes the `WINDOWS_PFX_BASE64` secret to a
+   `.pfx` in the runner's temp directory. No secret: a notice, and every step
+   below skips. The build stays unsigned and nothing fails.
+2. **Sign rn.exe** runs `scripts/sign-windows.sh` on `dist/rn-win/rn.exe`,
+   *before* `package-msi.sh` packs it, so the copies inside the MSI and the zip
+   carry the signature too.
+3. **Sign the MSI** runs the same script on `dist/rn-windows-x64.msi`.
+4. The decoded `.pfx` is deleted, and the Windows checksums are written after
+   signing, since a signature changes the bytes.
+5. **Install the MSI on Windows** reports the signature status of the MSI and
+   the installed `rn.exe`, and fails if signing was on but either is unsigned.
+6. The release notes say whether the Windows files are signed.
 
-SignPath Foundation's terms require the project to be "already released in the
-form that should be signed". So the first MSI release goes out unsigned, and
-the application comes after it.
+`sign-windows.sh` signs with SHA-256 and an RFC 3161 timestamp from DigiCert,
+so a signature stays valid after the certificate expires. It is `osslsigncode`
+where RERAG used `signtool`, because rn's Windows files are built on Linux and
+`signtool` runs only on Windows; the steps are otherwise the same. The password
+reaches `osslsigncode` from a private temp file, never on a command line.
 
-1. **Cut an unsigned release with the MSI in it.** Bump `launcher/Cargo.toml`,
-   commit, push, then `scripts/release.sh`. With no SignPath settings present
-   the `sign` job skips itself, and the release notes say the Windows files are
-   not signed. `scripts/release.sh --test` runs the same build and Windows
-   install test first, without publishing anything.
+Checked on 2026-09-16, with a throwaway self-signed certificate: `rn.exe` and
+the MSI both signed and timestamped, a password containing a space and a `$`
+worked, a wrong password failed the step, and Windows' own
+`Get-AuthenticodeSignature` read the result as signed and timestamped, with
+status `UnknownError` — "a certificate chain processed, but terminated in a
+root certificate which is not trusted". That last part is the point of the
+next section.
 
-2. **Turn on multi-factor authentication** on the GitHub account, if it is not
-   already. The terms require it of everyone in a role, on GitHub and on
-   SignPath.
+## What the certificate has to be
 
-3. **Apply** at <https://signpath.org/apply>. The page it will want to see is
-   the repository: the README says what rn does, carries the code signing
-   policy, the roles and the privacy statement, and links the license.
-   Things worth being ready to answer, because they are the ones rn is closest
-   to the line on:
-   - *Privacy.* rn sends mail and can track clicks on links in mail it sends
-     (`docs/link-tracking.md`). The terms bar features that compromise users'
-     privacy; the honest description is that tracking is off unless the person
-     running rn sets it up, and it applies to that person's own outgoing mail.
-   - *System changes.* The MSI adds a Run entry so rn starts at logon, and
-     removes it on uninstall. That is stated in the README and in `rn.wxs`.
-   - *Third-party binaries.* `node.exe` ships inside the package unmodified and
-     already signed by the OpenJS Foundation. It is not submitted for signing;
-     the artifact configuration below names `rn.exe` and the MSI only.
+**Only a certificate that chains to a root Windows trusts gets past Smart App
+Control.** Anything else produces a signature that proves the pipeline works
+and changes nothing for a user.
 
-4. **Once accepted, set up the SignPath project** as SignPath's onboarding
-   describes, with:
-   - a **Trusted Build System** link to GitHub.com for this repository;
-   - a **signing policy** (the Foundation's is usually called
-     `release-signing`) requiring manual approval, with yourself as approver;
-   - the **artifact configuration** below;
-   - a **CI user** with submitter rights, whose API token goes into GitHub.
+| certificate | signs? | Smart App Control |
+|---|---|---|
+| none (the default) | no | blocks rn |
+| self-signed `.pfx` (`New-SelfSignedCertificate`, `openssl req -x509`) | yes | **still blocks rn** |
+| a code-signing certificate from a public CA, as a `.pfx` | yes | accepts it — but see below |
 
-5. **Add the settings to the repository** (Settings → Secrets and variables →
-   Actions):
+The catch in the last row: since 1 June 2023, the CA/Browser Forum's baseline
+requirements oblige every public CA to generate and keep a code-signing
+certificate's private key on hardware — a USB token or HSM, or a cloud key
+service. **No public CA issues a code-signing certificate as an exportable
+`.pfx` any more**, OV or EV, so there is nothing trusted to put in the secret.
+A `.pfx` issued before that date works until it expires; one from a CA that
+still offers a file is one to be suspicious of.
 
-   | kind | name | value |
-   |---|---|---|
-   | secret | `SIGNPATH_API_TOKEN` | the CI user's API token |
-   | variable | `SIGNPATH_ORGANIZATION_ID` | the organization ID from SignPath |
-   | variable | `SIGNPATH_PROJECT_SLUG` | e.g. `rn` |
-   | variable | `SIGNPATH_SIGNING_POLICY_SLUG` | e.g. `release-signing` |
-   | variable | `SIGNPATH_ARTIFACT_CONFIGURATION_SLUG` | the configuration's slug; empty uses the project default |
+What this pipeline is good for, then:
 
-   `SIGNPATH_ORGANIZATION_ID` is the switch: the `sign` job runs only when it
-   is set.
+- **Proving the path end to end** with a self-signed certificate: every step
+  runs, and the Windows job shows the signature arrives intact through the MSI.
+- **A certificate that already exists as a `.pfx`**, issued before June 2023.
 
-6. **Cut the next release.** The workflow now stops at the `sign` job and waits,
-   for up to an hour, for the request to be approved in SignPath. Approved, it
-   publishes the signed files and the notes say so. Not approved in time, the
-   run fails and nothing is published — deliberately: once signing is on, an
-   unsigned Windows release is a regression, not a fallback.
+Getting a trusted signature for new releases means a key that never leaves a
+key service: Azure Artifact Signing (Microsoft's, formerly Trusted Signing), a
+CA's cloud HSM, or SignPath Foundation for open-source projects. Each replaces
+steps 1–3 above with its own signing call and leaves the rest as it is.
 
-7. **Check the result on a machine with Smart App Control on**, which no runner
-   has. Download the MSI, confirm Properties → Digital Signatures names
-   SignPath Foundation, install it, and confirm rn starts. Then change the
-   README's code signing status to granted, with the attribution sentence the
-   terms require.
+## Setting it up
 
-## The artifact configuration
+1. **Make the certificate a single base64 line:**
 
-What the workflow uploads is the `windows-unsigned` artifact: a zip holding
-`rn-windows-x64.msi` and `rn-windows-x64.zip`. This signs `rn.exe` inside both,
-then the MSI itself, in one request and one approval:
+       base64 -w0 cert.pfx > cert.pfx.b64          # Linux
+       [Convert]::ToBase64String([IO.File]::ReadAllBytes("cert.pfx")) | Set-Content cert.pfx.b64   # PowerShell
 
-```xml
-<?xml version="1.0" encoding="utf-8"?>
-<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
-  <parameters>
-    <parameter name="version" />
-  </parameters>
-  <zip-file>
-    <msi-file path="rn-windows-x64.msi" subject="rn ${version}" author="Pieter den Engelse">
-      <pe-file path="**/rn.exe" product-name="rn" product-version="${version}">
-        <authenticode-sign />
-      </pe-file>
-      <authenticode-sign />
-    </msi-file>
-    <zip-file path="rn-windows-x64.zip">
-      <pe-file path="rn-win/rn.exe" product-name="rn" product-version="${version}">
-        <authenticode-sign />
-      </pe-file>
-    </zip-file>
-  </zip-file>
-</artifact-configuration>
-```
+   A throwaway self-signed one, to try the pipeline:
 
-- `version` comes from the workflow's `parameters:` input, read from
-  `launcher/Cargo.toml`. `launcher/build.rs` writes the same string into
-  `rn.exe`'s ProductVersion and `package-msi.sh` into the MSI's subject, so the
-  restrictions hold exactly when the files are the ones this repository built.
-- **Not yet checked against SignPath:** how files inside an MSI are addressed.
-  SignPath's documentation does not show an example, so `**/rn.exe` matches it
-  at any depth rather than guessing the install path. SignPath validates a
-  configuration against a sample artifact when it is saved; download a
-  `windows-unsigned` artifact from any workflow run to use as that sample, and
-  adjust the path if it complains.
+       openssl req -x509 -newkey rsa:3072 -nodes -keyout key.pem -out cert.pem -days 30 \
+           -subj "/CN=rn test signing" -addext "extendedKeyUsage=codeSigning"
+       openssl pkcs12 -export -inkey key.pem -in cert.pem -out cert.pfx
+
+2. **Add two repository secrets** (Settings → Secrets and variables → Actions):
+
+   | secret | value |
+   |---|---|
+   | `WINDOWS_PFX_BASE64` | the contents of `cert.pfx.b64` |
+   | `WINDOWS_PFX_PASSWORD` | the `.pfx` password |
+
+   Then delete `cert.pfx.b64`, and keep `cert.pfx` somewhere that is not the
+   repository.
+
+3. **Run it without publishing:** `scripts/release.sh --test`. The build log
+   shows `signed dist/rn-win/rn.exe` and `signed dist/rn-windows-x64.msi`, and
+   the Windows job prints each file's signature status and signer.
+
+4. **Release** with `scripts/release.sh`. The notes say the files are signed.
+
+5. **With a trusted certificate only:** download the MSI on a machine with Smart
+   App Control on, confirm Properties → Digital Signatures shows the
+   certificate, install it, and confirm rn starts. No runner has Smart App
+   Control, so this is the one check the workflow cannot make. Then update the
+   README's code signing section to say releases are signed and by whom.
+
+Pull requests from forks get no secrets, so they always build unsigned; that is
+GitHub's rule, and the right one.
 
 ## What a signature does not change
 
 - **SmartScreen** may still show "Windows protected your PC" for a while: that
   is reputation, which a certificate starts but does not grant. Smart App
-  Control's rule is the certificate, which is the one that blocked rn outright.
+  Control's rule is the trusted certificate, which is the one that blocked rn
+  outright.
 - **The script route** (`install-rn.cmd`, `install-gui.ps1`, `install.ps1`)
-  stays unsigned. A `.cmd` cannot be signed at all, and the PowerShell scripts
-  would run under Smart App Control's restrictions for unsigned scripts. With
-  Smart App Control on, the MSI is the only route.
+  stays unsigned. A `.cmd` cannot be signed at all. With Smart App Control on,
+  the MSI is the only route.
 - **The Linux package** has nothing to do with any of this.

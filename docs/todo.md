@@ -31,14 +31,17 @@ starting. The only workaround is turning Smart App Control off, which has
 historically been one-way without a reset. The README's Windows section says so.
 
 Fixing it takes a signed `rn.exe` and a signed entry point to replace the
-`.cmd`. **The pipeline for both is in place; the certificate is not.** There is
-an MSI (`scripts/package-msi.sh`), `rn.exe` carries the version information
-signing requires, rn is MIT OR Apache-2.0, releases are built on GitHub-hosted
-runners, the MSI is installed on a Windows runner before publishing, and a
-SignPath step waits in the workflow for its settings. What remains needs a
-person, in order: an unsigned release with the MSI in it, the SignPath
-Foundation application, the SignPath project and the repository settings.
-`docs/signing.md` has each step. This item closes when a signed MSI has been
+`.cmd`. **The pipeline for both is in place; a trusted certificate is not.**
+v0.1.6 shipped the MSI (`scripts/package-msi.sh`), built on GitHub-hosted
+runners and installed on a Windows runner before publishing, with version
+information in `rn.exe`. The workflow signs `rn.exe` and the MSI when the
+`WINDOWS_PFX_BASE64` secret holds a `.pfx` — RERAG's pipeline, with
+osslsigncode — and was checked with a self-signed one.
+
+What remains is the certificate, and it is the hard part: a self-signed `.pfx`
+signs but Smart App Control still blocks it, and public CAs have not issued
+code-signing certificates as exportable `.pfx` files since June 2023.
+`docs/signing.md` has the detail. This item closes when a signed MSI has been
 installed and run on a machine with Smart App Control on — no runner has it,
 so nothing short of that proves it.
 

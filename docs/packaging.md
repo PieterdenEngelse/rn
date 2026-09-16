@@ -613,10 +613,11 @@ on a machine with no toolchains:
 
 Since 2026-09-16 releases are built by `.github/workflows/release.yml` on
 GitHub-hosted runners, and `release.sh` only checks the commit and pushes the
-tag. The reason is code signing: SignPath Foundation signs only what a
-GitHub-hosted runner built, and an unsigned Windows release does not run on a
-PC with Smart App Control on (`docs/signing.md`). Until then `release.sh` did
-all of what follows on this machine; the order is unchanged.
+tag. Two reasons: an unsigned Windows release does not run on a PC with Smart
+App Control on, and the signing certificate belongs in repository secrets
+rather than on this machine (`docs/signing.md`); and the MSI has to be installed
+on real Windows before it ships, which a runner can do. Until then `release.sh`
+did all of what follows on this machine; the order is unchanged.
 
 The workflow builds both packages with `package.sh` and wraps the Windows one
 in an MSI with `package-msi.sh`, then tars and zips them. `release.sh` refuses a
@@ -641,7 +642,9 @@ and passed on Ubuntu 24.04 — v0.1.1's signature exactly.
 the Run entry and the Start Menu entry to be there, waits for `/api/health` and
 the page, then uninstalls while rn is running and checks that rn stopped,
 its files and entries are gone, and the user's `app\.env` is not. Then the
-Windows files are signed, once signing is configured, and only then published.
+Windows files are signed before any of that, when the `WINDOWS_PFX_BASE64`
+secret holds a certificate, and the Windows job then requires the signatures to
+be present.
 What that runner cannot show is Smart App Control, which it does not have.
 
 **What `install.ps1` requires, and now says so.** The build path always named

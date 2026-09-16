@@ -12,8 +12,8 @@
 # Why an MSI at all, when install-rn.cmd exists: Smart App Control. It blocks a
 # downloaded .cmd outright, and a .cmd cannot carry a code signature, so no
 # release of that file can ever get past it. An MSI can be signed, and so can
-# the rn.exe inside it, which is what the SignPath step in
-# .github/workflows/release.yml is for (docs/signing.md).
+# the rn.exe inside it, which is what the signing steps in
+# .github/workflows/release.yml do (docs/signing.md).
 #
 # Needs wixl and wixl-heat, both from msitools: apt install wixl msitools.
 # wixl is a WiX 3 subset that runs on Linux, which keeps the whole Windows
