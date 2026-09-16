@@ -57,6 +57,30 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# The same two guards install.ps1 carries, because this file reaches GitHub
+# before it ever hands over — it fetches install.ps1 itself when there is none
+# beside it, so a TLS failure here happens strictly earlier, with no installer
+# yet loaded to report it properly. Duplicated rather than shared: these run
+# before install.ps1 is on disk, so there is nothing to source them from.
+if ($PSVersionTable.PSVersion.Major -lt 5) {
+    Write-Host "ERROR: this needs Windows PowerShell 5.0 or newer, and this is $($PSVersionTable.PSVersion)."
+    Write-Host "       Windows 10 and 11 ship 5.1 already."
+    exit 1
+}
+if ($PSVersionTable.PSVersion.Major -lt 6) {
+    # Windows PowerShell inherits .NET's default, which on an older machine is
+    # TLS 1.0/1.1 — refused by GitHub, and reported as "the underlying
+    # connection was closed", which reads like the network being down.
+    try {
+        [Net.ServicePointManager]::SecurityProtocol =
+            [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    } catch {
+        # Not fatal — the download may still succeed — but silence here would
+        # hide the one clue to why it did not.
+        Write-Host "  ! could not enable TLS 1.2; a download from GitHub may fail"
+    }
+}
+
 $Repo    = "PieterdenEngelse/rn"
 $RawUrl  = "https://raw.githubusercontent.com/$Repo/main/scripts/install.ps1"
 $Title   = "Install rn"

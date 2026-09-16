@@ -627,6 +627,38 @@ a package carrying the old glibc-linked launcher: FAIL on Debian 12 and Ubuntu
 22.04, PASS on Ubuntu 24.04 — v0.1.1's signature exactly — and nothing was
 uploaded.
 
+**What `install.ps1` requires, and now says so.** The build path always named
+its tools the way `install.sh` does — `cargo`, `npm`, `dx`, each with what it is
+for and what to pass instead. The `-FromRelease` path, which is the one a user
+takes, named nothing, because its dependencies are cmdlets rather than
+executables and so were invisible. A missing cmdlet reports itself as "not
+recognized as the name of a cmdlet", naming the cmdlet and no remedy. Three
+additions:
+
+- **A PowerShell version guard.** `Expand-Archive` is 5.0+, `Get-FileHash` is
+  4.0+. Windows 10 and 11 ship 5.1, so this only fires on something older or
+  stripped; it cannot help if the script fails to *parse* on a much older host,
+  and nothing in the file could.
+- **TLS 1.2, set before anything reaches GitHub.** Windows PowerShell inherits
+  .NET's default, which on an older or unpatched machine is still TLS 1.0/1.1 —
+  refused by GitHub, and reported as "the underlying connection was closed",
+  which names neither TLS nor a remedy and reads like the network being down.
+  `-bor` rather than assignment, skipped on PowerShell 6+, and in a `try`
+  because the enum member is absent on very old .NET.
+- **`Assert-Cmdlet`**, naming `Invoke-WebRequest`, `Get-FileHash` and
+  `Expand-Archive` before the download starts, and `Register-ScheduledTask`
+  before autostart — the twin of `install.sh`'s `have_systemd` check, and it
+  dies the same way rather than skipping quietly, because an install that
+  silently never starts is the failure people spend an evening on.
+
+`install-gui.ps1` carries the version and TLS guards too, duplicated rather
+than shared: it reaches GitHub to fetch `install.ps1` itself, so there is
+nothing to source them from yet.
+
+`Assert-Cmdlet` is exercised rather than assumed — extracted from `install.ps1`
+by AST in the PowerShell container and run, checking it passes for a present
+cmdlet and that its failure names the cmdlet, the reason and the remedy.
+
 **`install-gui.ps1`** is `install-gui.sh`'s Windows twin, and `install-rn.cmd`
 now fetches it rather than `install.ps1`: the same three windows — a
 confirmation, a progress window naming the step from `install.ps1`'s own

@@ -100,6 +100,49 @@ function Write-Log($m)  { Write-Host "  $m" }
 function Write-Warn($m) { Write-Host "  ! $m" -ForegroundColor Yellow }
 function Die($m)        { Write-Host "`nERROR: $m" -ForegroundColor Red; exit 1 }
 
+# Three things this script needs from the host, checked by name rather than
+# discovered by failing. install.sh has always named sha256sum, tar, gzip and
+# curl up front; the equivalents here are cmdlets, so they were invisible and
+# went unnamed, which is worse rather than better — a missing cmdlet reports
+# itself as "not recognized as the name of a cmdlet", naming the cmdlet and no
+# remedy at all.
+
+# 1. The PowerShell version. Expand-Archive arrived in 5.0 and Get-FileHash in
+#    4.0, and Windows 10 and 11 ship 5.1 in the box, so this only ever fires on
+#    something older or deliberately stripped. It cannot help if the script
+#    fails to *parse* on a much older host — nothing in the file can — but a
+#    version that parses and then dies on a missing cmdlet is the likelier
+#    case, and this catches that one first and says what to do.
+if ($PSVersionTable.PSVersion.Major -lt 5) {
+    Die ("this needs Windows PowerShell 5.0 or newer, and this is $($PSVersionTable.PSVersion).`n" +
+         "       Windows 10 and 11 ship 5.1 already. On an older machine, install`n" +
+         "       PowerShell 7 from https://aka.ms/powershell and run this with pwsh.")
+}
+
+# 2. TLS 1.2, before anything reaches GitHub. Windows PowerShell inherits the
+#    .NET default, which on an older or unpatched machine is still TLS 1.0/1.1
+#    — and GitHub refuses those. The failure is the famously unhelpful "The
+#    underlying connection was closed: An unexpected error occurred on a send",
+#    which names neither TLS nor a remedy, and reads exactly like the network
+#    being down. PowerShell 6+ negotiates properly and needs none of this;
+#    -bor rather than assignment so nothing already enabled is switched off,
+#    and in a try because the enum member is absent on very old .NET.
+if ($PSVersionTable.PSVersion.Major -lt 6) {
+    try {
+        [Net.ServicePointManager]::SecurityProtocol =
+            [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    } catch {
+        Write-Host "  ! could not enable TLS 1.2; a download from GitHub may fail" -ForegroundColor Yellow
+    }
+}
+
+# 3. Named, with what it is for and what to do instead — the shape install.sh
+#    uses for sha256sum, tar and gzip.
+function Assert-Cmdlet($Name, $Why, $Fix) {
+    if (Get-Command $Name -ErrorAction SilentlyContinue) { return }
+    Die "$Name is not available here, and $Why.`n       $Fix"
+}
+
 # Absolute, and normalised, without requiring the path to exist yet — the
 # equivalent of `realpath -m`, which install.sh runs on the same two values.
 function Resolve-Full($p) { [System.IO.Path]::GetFullPath([System.IO.Path]::Combine((Get-Location).Path, $p)) }
@@ -226,6 +269,12 @@ $Asset = "rn-windows-x64.zip"
 
 if ($FromRelease) {
     if ($SkipBuild) { Die "-FromRelease and -SkipBuild both say where the package comes from; pick one" }
+    Assert-Cmdlet "Invoke-WebRequest" "it downloads the release" `
+        "Use -SkipBuild with a package copied here by hand instead."
+    Assert-Cmdlet "Get-FileHash" "it checks the download against its published sha256" `
+        "Refusing to install something unverified; use -SkipBuild with a package you trust."
+    Assert-Cmdlet "Expand-Archive" "it unpacks the package" `
+        "Expand-Archive arrived in PowerShell 5.0. Unzip it by hand and use -SkipBuild -Out <dir>."
     $base = if ($Tag) { "https://github.com/$Repo/releases/download/$Tag" }
             else      { "https://github.com/$Repo/releases/latest/download" }
     $dl = Join-Path ([System.IO.Path]::GetTempPath()) ("rn-rel-" + [guid]::NewGuid().ToString("N"))
@@ -500,6 +549,11 @@ if (-not $NoAutostart) {
     # Linux install writes: it survives a logout, restarts on failure, and
     # needs no administrator. A Windows service would need admin *and* a
     # launcher that speaks the service control protocol, which rn.exe does not.
+    # The twin of install.sh's have_systemd check, and it dies the same way
+    # rather than skipping quietly: an install that silently never starts is
+    # the failure people spend an evening on.
+    Assert-Cmdlet "Register-ScheduledTask" "it is what starts rn when you log on" `
+        "Rerun with -NoAutostart and start $Prefix\rn.exe yourself."
     $action = New-ScheduledTaskAction -Execute (Join-Path $Prefix "rn.exe") `
                                       -WorkingDirectory (Join-Path $Prefix "app")
     # DOMAIN\user, not a bare name: the bare form is accepted in some places
