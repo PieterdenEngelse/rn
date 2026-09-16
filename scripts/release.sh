@@ -127,31 +127,69 @@ Built from \`$commit\`.
 
 $(sed 's/^/    /' "$PKG/BUILD")
 
-**Install** on a machine with \`gh\` signed in, no toolchains needed:
+## Installing
 
-    scripts/install.sh --from-release
+Nothing needs to be installed first on the machine that runs rn: it carries its
+own Node. The install is per-user, needs no root or administrator, and an
+uninstall is a delete.
 
-or by hand:
+**Linux — from the applications menu.** Copy the launcher in, then click
+*Install rn*:
 
-    gh release download $TAG --repo $REPO --pattern 'rn-linux-x64.tar.gz*'
-    sha256sum -c rn-linux-x64.tar.gz.sha256
-    tar xzf rn-linux-x64.tar.gz && rn/install.sh
+    mkdir -p ~/.local/share/applications
+    curl -fsSL https://raw.githubusercontent.com/$REPO/main/scripts/rn-install.desktop \\
+      -o ~/.local/share/applications/rn-install.desktop
+    chmod +x ~/.local/share/applications/rn-install.desktop
+    update-desktop-database ~/.local/share/applications
 
-It installs per-user into \`~/.local/share/rn\` with a \`rn.service\` user unit
+It asks before installing anything, names each step while it runs, and offers
+to open rn at the end. The dialogs want \`zenity\` or \`kdialog\`; with neither,
+it opens a terminal and runs the same script there. A desktop icon works on
+many setups but not all — on XFCE a double-click can be handed to the panel's
+"Create Launcher" handler instead of being run — which is why the menu is the
+instruction.
+
+**Or one line**, the same install without the windows. No toolchain and no
+\`gh\`: the repository is public, so the asset comes over plain HTTPS and is
+checked against the sha256 published beside it before anything is unpacked.
+
+    curl -fsSL https://raw.githubusercontent.com/$REPO/main/scripts/install.sh | bash -s -- --from-release $TAG
+
+Either way it installs into \`~/.local/share/rn\` with a \`rn.service\` user unit
 and a menu entry; \`~/.local/share/rn/install.sh --uninstall\` removes it and
 keeps \`~/.config/rn\`.
 
-**On Windows**, no toolchain and no \`gh\` — the asset is fetched over plain
-HTTPS, and the script verifies it against the checksum published beside it:
+**Windows — download
+[install-rn.cmd](https://raw.githubusercontent.com/$REPO/main/scripts/install-rn.cmd)
+and double-click it.** Same three windows, and nothing to install first.
+Windows asks once whether you meant to run a file you downloaded; that prompt
+is the mark-of-the-web check doing its job, and Run is the answer. Or, from a
+PowerShell prompt:
 
-    iwr -useb https://raw.githubusercontent.com/$REPO/main/scripts/install.ps1 -OutFile install.ps1
-    Unblock-File .\install.ps1
-    .\install.ps1 -FromRelease
+    iwr -useb https://raw.githubusercontent.com/$REPO/main/scripts/install-gui.ps1 -OutFile install-gui.ps1
+    Unblock-File .\install-gui.ps1
+    .\install-gui.ps1 -FromRelease
 
 That installs into \`%LOCALAPPDATA%\Programs\rn\` with a logon scheduled task
 and a Start Menu entry; \`.\install.ps1 -Uninstall\` removes it and keeps
-\`%USERPROFILE%\.config\rn\`. The Windows package is cross-built on Linux and
-has not yet been run on Windows — treat the first install as a review.
+\`%USERPROFILE%\.config\rn\`.
+
+> [!IMPORTANT]
+> **The Windows half has never been run on Windows.** The package is
+> cross-built on Linux, and its installer dialogs use Windows Forms, which
+> cannot be executed on the machine that builds these releases at all. What is
+> done instead: every \`.ps1\` is parsed and linted by PowerShell 7 in a
+> container (\`scripts/check-ps.sh\`), and \`install-gui.ps1\` falls back to
+> installing in the console on any host where Windows Forms will not load.
+> Neither is the same claim as "it works". Treat the first install as a review
+> — \`-NoWeb -NoAutostart -NoStart\` is the smallest first step — and please
+> report what you see.
+
+You can check the Linux half yourself rather than taking this page's word for
+it — \`scripts/smoke-release.sh --tag $TAG\` installs this release into clean
+Debian and Ubuntu containers with no toolchains in them and boots it, covering
+the download, the checksum, the unpack, the launcher, the bundled Node and the
+page. It does not cover systemd, because a container has no user session.
 
 x64 on both platforms.
 NOTES
