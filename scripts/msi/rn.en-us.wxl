@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The installer's words. Strings WixUI already defines are overridden here
+     so the stock pages say what rn is instead of "the Setup Wizard". -->
+<WixLocalization Culture="en-US" xmlns="http://wixtoolset.org/schemas/v4/wxl">
+  <String Id="WelcomeDlgTitle" Value="{\WixUI_Font_Bigger}Install rn" />
+  <String Id="WelcomeDlgDescription" Value="rn is a personal automation app with its own page in your browser. It installs for your account only, without administrator rights. The next page shows exactly what will happen before anything does." />
+
+  <String Id="RnWhatDlg_Title" Value="rn Setup" />
+  <String Id="RnWhatDlgTitle" Value="{\WixUI_Font_Title}What this installer will do" />
+  <String Id="RnWhatDlgDescription" Value="Nothing is installed until you click Install two pages from now." />
+  <String Id="RnWhatWhere" Value="Put rn in [INSTALLFOLDER] — for your account only. It carries its own copy of Node.js, so nothing else is installed." />
+  <String Id="RnWhatMenu" Value="Add &quot;rn&quot; to the Start menu. It opens rn's page in your browser, at http://127.0.0.1:3010/." />
+  <String Id="RnWhatRuns" Value="Start rn when the installation finishes. It runs in the background and its page is reachable from this PC only." />
+  <String Id="RnWhatKeeps" Value="Never touch your settings in %USERPROFILE%\.config\rn. Uninstalling from Settings, Apps removes rn but keeps them." />
+  <String Id="RnWhatAutostart" Value="Start rn automatically when I sign in to Windows" />
+  <String Id="RnWhatAutostartNote" Value="Adds rn to your sign-in apps. Clear this to start rn yourself from its folder instead." />
+
+  <String Id="LicenseAgreementDlgDescription" Value="rn is open source, under the MIT or the Apache 2.0 license, at your option." />
+  <String Id="VerifyReadyDlgInstallText" Value="Click Install to put rn on this PC as the previous page described. Click Back to change the sign-in choice, or Cancel to leave everything as it is." />
+  <String Id="ExitDialogTitle" Value="{\WixUI_Font_Bigger}rn is installed" />
+  <String Id="ExitDialogDescription" Value="rn is starting in the background. Its page is at http://127.0.0.1:3010/ and in the Start menu as &quot;rn&quot;." />
+  <String Id="RnOpenPage" Value="Open rn in my browser now" />
+</WixLocalization>

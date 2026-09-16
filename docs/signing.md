@@ -25,31 +25,30 @@ about the next build of anything, rn included, so it is not a route.
 
 ## The pipeline
 
-RERAG's, carried over. In `.github/workflows/release.yml`:
+RERAG's, carried over: `signtool` on the release workflow's Windows runner, in
+the `windows` job of `.github/workflows/release.yml`:
 
 1. **Configure code signing** decodes the `WINDOWS_PFX_BASE64` secret to a
-   `.pfx` in the runner's temp directory. No secret: a notice, and every step
-   below skips. The build stays unsigned and nothing fails.
-2. **Sign rn.exe** runs `scripts/sign-windows.sh` on `dist/rn-win/rn.exe`,
-   *before* `package-msi.sh` packs it, so the copies inside the MSI and the zip
-   carry the signature too.
-3. **Sign the MSI** runs the same script on `dist/rn-windows-x64.msi`.
+   `.pfx` in the runner's temp directory and puts the Windows SDK's `signtool`
+   on PATH. No secret: a notice, and every step below skips. The build stays
+   unsigned and nothing fails.
+2. **Sign rn.exe**, *before* `package-msi.ps1` builds the MSI, so the copies
+   inside the MSI and the zip carry the signature too.
+3. **Build the MSI**, then **Sign the MSI**.
 4. The decoded `.pfx` is deleted, and the Windows checksums are written after
    signing, since a signature changes the bytes.
-5. **Install the MSI on Windows** reports the signature status of the MSI and
-   the installed `rn.exe`, and fails if signing was on but either is unsigned.
+5. **windows-test** reports the signature status of the MSI and the installed
+   `rn.exe`, and fails if signing was on but either is unsigned.
 6. The release notes say whether the Windows files are signed.
 
-`sign-windows.sh` signs with SHA-256 and an RFC 3161 timestamp from DigiCert,
-so a signature stays valid after the certificate expires. It is `osslsigncode`
-where RERAG used `signtool`, because rn's Windows files are built on Linux and
-`signtool` runs only on Windows; the steps are otherwise the same. The password
-reaches `osslsigncode` from a private temp file, never on a command line.
+Each signature is SHA-256 with an RFC 3161 timestamp from DigiCert
+(`/fd SHA256 /tr http://timestamp.digicert.com /td SHA256`), so it stays valid
+after the certificate expires.
 
-Checked on 2026-09-16, with a throwaway self-signed certificate: `rn.exe` and
-the MSI both signed and timestamped, a password containing a space and a `$`
-worked, a wrong password failed the step, and Windows' own
-`Get-AuthenticodeSignature` read the result as signed and timestamped, with
+Checked on 2026-09-16 with a throwaway self-signed certificate, using
+`osslsigncode` on Linux while the MSI was still built there: `rn.exe` and the
+MSI both signed and timestamped, and Windows' own `Get-AuthenticodeSignature`
+read the result as signed and timestamped, with
 status `UnknownError` — "a certificate chain processed, but terminated in a
 root certificate which is not trusted". That last part is the point of the
 next section.
@@ -62,8 +61,8 @@ and changes nothing for a user.
 
 | certificate | signs? | Smart App Control |
 |---|---|---|
-| none (the default) | no | blocks rn |
-| self-signed `.pfx` (`New-SelfSignedCertificate`, `openssl req -x509`) | yes | **still blocks rn** |
+| none (the default) | no | depends on Microsoft's reputation for that exact build: blocked, or not |
+| self-signed `.pfx` (`New-SelfSignedCertificate`, `openssl req -x509`) | yes | **no better than none** |
 | a code-signing certificate from a public CA, as a `.pfx` | yes | accepts it — but see below |
 
 The catch in the last row: since 1 June 2023, the CA/Browser Forum's baseline
@@ -109,7 +108,7 @@ steps 1–3 above with its own signing call and leaves the rest as it is.
    repository.
 
 3. **Run it without publishing:** `scripts/release.sh --test`. The build log
-   shows `signed dist/rn-win/rn.exe` and `signed dist/rn-windows-x64.msi`, and
+   (the `windows` job) shows `signed rn.exe -> ...` and `signed the MSI -> ...`, and
    the Windows job prints each file's signature status and signer.
 
 4. **Release** with `scripts/release.sh`. The notes say the files are signed.

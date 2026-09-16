@@ -55,9 +55,9 @@ dist/rn/install.sh                    # → ~/.local/share/rn + rn.service + men
 
 # The Windows package is cross-built from here — no Windows machine involved.
 # Needs cargo-xwin (cargo install cargo-xwin) and llvm-rc (apt install llvm),
-# which compiles rn.exe's version information; the MSI needs wixl and msitools.
+# which compiles rn.exe's version information. The MSI wizard is built on
+# Windows with WiX v5: .\scripts\package-msi.ps1 (the release workflow does it).
 ./scripts/package.sh --target windows # → dist/rn-win
-./scripts/package-msi.sh              # → dist/rn-windows-x64.msi
 
 # On the Windows machine itself, in order of least effort:
 .\install.ps1 -FromRelease            # download the published package; no toolchain at all

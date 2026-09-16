@@ -1,0 +1,205 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The Windows installer, built by scripts/package-msi.ps1 with WiX v5 on the
+  release workflow's Windows runner, from the package tree that
+  scripts/package.sh - -target windows cross-builds on Linux.
+
+  It used to be built with wixl on Linux, which has no dialogs at all: the MSI
+  showed a progress bar, then rn's console window, and explained nothing. An
+  installer should say what it is about to do before doing it, as
+  install-gui.ps1 does, so this one is a wizard:
+
+    Welcome            what rn is
+    What happens       where it goes, what it adds, what it never touches,
+                       and a choice about starting at logon
+    License            MIT OR Apache-2.0
+    Ready / Progress
+    Finished           with "Open rn in your browser", checked
+
+  What it installs:
+
+  - The package tree into %LOCALAPPDATA%\Programs\rn. Per-user, no
+    administrator prompt, the same prefix install.ps1 uses.
+  - A Run entry under HKCU so rn starts at logon, unless the checkbox on the
+    "What happens" page was cleared (AUTOSTART). A Run entry is plain installer
+    data that uninstall removes; install.ps1's scheduled task would need a
+    custom action.
+  - A Start Menu entry that opens the page, via the rn.url package-msi.ps1
+    writes beside rn.exe.
+  - rn started once at the end, so the page answers straight away.
+
+  What it never touches: %USERPROFILE%\.config\rn, and app\.env, which the MSI
+  did not install and so does not remove.
+
+  WiX v5 rather than v6 or v7: those come with a maintenance-fee agreement
+  that has to be accepted on the command line. The fee exempts projects under
+  US$10,000 a year, which rn is, but accepting an agreement is the owner's
+  decision, and v5 needs none.
+
+  No $ appears in a command below. The WiX preprocessor treats $( as a
+  variable, and the PowerShell here is written without variables so there is
+  nothing for it to misread — the wixl build silently dropped every $.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="rn"
+           Manufacturer="Pieter den Engelse"
+           Version="$(var.Version)"
+           UpgradeCode="A6BC9870-EC42-44F9-9F95-20DA20AED644"
+           Scope="perUser"
+           Compressed="yes"
+           Language="1033">
+
+    <SummaryInformation Description="rn $(var.Version)" />
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- The UpgradeCode is the one the wixl-built v0.1.6 carried, so this
+         replaces that install in place. -->
+    <MajorUpgrade DowngradeErrorMessage="A newer rn is already installed. Uninstall it from Settings, Apps first to install this older version." />
+
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/PieterdenEngelse/rn" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="ARPNOREPAIR" Value="1" />
+
+    <!-- "Start rn when I log on", checked unless cleared on the What happens
+         page or passed as AUTOSTART="" on the command line. -->
+    <Property Id="AUTOSTART" Value="1" Secure="yes" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsDir" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="rn" />
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder" />
+    <StandardDirectory Id="System64Folder" />
+
+    <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
+      <!-- rn.exe is declared on its own so the launch action can name it. -->
+      <Component Id="Launcher">
+        <File Id="RnExe" Source="$(var.SourceDir)\rn.exe" KeyPath="yes" />
+      </Component>
+      <Files Include="$(var.SourceDir)\**">
+        <Exclude Files="$(var.SourceDir)\rn.exe" />
+      </Files>
+    </ComponentGroup>
+
+    <Component Id="Autostart" Directory="INSTALLFOLDER" Guid="0F35AFFB-8EE4-4B5F-8928-DCB027AC9A39" Condition="AUTOSTART = 1">
+      <RegistryValue Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run"
+                     Name="rn" Type="string" Value="&quot;[INSTALLFOLDER]rn.exe&quot;" KeyPath="yes" />
+    </Component>
+
+    <Component Id="StartMenu" Directory="ProgramMenuFolder" Guid="D31500AA-ED58-4987-A362-29C9A3E6FD4F">
+      <Shortcut Id="OpenPage" Name="rn" Description="Open rn in your browser"
+                Target="[INSTALLFOLDER]rn.url" WorkingDirectory="INSTALLFOLDER" />
+      <RegistryValue Root="HKCU" Key="Software\rn" Name="StartMenu" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+    <!-- Removed on uninstall once empty, which it is not while app\.env is. -->
+    <Component Id="InstallFolderCleanup" Directory="INSTALLFOLDER">
+      <RemoveFolder Id="RemoveInstallFolder" On="uninstall" />
+      <RegistryValue Root="HKCU" Key="Software\rn" Name="InstallFolder" Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
+    </Component>
+
+    <Feature Id="Main" Title="rn" Level="1">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentRef Id="Autostart" />
+      <ComponentRef Id="StartMenu" />
+      <ComponentRef Id="InstallFolderCleanup" />
+    </Feature>
+
+    <!-- Stop whatever runs out of the install folder before its files are
+         replaced or removed: Windows will not delete a running executable.
+         Matched by path, not name, so a development rn elsewhere is left
+         alone. The bundled node.exe is under the same folder and goes too. -->
+    <CustomAction Id="StopRunning"
+                  Directory="System64Folder"
+                  ExeCommand="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -WindowStyle Hidden -Command &quot;Get-Process | Where-Object Path -like '[INSTALLFOLDER]*' | Stop-Process -Force; Start-Sleep -Milliseconds 800&quot;"
+                  Execute="immediate"
+                  Return="ignore" />
+
+    <!-- Start rn once after installing, detached. -->
+    <CustomAction Id="LaunchRn"
+                  FileRef="RnExe"
+                  ExeCommand=""
+                  Execute="immediate"
+                  Return="asyncNoWait" />
+
+    <!-- The Finished page's checkbox: wait until rn answers, then open the page,
+         so the browser does not land on a connection error while Node boots. -->
+    <CustomAction Id="OpenPage"
+                  Directory="System64Folder"
+                  ExeCommand="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -WindowStyle Hidden -Command &quot;1..60 | ForEach-Object { if (-not (Test-Path env:RN_UP)) { try { Invoke-WebRequest http://127.0.0.1:3010/api/health -UseBasicParsing -TimeoutSec 1 | Out-Null; Set-Item env:RN_UP 1 } catch { Start-Sleep -Seconds 1 } } }; Start-Process http://127.0.0.1:3010/&quot;"
+                  Execute="immediate"
+                  Return="asyncNoWait" />
+
+    <InstallExecuteSequence>
+      <Custom Action="StopRunning" After="CostFinalize" />
+      <Custom Action="LaunchRn" After="InstallFinalize" Condition="NOT REMOVE~=&quot;ALL&quot;" />
+    </InstallExecuteSequence>
+
+    <WixVariable Id="WixUILicenseRtf" Value="$(sys.SOURCEFILEDIR)license.rtf" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="!(loc.RnOpenPage)" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+
+    <UIRef Id="RnUI" />
+  </Package>
+
+  <Fragment>
+    <UI Id="RnUI">
+      <TextStyle Id="WixUI_Font_Normal" FaceName="Tahoma" Size="8" />
+      <TextStyle Id="WixUI_Font_Bigger" FaceName="Tahoma" Size="12" />
+      <TextStyle Id="WixUI_Font_Title" FaceName="Tahoma" Size="9" Bold="yes" />
+      <Property Id="DefaultUIFont" Value="WixUI_Font_Normal" />
+
+      <DialogRef Id="ErrorDlg" />
+      <DialogRef Id="FatalError" />
+      <DialogRef Id="FilesInUse" />
+      <DialogRef Id="MsiRMFilesInUse" />
+      <DialogRef Id="PrepareDlg" />
+      <DialogRef Id="ProgressDlg" />
+      <DialogRef Id="ResumeDlg" />
+      <DialogRef Id="UserExit" />
+
+      <!-- Install: Welcome -> What happens -> License -> Ready -> Finished -->
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="RnWhatDlg" Condition="NOT Installed" />
+      <Publish Dialog="RnWhatDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" />
+      <Publish Dialog="RnWhatDlg" Control="Next" Event="NewDialog" Value="LicenseAgreementDlg" />
+      <Publish Dialog="LicenseAgreementDlg" Control="Back" Event="NewDialog" Value="RnWhatDlg" />
+      <Publish Dialog="LicenseAgreementDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Condition="LicenseAccepted = &quot;1&quot;" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="LicenseAgreementDlg" Order="1" Condition="NOT Installed" />
+
+      <!-- Run again while installed: repair or remove it. -->
+      <Publish Dialog="MaintenanceWelcomeDlg" Control="Next" Event="NewDialog" Value="MaintenanceTypeDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="RepairButton" Event="NewDialog" Value="VerifyReadyDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="RemoveButton" Event="NewDialog" Value="VerifyReadyDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="Back" Event="NewDialog" Value="MaintenanceWelcomeDlg" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" Order="2" Condition="Installed" />
+
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="OpenPage" Order="1"
+               Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed" />
+      <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="999" />
+
+      <Dialog Id="RnWhatDlg" Width="370" Height="270" Title="!(loc.RnWhatDlg_Title)">
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="!(loc.InstallDirDlgBannerBitmap)" />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="!(loc.RnWhatDlgTitle)" />
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="300" Height="15" Transparent="yes" NoPrefix="yes" Text="!(loc.RnWhatDlgDescription)" />
+
+        <Control Id="Where" Type="Text" X="20" Y="54" Width="330" Height="26" NoPrefix="yes" Text="!(loc.RnWhatWhere)" />
+        <Control Id="Menu" Type="Text" X="20" Y="84" Width="330" Height="26" NoPrefix="yes" Text="!(loc.RnWhatMenu)" />
+        <Control Id="Runs" Type="Text" X="20" Y="114" Width="330" Height="26" NoPrefix="yes" Text="!(loc.RnWhatRuns)" />
+        <Control Id="Keeps" Type="Text" X="20" Y="144" Width="330" Height="26" NoPrefix="yes" Text="!(loc.RnWhatKeeps)" />
+        <Control Id="Autostart" Type="CheckBox" X="20" Y="184" Width="330" Height="18" Property="AUTOSTART" CheckBoxValue="1" Text="!(loc.RnWhatAutostart)" />
+        <Control Id="AutostartNote" Type="Text" X="37" Y="203" Width="313" Height="24" NoPrefix="yes" Text="!(loc.RnWhatAutostartNote)" />
+
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)" />
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)" />
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+      </Dialog>
+    </UI>
+
+    <UIRef Id="WixUI_Common" />
+  </Fragment>
+</Wix>

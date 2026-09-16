@@ -45,11 +45,12 @@ own Node. The install is per-user and needs no root or administrator.
 ### Windows
 
 **Download [rn-windows-x64.msi]($DL/rn-windows-x64.msi) and double-click it.**
-It installs into \`%LOCALAPPDATA%\Programs\rn\`, starts rn at logon, adds a
-Start Menu entry that opens the page, and starts rn once when it finishes. It
-shows Windows' own progress bar and no pages of its own. Remove it from
-Settings → Apps; that keeps \`%USERPROFILE%\.config\rn\` and your
-\`app\.env\`.
+A setup wizard says what it will do before it does anything: it installs into
+\`%LOCALAPPDATA%\Programs\rn\`, adds a Start Menu entry that opens the page,
+starts rn at sign-in unless you clear that box, and starts rn when it finishes,
+with an option to open the page. rn shows a console window while it runs;
+closing that window stops rn. Remove it from Settings → Apps; that keeps
+\`%USERPROFILE%\.config\rn\` and your \`app\.env\`.
 
 NOTES
 
