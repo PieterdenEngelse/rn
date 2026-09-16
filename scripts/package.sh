@@ -190,6 +190,15 @@ fi
 
 cp "$REPO/scripts/$INSTALLER" "$OUT/$INSTALLER"
 chmod 755 "$OUT/$INSTALLER"
+# The graphical front end travels with the package it installs, so a downloaded
+# tarball offers the same two ways in as the repository does. It is a face over
+# install.sh and finds it by sitting beside it, which is exactly the layout
+# here. Linux only, because there is nothing on the Windows side for it to be
+# the twin of — install-gui.sh's header says why.
+if [ "$TARGET" = linux ]; then
+    cp "$REPO/scripts/install-gui.sh" "$OUT/install-gui.sh"
+    chmod 755 "$OUT/install-gui.sh"
+fi
 {
     echo "rn $(git -C "$REPO" describe --always --dirty), built $(date -u +%Y-%m-%dT%H:%MZ) for $TARGET"
     echo "node $(cat "$OUT/runtime/VERSION" 2>/dev/null || echo unknown)"

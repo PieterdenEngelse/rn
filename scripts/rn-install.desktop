@@ -7,17 +7,25 @@
 # Exec carries no path into this repository on purpose. It fetches the
 # installer over HTTPS and pipes it to bash with --from-release, so the same
 # file works from a checkout, from a download, or copied to another machine
-# that has never seen rn. install.sh knows it is being piped and says so if the
-# flag is missing.
+# that has never seen rn.
+#
+# What it fetches is install-gui.sh, not install.sh, and Terminal is therefore
+# false: the install reports in dialogs — a confirmation, a progress window
+# naming each step, and a result window offering to open rn or to show the
+# log. install-gui.sh is a face over install.sh and decides nothing; it falls
+# back to a terminal, and then to xmessage, on a machine with no zenity or
+# kdialog, which is why dropping Terminal=true costs nothing. Its header says
+# why the terminal stopped being the default.
+#
+# The `set -o pipefail` in Exec is load-bearing rather than tidiness: without
+# it a curl that fails hands bash an empty script, bash exits 0, and the ||
+# never fires — a double-click that does nothing at all, silently, which is
+# the worst outcome this file can produce.
 #
 # The quoting in Exec is the desktop-entry spec's, not the shell's: only double
 # quotes count, and space | ; ' are reserved characters that must sit inside
 # them. Single quotes around the whole command — the obvious shell instinct —
 # is rejected outright by desktop-file-validate.
-#
-# Terminal=true because an install that reports nothing is an install you
-# cannot trust; the read at the end keeps the window open after it finishes,
-# which a terminal started by a launcher does not do on its own.
 #
 # To use it: copy to ~/.local/share/applications/ and it appears in the menu,
 # or to ~/Desktop and `chmod +x` it, which is what xfdesktop wants before it
@@ -27,9 +35,9 @@ Version=1.0
 Name=Install rn
 GenericName=rn installer
 Comment=Download the latest rn release and install it for this user
-Exec=bash -c "curl -fsSL https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install.sh | bash -s -- --from-release; echo; read -rsp 'Press Enter to close. '"
+Exec=bash -c "set -o pipefail; curl -fsSL https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install-gui.sh | bash -s -- --from-release || zenity --error --title='Install rn' --text='Could not download the rn installer. Check the network, then try again.' || xmessage -center 'Could not download the rn installer. Check the network, then try again.'"
 Icon=system-software-install
-Terminal=true
+Terminal=false
 Categories=System;
 Keywords=rn;install;automation;
-StartupNotify=false
+StartupNotify=true

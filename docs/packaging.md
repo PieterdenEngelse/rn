@@ -525,7 +525,10 @@ On Windows, one script does both halves (§9):
    node. The bundled runtime has no npm, so the npm on `PATH` runs with
    `runtime/bin` first on `PATH`;
 4. the page: `dx bundle --web --release` with `RN_API_BASE=""`;
-5. `install.sh` and `BUILD`, copied in beside everything else.
+5. `install.sh`, `install-gui.sh` and `BUILD`, copied in beside everything
+   else. The second is Linux-only and is the graphical front end: it finds
+   `install.sh` by sitting next to it, so a downloaded tarball installs by
+   double-click the same way the repository does.
 
 Its flags:
 
@@ -572,6 +575,12 @@ Four traps it closes. The last two were found by the first full build, and
 - It writes `rn.service`, a user unit shaped like the dev
   `rn-backend.service`, and a menu entry that opens the page.
 - It starts the unit only if the API port is free.
+- It is also what `install-gui.sh` runs. That file adds a confirmation, a
+  progress window fed from `install.sh`'s own `==>` step lines, and a result
+  window offering to open rn or to show the log at
+  `~/.cache/rn-install.log` — and it decides nothing, so anything true of
+  `install.sh` is true of a graphical install. With no `zenity` or `kdialog`
+  it opens a terminal and runs `install.sh` there instead.
 
 On a development machine that last check matters. The installed app and the
 dev backend use the same ports **and the same `~/.config/rn`**, so running

@@ -51,16 +51,23 @@ checks the package against its published checksum, and installs. Windows asks
 once whether you meant to run a file you downloaded; that prompt is the
 mark-of-the-web check doing its job, and Run is the answer.
 
-**Linux: one line**, because nothing a browser downloads is executable on a
-click there either:
+**Linux: a clickable icon.**
+[`scripts/rn-install.desktop`](scripts/rn-install.desktop) is a launcher — copy
+it to `~/.local/share/applications/` for a menu entry, or to `~/Desktop` and
+`chmod +x` it for an icon on the desktop, because nothing a browser downloads
+is executable on a click there. Double-clicking it asks what you would expect
+to be asked before software installs itself — where the files go, what is
+downloaded, what is left alone — then shows the step it is on, and finishes by
+offering to open rn.
+
+**Or one line**, which is the same install without the windows:
 
     curl -fsSL https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install.sh | bash -s -- --from-release
 
-Or a clickable icon, if you would rather have one:
-[`scripts/rn-install.desktop`](scripts/rn-install.desktop) is a launcher that
-runs exactly that line in a terminal and waits before closing, so you can read
-what it did. Copy it to `~/.local/share/applications/` for a menu entry, or to
-`~/Desktop` and `chmod +x` it for an icon on the desktop.
+The dialogs need `zenity` or `kdialog`, which most desktops already have. On
+one that has neither, the launcher opens a terminal and runs the line above in
+it instead; the install is the same either way, because the windows are a face
+over the same script.
 
 The scripts behind both, to read before running either — which is the better
 habit with anything that installs software:
@@ -69,8 +76,9 @@ habit with anything that installs software:
 |---|---|---|---|
 | Windows | [`scripts/install-rn.cmd`](scripts/install-rn.cmd) | the double-clickable one | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install-rn.cmd) |
 | Windows | [`scripts/install.ps1`](scripts/install.ps1) | what it runs | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install.ps1) |
-| Linux | [`scripts/install.sh`](scripts/install.sh) | what the line above runs | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install.sh) |
-| Linux | [`scripts/rn-install.desktop`](scripts/rn-install.desktop) | a clickable launcher for it | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/rn-install.desktop) |
+| Linux | [`scripts/install.sh`](scripts/install.sh) | what does the work | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install.sh) |
+| Linux | [`scripts/install-gui.sh`](scripts/install-gui.sh) | the dialogs around it | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install-gui.sh) |
+| Linux | [`scripts/rn-install.desktop`](scripts/rn-install.desktop) | the clickable launcher | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/rn-install.desktop) |
 
 Either one is enough on its own: both download a published package and install
 it, needing no toolchain, no clone and nothing else on the machine, and both

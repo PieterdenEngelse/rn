@@ -338,6 +338,14 @@ and everything else in the tree is identical on either target. A release
 carries both assets, so `install.ps1 -FromRelease` installs on a Windows
 machine with no toolchain on it.
 
+`install-gui.sh` has no twin either, and should not grow one on the strength of
+the rule alone. It is the dialogs Linux needs to make clicking an icon a real
+install — a confirmation, the step being run, a result — and Windows needs none
+of them, because `install-rn.cmd` *is* a console window and already reports
+there. A PowerShell GUI to match would be several hundred lines of WinForms
+written on Linux and unrun on Windows, which is the drift this rule exists to
+prevent rather than an instance of obeying it. The file's header says so.
+
 What that leaves: the pairing to keep honest is `install.ps1` against
 `packaging.md` §1, whose layout it has to produce exactly, rather than against
 `install.sh`. And every `.ps1` here is still written on Linux and unrun on
