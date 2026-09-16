@@ -756,9 +756,9 @@ yours.
   about itself. Releases are built and published by
   `.github/workflows/release.yml`; `release.sh` pushes the tag.
 - `docs/signing.md` — code signing for the Windows release: why Smart App
-  Control makes it necessary, the MSI and SignPath pipeline that is in place,
-  and the steps that need a person — applying to SignPath Foundation and
-  configuring the project — in the order they have to happen.
+  Control makes it necessary, the `.pfx` signing pipeline in the release
+  workflow, what the certificate has to be for Windows to trust it, and how to
+  set the secrets.
 - `docs/os.md` — rebuilding the dev machine itself with chezmoi: what gets
   captured, the bootstrap scripts, and how to prove a restore works. Phases
   1 to 5 exist: the private `dotfiles` repo, `capture.sh`, the dotfiles, the

@@ -1,10 +1,10 @@
 //! Version information for the Windows launcher.
 //!
 //! A Windows executable carries its product name and version in a VERSIONINFO
-//! resource: what Explorer's Details tab shows, and what SignPath checks before
-//! it will sign anything. Its terms require every signed binary's metadata to
-//! be set and enforced, with the product name matching the project, so an
-//! rn.exe without this resource cannot be released signed (docs/signing.md).
+//! resource: what Explorer's Details tab shows, and what Windows names a signed
+//! program by when it asks about one. A signed rn.exe that says nothing about
+//! what it is reads as exactly the kind of file a user should not run, so the
+//! release requires this resource (docs/signing.md).
 //!
 //! No crate for it, on purpose. The launcher is dependency-light because it has
 //! to run before anything else can, and a resource is a few dozen lines of

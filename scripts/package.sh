@@ -101,9 +101,9 @@ if [ "$TARGET" = windows ]; then
     head -c2 "$src_exe" | grep -q '^MZ' || die "$src_exe is not a PE executable"
     # launcher/build.rs compiles the version resource when it finds a resource
     # compiler, and only warns when it does not, so a development build still
-    # works. A package is where that stops being optional: SignPath will not
-    # sign a binary whose product name and version are not set, and a release
-    # that cannot be signed is caught here rather than at the approval step.
+    # works. A package is where that stops being optional: a release's rn.exe
+    # is signed, and a signed binary with no product name or version is caught
+    # here rather than by a user wondering what they are running.
     # The name is stored as UTF-16, hence the zero bytes, and a key is followed
     # by its terminator *and* padding to a 4-byte boundary before the value —
     # the first version of this check allowed only the terminator, and failed a

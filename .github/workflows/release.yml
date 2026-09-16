@@ -1,25 +1,27 @@
 # Build, test, sign and publish a release.
 #
-#   push a v* tag      build everything, test it, sign the Windows files if
-#                      SignPath is configured, publish the GitHub release
+#   push a v* tag      build everything, sign the Windows files if a
+#                      certificate is configured, test, publish the release
 #   pull request       build and test only, when something that goes into a
 #                      package changes
 #   Run workflow       the same build and test, by hand, from the Actions tab
 #
-# scripts/release.sh is what pushes the tag. The build itself lives here rather
-# than on the developer machine for one reason: SignPath Foundation signs only
-# what a GitHub-hosted runner built, from a commit anyone can check out, and
-# every job leading up to the signing request has to have run on one. A release
-# built on a laptop cannot be signed, however carefully it was built.
+# scripts/release.sh is what pushes the tag. The build lives here rather than
+# on the developer machine so that every release comes from a commit anyone can
+# check out, with the certificate kept in repository secrets rather than on a
+# laptop, and so the Windows half is installed on real Windows before it ships.
 #
 # The Windows half is still cross-built on Linux with the same package.sh the
-# dev machine runs, so there is one build script and not two. What is new is a
-# job that installs the result on real Windows: before this workflow, nothing
-# in the Windows half had ever run on Windows at all.
+# dev machine runs, so there is one build script and not two. Before this
+# workflow, nothing in the Windows half had ever run on Windows at all.
 #
-# Signing is off until the repository has the SignPath settings docs/signing.md
-# lists. Until then a tag publishes unsigned Windows files and the release
-# notes say so. Once it is on, a release that fails to sign is not published.
+# Signing is RERAG's pipeline: a .pfx in the WINDOWS_PFX_BASE64 secret, its
+# password in WINDOWS_PFX_PASSWORD, rn.exe signed before it is packed into the
+# MSI and the zip, the MSI signed after, and an RFC 3161 timestamp so the
+# signatures outlive the certificate. With no secret the build stays unsigned
+# and nothing fails. RERAG ran signtool on a Windows runner; rn's Windows files
+# are built on Linux, so the same steps run with osslsigncode. docs/signing.md
+# says what the certificate has to be for Smart App Control to accept it.
 
 name: Release
 
@@ -35,6 +37,7 @@ on:
       - "be/.nvmrc"
       - "scripts/package.sh"
       - "scripts/package-msi.sh"
+      - "scripts/sign-windows.sh"
       - "scripts/rn.wxs"
       - "scripts/install-node.sh"
       - "scripts/release-notes.sh"
@@ -60,7 +63,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
       publish: ${{ steps.version.outputs.publish }}
-      windows-artifact-id: ${{ steps.upload-windows.outputs.artifact-id }}
+      signed: ${{ steps.sign.outputs.enabled }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -93,10 +96,10 @@ jobs:
         # msitools/wixl build the MSI; llvm provides llvm-rc for rn.exe's
         # version resource (launcher/build.rs); clang and lld are what
         # cargo-xwin compiles and links the Windows launcher with; zip packs
-        # the Windows asset.
+        # the Windows asset; osslsigncode signs rn.exe and the MSI.
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends wixl msitools llvm clang lld zip
+          sudo apt-get install -y -qq --no-install-recommends wixl msitools llvm clang lld zip osslsigncode
           llvm-rc --version | head -1 || { echo "::error::llvm-rc is not on PATH"; exit 1; }
 
       - name: Rust
@@ -165,11 +168,53 @@ jobs:
       - name: Linux package
         run: scripts/package.sh
 
+      - name: Configure code signing
+        # Decode the certificate from the WINDOWS_PFX_BASE64 secret. Every
+        # signing step below is gated on steps.sign.outputs.enabled, so with no
+        # secret set the build stays UNSIGNED and nothing here fails. A
+        # self-signed .pfx proves the pipeline end to end, but Windows does not
+        # trust it: Smart App Control still blocks what it signs.
+        id: sign
+        env:
+          PFX_B64: ${{ secrets.WINDOWS_PFX_BASE64 }}
+        run: |
+          if [ -z "$PFX_B64" ]; then
+            echo "::notice::No WINDOWS_PFX_BASE64 secret: rn.exe and the MSI will be UNSIGNED."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          umask 077
+          printf '%s' "$PFX_B64" | base64 -d > "$RUNNER_TEMP/codesign.pfx"
+          echo "pfx=$RUNNER_TEMP/codesign.pfx" >> "$GITHUB_OUTPUT"
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+          echo "Code signing enabled"
+
       - name: Windows package
         run: scripts/package.sh --target windows
 
+      - name: Sign rn.exe
+        # Before package-msi.sh packs it, so the copies inside the MSI and the
+        # zip carry the signature too. RFC 3161 timestamp: the signature stays
+        # valid after the certificate expires.
+        if: steps.sign.outputs.enabled == 'true'
+        env:
+          PFX: ${{ steps.sign.outputs.pfx }}
+          PFX_PW: ${{ secrets.WINDOWS_PFX_PASSWORD }}
+        run: scripts/sign-windows.sh dist/rn-win/rn.exe
+
       - name: MSI
         run: scripts/package-msi.sh
+
+      - name: Sign the MSI
+        if: steps.sign.outputs.enabled == 'true'
+        env:
+          PFX: ${{ steps.sign.outputs.pfx }}
+          PFX_PW: ${{ secrets.WINDOWS_PFX_PASSWORD }}
+        run: scripts/sign-windows.sh dist/rn-windows-x64.msi
+
+      - name: Remove the decoded certificate
+        if: always() && steps.sign.outputs.enabled == 'true'
+        run: rm -f "$RUNNER_TEMP/codesign.pfx"
 
       - name: Smoke-test the Linux package in clean containers
         run: scripts/smoke-release.sh --package dist/rn
@@ -182,8 +227,9 @@ jobs:
           cp dist/rn/BUILD out/linux/BUILD
           (cd dist && zip -qry ../out/windows/rn-windows-x64.zip rn-win)
           cp dist/rn-windows-x64.msi out/windows/
-          # The Windows checksums are written at publish time, after signing,
-          # because a signature changes the bytes they would describe.
+          # After signing, which already happened above: a signature changes
+          # the bytes a checksum describes.
+          (cd out/windows && for f in rn-windows-x64.zip rn-windows-x64.msi; do sha256sum "$f" > "$f.sha256"; done)
           ls -l out/linux out/windows
 
       - name: Upload the Linux assets
@@ -193,11 +239,10 @@ jobs:
           path: out/linux/
           if-no-files-found: error
 
-      - name: Upload the Windows assets (unsigned)
-        id: upload-windows
+      - name: Upload the Windows assets
         uses: actions/upload-artifact@v7
         with:
-          name: windows-unsigned
+          name: windows
           path: out/windows/
           if-no-files-found: error
 
@@ -210,11 +255,13 @@ jobs:
       - name: Download the Windows assets
         uses: actions/download-artifact@v8
         with:
-          name: windows-unsigned
+          name: windows
           path: assets
 
       - name: Install, check, uninstall
         shell: pwsh
+        env:
+          SIGNED: ${{ needs.build.outputs.signed }}
         run: |
           $ErrorActionPreference = "Stop"
           $msi    = (Resolve-Path assets\rn-windows-x64.msi).Path
@@ -227,8 +274,22 @@ jobs:
             if ($p.ExitCode -ne 0) { Fail "msiexec $verb exited $($p.ExitCode); see the uploaded log" }
           }
 
+          # Signed or not, say which, and when signing was on, require that a
+          # signature is actually there. Status is Valid only for a certificate
+          # this runner trusts; a self-signed one reads UnknownError, which
+          # still proves the file was signed and is reported as such.
+          Write-Host "==> signatures (signing: $env:SIGNED)"
+          foreach ($f in $msi) {
+            $s = Get-AuthenticodeSignature $f
+            Write-Host "  $(Split-Path $f -Leaf): $($s.Status) $($s.SignerCertificate.Subject)"
+            if ($env:SIGNED -eq "true" -and $s.Status -eq "NotSigned") { Fail "signing was on, but $f is not signed" }
+          }
+
           Write-Host "==> install"
           Msi "/i" "$env:RUNNER_TEMP\install.log"
+          $s = Get-AuthenticodeSignature (Join-Path $prefix "rn.exe")
+          Write-Host "  rn.exe signature: $($s.Status) $($s.SignerCertificate.Subject)"
+          if ($env:SIGNED -eq "true" -and $s.Status -eq "NotSigned") { Fail "signing was on, but the installed rn.exe is not signed" }
           foreach ($f in "rn.exe", "rn.url", "runtime\bin\node.exe", "app\src\server.ts", "app\web\index.html") {
             if (-not (Test-Path (Join-Path $prefix $f))) { Fail "not installed: $prefix\$f" }
           }
@@ -276,49 +337,10 @@ jobs:
           path: ${{ runner.temp }}/*.log
           if-no-files-found: ignore
 
-  sign:
-    name: Sign the Windows files (SignPath)
-    needs: [build, windows-test]
-    # Off until the SignPath settings exist; docs/signing.md says which.
-    if: needs.build.outputs.publish == 'true' && vars.SIGNPATH_ORGANIZATION_ID != ''
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    steps:
-      - name: Submit for signing, and wait for approval
-        # Every release waits here for a person to approve it in SignPath:
-        # manual approval is a condition of the SignPath Foundation certificate.
-        # An hour, then the run fails and nothing is published.
-        uses: signpath/github-action-submit-signing-request@v3
-        with:
-          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
-          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
-          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
-          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
-          artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
-          github-artifact-id: ${{ needs.build.outputs.windows-artifact-id }}
-          parameters: |
-            version: "${{ needs.build.outputs.version }}"
-          wait-for-completion: true
-          wait-for-completion-timeout-in-seconds: 3600
-          output-artifact-directory: signed
-
-      - name: Upload the signed Windows assets
-        uses: actions/upload-artifact@v7
-        with:
-          name: windows-signed
-          path: signed/
-          if-no-files-found: error
-
   publish:
     name: Publish the release
-    needs: [build, windows-test, sign]
-    # always() so a skipped sign job (signing not configured) does not skip
-    # this one; a failed sign job still stops it.
-    if: >-
-      always() &&
-      needs.build.outputs.publish == 'true' &&
-      needs.windows-test.result == 'success' &&
-      (needs.sign.result == 'success' || needs.sign.result == 'skipped')
+    needs: [build, windows-test]
+    if: needs.build.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -336,17 +358,16 @@ jobs:
       - name: Download the Windows assets
         uses: actions/download-artifact@v8
         with:
-          name: ${{ needs.sign.result == 'success' && 'windows-signed' || 'windows-unsigned' }}
+          name: windows
           path: out/windows
 
-      - name: Checksums, notes, release
+      - name: Notes and release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.build.outputs.tag }}
-          SIGNED: ${{ needs.sign.result == 'success' && 'yes' || 'no' }}
+          SIGNED: ${{ needs.build.outputs.signed == 'true' && 'yes' || 'no' }}
         run: |
           set -euo pipefail
-          (cd out/windows && for f in rn-windows-x64.zip rn-windows-x64.msi; do sha256sum "$f" > "$f.sha256"; done)
           # install-rn.cmd rides along for the links that already point at it
           # (releases/latest/download/install-rn.cmd). CRLF, which cmd.exe needs.
           grep -q $'\r$' scripts/install-rn.cmd || { echo "::error::scripts/install-rn.cmd lost its CRLF endings"; exit 1; }

@@ -14,11 +14,12 @@
 # smoke-tested the Linux one in containers and published from this machine.
 # That order was right and is kept, in .github/workflows/release.yml: build,
 # smoke test, install the MSI on a Windows runner, sign, and only then publish.
-# What changed is where. SignPath Foundation signs only artifacts a
-# GitHub-hosted runner built, and a Windows release that cannot be signed does
-# not run on a PC with Smart App Control on (docs/signing.md). So the build
-# moved, and this script is what is left for the machine to do: check that the
-# commit is one anybody can rebuild, and name it.
+# What changed is where. The Windows files have to be code-signed to run on a
+# PC with Smart App Control on (docs/signing.md), and the certificate belongs
+# in repository secrets rather than on a laptop; and the MSI has to be installed
+# on real Windows before it ships, which a runner can do and this machine
+# cannot. So the build moved, and this script is what is left for the machine
+# to do: check that the commit is one anybody can rebuild, and name it.
 #
 # The build tools are still the same scripts — package.sh, package-msi.sh,
 # smoke-release.sh — so anything the workflow does can be run here to look at
@@ -49,8 +50,9 @@ gh auth status >/dev/null 2>&1 || die "gh is not signed in: run gh auth login"
 branch=$(git rev-parse --abbrev-ref HEAD)
 
 if [ "$TEST" = 1 ]; then
-    # workflow_dispatch builds and tests exactly as a tag would, and the
-    # publish and sign jobs skip themselves because no tag is involved.
+    # workflow_dispatch builds, signs (when the secret is set) and tests
+    # exactly as a tag would, and the publish job skips itself because no tag
+    # is involved.
     git fetch -q origin "$branch" 2>/dev/null || die "$branch is not on origin; push it first"
     [ "$(git rev-parse HEAD)" = "$(git rev-parse "origin/$branch")" ] \
         || die "HEAD is not what origin/$branch holds; push first, since the runner builds origin"
