@@ -107,6 +107,15 @@ jobs:
       - name: Cargo cache
         uses: Swatinem/rust-cache@v2
 
+      - name: cargo-xwin's MSVC CRT and SDK
+        # cargo-xwin downloads Microsoft's CRT and SDK headers on first use:
+        # 7m28s on the first run of this workflow, for files that only change
+        # when cargo-xwin does.
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/cargo-xwin
+          key: cargo-xwin-${{ runner.os }}-v1
+
       - name: Node, for npm at build time
         # The packages carry their own Node (install-node.sh); this one only
         # runs npm ci and the stylesheet build. Same version as be/.nvmrc.
