@@ -10,6 +10,7 @@
 #   scripts/release.sh --from-windows dist/rn-win
 #                                      use a Windows package already built
 #   scripts/release.sh --draft         publish as a draft, to look at first
+#   scripts/release.sh --no-smoke      publish without the container check below
 #
 # Then, on any machine with gh signed in:
 #
@@ -37,11 +38,13 @@ WIN_PKG=""
 TAG=""
 DRAFT=()
 ALLOW_DIRTY=0
+SMOKE=1
 WINDOWS=1
 
 log()  { printf '  %s\n' "$*"; }
 step() { printf '\n==> %s\n' "$*"; }
 die()  { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
+warn() { printf '  ! %s\n' "$*"; }
 usage() { sed -n '3,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 while [ $# -gt 0 ]; do
@@ -53,6 +56,7 @@ while [ $# -gt 0 ]; do
         --draft)       DRAFT=(--draft); shift ;;
         --repo)        REPO="$2"; shift 2 ;;
         --allow-dirty) ALLOW_DIRTY=1; shift ;;
+        --no-smoke)    SMOKE=0; shift ;;
         -h|--help)     usage; exit 0 ;;
         *)             echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
     esac
@@ -193,6 +197,34 @@ page. It does not cover systemd, because a container has no user session.
 
 x64 on both platforms.
 NOTES
+
+# The last thing before it becomes someone else's problem. v0.1.1 was published
+# from a tree where every check passed, and did not start on Debian 12 or
+# Ubuntu 22.04 at all: its launcher was linked against this machine's glibc, and
+# no test here could see that, because every prerequisite rn has is installed
+# here. The smoke test installs the package into distributions that have
+# nothing, which is the only place that question can be answered.
+#
+# Deliberately on the built package rather than the published release: a broken
+# asset that never reaches GitHub needs no announcement, no deletion and no
+# superseding note. That order is the whole value — it is the step v0.1.1 did
+# not have.
+if [ "$SMOKE" = 1 ]; then
+    step "Smoke test before publishing"
+    if ! command -v docker >/dev/null || ! docker info >/dev/null 2>&1; then
+        # Not a warning. Skipping is allowed, but it has to be asked for: a
+        # release that quietly skipped its only cross-distribution check looks
+        # exactly like one that passed it.
+        die "the smoke test needs docker, which is not usable here.
+       Run it elsewhere, or publish without it: --no-smoke"
+    fi
+    "$REPO_ROOT/scripts/smoke-release.sh" --package "$PKG" \
+        || die "the package does not install and run on a clean distribution, so it was not published.
+       Nothing has been uploaded and $TAG does not exist; fix it and run this again."
+    log "installs and boots on every image checked"
+else
+    warn "--no-smoke: this package was not installed on any distribution but this one"
+fi
 
 step "Publishing $TAG to $REPO"
 gh release create "$TAG" --repo "$REPO" --target "$commit" \

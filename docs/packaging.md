@@ -610,6 +610,23 @@ It builds the package (unless `--from` names one), tars it with a
 without a page, and one whose runtime signature was not verified — a release
 nobody can rebuild from a commit is not a release.
 
+**It also refuses to publish a package that does not run somewhere else.** The
+last step before upload is `smoke-release.sh --package`, on the built tree
+rather than the published release, because a broken asset that never reaches
+GitHub needs no announcement, no deletion and no superseding note. That is the
+step v0.1.1 did not have: it was published from a tree where every check
+passed, and would not start on Debian 12 or Ubuntu 22.04 at all. `--no-smoke`
+skips it, and a machine without Docker is refused rather than warned — a
+release that quietly skipped its only cross-distribution check looks exactly
+like one that passed it.
+
+Worth knowing that this catches strictly more than `package.sh`'s `GLIBC_`
+guard does. The guard inspects a binary the build just produced; `--from`
+hands `release.sh` a package built anywhere, by anything. Checked by passing it
+a package carrying the old glibc-linked launcher: FAIL on Debian 12 and Ubuntu
+22.04, PASS on Ubuntu 24.04 — v0.1.1's signature exactly — and nothing was
+uploaded.
+
 **`install-gui.ps1`** is `install-gui.sh`'s Windows twin, and `install-rn.cmd`
 now fetches it rather than `install.ps1`: the same three windows — a
 confirmation, a progress window naming the step from `install.ps1`'s own
