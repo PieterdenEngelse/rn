@@ -98,10 +98,50 @@ if [ "$TARGET" = windows ]; then
     src_exe="$RN_TARGET_DIR/x86_64-pc-windows-msvc/release/rn.exe"
     head -c2 "$src_exe" | grep -q '^MZ' || die "$src_exe is not a PE executable"
 else
-    (cd "$REPO" && cargo build --release -p rn)
-    src_exe="$RN_TARGET_DIR/release/rn"
+    # musl, statically linked, and not a preference. A plain `cargo build` here
+    # links against the build machine's glibc and records the highest symbol
+    # version it happened to use — 2.39 when this was measured, which is
+    # Ubuntu 24.04 and newer. Debian 12, Ubuntu 22.04 and Mint 21 then refuse
+    # to execute the launcher at all: "version `GLIBC_2.39' not found", before
+    # main(), with nothing rn can say about it.
+    #
+    # That is the bundled-runtime rule one level down. rn ships its own Node so
+    # the user's environment cannot matter, and the bundled Node is built for
+    # exactly that — it needs only glibc 2.28 and runs on Debian 10. Building
+    # the launcher against whatever is on this machine put the dependency
+    # straight back, in the one file that has to run before anything else can.
+    #
+    # Static musl removes it rather than lowering it: the launcher links no
+    # libc at all, so the package's floor becomes Node's 2.28. Costs about
+    # 116KB and musl's slower allocator, which is nothing for a process whose
+    # work is spawning one child and waiting on it.
+    rustup target list --installed 2>/dev/null | grep -qx x86_64-unknown-linux-musl \
+        || die "the Linux launcher needs the musl target: rustup target add x86_64-unknown-linux-musl"
+    (cd "$REPO" && cargo build --release -p rn --target x86_64-unknown-linux-musl)
+    src_exe="$RN_TARGET_DIR/x86_64-unknown-linux-musl/release/rn"
 fi
 install -m 755 "$src_exe" "$OUT/$LAUNCHER"
+
+# Checked rather than trusted, like every other rule here that matters. A
+# glibc-linked launcher is indistinguishable from a good one on this machine —
+# it runs perfectly, and only fails on someone else's — so the build says so
+# now instead of a user finding out. Windows is exempt: PE has no GLIBC.
+if [ "$TARGET" = linux ] && command -v objdump >/dev/null; then
+    # `|| true` because finding nothing is the good answer here, and grep says
+    # so with exit 1 — which under `set -o pipefail` makes the assignment fail
+    # and takes the whole build down on success. The second time this check
+    # aborted a clean build silently; hence both this line and the if below.
+    glibc_syms=$(objdump -T "$OUT/$LAUNCHER" 2>/dev/null | grep -o 'GLIBC_[0-9.]*' | sort -uV || true)
+    # An if, not `[ ] && die` — the same trap this file's last lines call out.
+    # Under set -e a false test is a failed command, so the good case would
+    # abort the build with no message at all. It did, once, before this.
+    if [ -n "$glibc_syms" ]; then
+        die "the launcher is linked against glibc ($(echo "$glibc_syms" | tail -1)),
+       so it will not start on a distro older than the one that built it.
+       Expected a static musl build; see the comment above this check."
+    fi
+    log "$LAUNCHER  no libc dependency (static musl)"
+fi
 log "$LAUNCHER  $(du -h "$OUT/$LAUNCHER" | cut -f1)"
 
 step "Runtime"

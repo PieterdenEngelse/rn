@@ -518,7 +518,15 @@ On Windows, one script does both halves (§9):
 
 **`package.sh`** builds, in order:
 
-1. the launcher, as a release build;
+1. the launcher, as a release build — on Linux for
+   `x86_64-unknown-linux-musl`, statically linked, and `package.sh` refuses to
+   ship one with any `GLIBC_` symbol in it. A plain `cargo build` links against
+   the build machine's glibc and records the highest version it happened to
+   use: 2.39 when measured here, which is Ubuntu 24.04 and newer, so Debian 12
+   and Ubuntu 22.04 answered `version 'GLIBC_2.39' not found` and never reached
+   `main()`. The bundled Node needs only 2.28 and runs on Debian 10, so the
+   launcher was the entire limit. Static musl removes it instead of lowering
+   it, for about 116KB;
 2. the runtime, through `install-node.sh --require-sig` (§4);
 3. `app/`: the backend's sources, lockfile, parameter registry and
    `.env.example`, then `npm ci --omit=dev --ignore-scripts` under the bundled

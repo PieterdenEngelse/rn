@@ -316,6 +316,15 @@ each other; environments can. Constraints, not preferences:
 - **Native addons are compiled against the bundled Node version** and shipped
   prebuilt per platform. Prefer N-API; prefer moving the work to a Rust
   component over pulling in an addon at all.
+- **The launcher itself must not depend on the machine's libc either.** It is
+  the first thing that runs, so a link error there is the whole app failing
+  before it can report anything. Built static musl on Linux, and `package.sh`
+  fails the build if any `GLIBC_` symbol survives into the packaged binary —
+  the rule is checked rather than trusted, like the `NodeCommand` seal above,
+  and for the same reason: a glibc-linked launcher works perfectly on the
+  machine that built it and only fails on someone else's. Measured: the shipped
+  v0.1.1 launcher required GLIBC_2.39 and would not start on Debian 12 or
+  Ubuntu 22.04, while the Node beside it was fine back to Debian 10.
 - **`be/.nvmrc` is the single source of truth for the version**, read by both
   `scripts/install-node.sh` and its PowerShell twin, for the dev runtime and the
   shipped one alike. The launcher logs the version and path at startup and
