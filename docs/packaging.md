@@ -446,7 +446,13 @@ Only linux-x64 is in scope right now. When the others come:
   installs), and the page is wasm.
 
       scripts/package.sh --target windows      # → dist/rn-win
-      scripts/release.sh                       # publishes both assets
+      scripts/package-msi.sh                   # → dist/rn-windows-x64.msi
+
+  The Windows launcher also needs `llvm-rc` (apt install llvm), which
+  `launcher/build.rs` uses to compile `rn.exe`'s version information: code
+  signing requires it, so `package.sh` will not package an `rn.exe` without
+  it. The MSI needs `wixl` and `msitools`. Releases are published by the
+  workflow, not from here (§11).
 
   One thing is dropped for Windows that ships on Linux: `app/node_modules/
   .bin`, which holds Unix symlinks — npm writes `.cmd` and `.ps1` shims there
@@ -598,34 +604,45 @@ whatever holds the port and leaves the unit stopped. It also never calls
 command would stop the dev backend.
 
 
-**`release.sh`** is the third piece, and the one that makes an install
-possible on a machine with no toolchains:
+**The release** is the third piece, and the one that makes an install possible
+on a machine with no toolchains:
 
-    scripts/release.sh                 # build, tarball, checksum, publish
-    scripts/install.sh --from-release  # on any machine with gh signed in
+    scripts/release.sh --test          # build and test on GitHub, publish nothing
+    scripts/release.sh                 # tag v<version> and push it
+    scripts/install.sh --from-release  # on any machine
 
-It builds the package (unless `--from` names one), tars it with a
-`.sha256` beside it, and publishes both as a GitHub release tagged
-`v<version>` from `launcher/Cargo.toml`. It refuses a dirty tree, a package
-without a page, and one whose runtime signature was not verified — a release
-nobody can rebuild from a commit is not a release.
+Since 2026-09-16 releases are built by `.github/workflows/release.yml` on
+GitHub-hosted runners, and `release.sh` only checks the commit and pushes the
+tag. The reason is code signing: SignPath Foundation signs only what a
+GitHub-hosted runner built, and an unsigned Windows release does not run on a
+PC with Smart App Control on (`docs/signing.md`). Until then `release.sh` did
+all of what follows on this machine; the order is unchanged.
 
-**It also refuses to publish a package that does not run somewhere else.** The
-last step before upload is `smoke-release.sh --package`, on the built tree
-rather than the published release, because a broken asset that never reaches
-GitHub needs no announcement, no deletion and no superseding note. That is the
-step v0.1.1 did not have: it was published from a tree where every check
-passed, and would not start on Debian 12 or Ubuntu 22.04 at all. `--no-smoke`
-skips it, and a machine without Docker is refused rather than warned — a
-release that quietly skipped its only cross-distribution check looks exactly
-like one that passed it.
+The workflow builds both packages with `package.sh` and wraps the Windows one
+in an MSI with `package-msi.sh`, then tars and zips them. `release.sh` refuses a
+dirty tree, a branch other than `main` and a HEAD that is not what origin
+holds — a release nobody can rebuild from a commit is not a release — and the
+workflow refuses a tag that disagrees with `launcher/Cargo.toml`.
+`package.sh` refuses a package without a verified runtime signature, and a
+Windows launcher without version information.
 
-Worth knowing that this catches strictly more than `package.sh`'s `GLIBC_`
-guard does. The guard inspects a binary the build just produced; `--from`
-hands `release.sh` a package built anywhere, by anything. Checked by passing it
-a package carrying the old glibc-linked launcher: FAIL on Debian 12 and Ubuntu
-22.04, PASS on Ubuntu 24.04 — v0.1.1's signature exactly — and nothing was
-uploaded.
+**It refuses to publish a package that does not run somewhere else.** Before
+anything is uploaded, `smoke-release.sh --package` installs the built Linux
+tree in clean containers, because a broken asset that never reaches GitHub
+needs no announcement, no deletion and no superseding note. That is the step
+v0.1.1 did not have: it was published from a tree where every check passed,
+and would not start on Debian 12 or Ubuntu 22.04 at all. It catches strictly
+more than `package.sh`'s `GLIBC_` guard does: checked by handing it a package
+carrying the old glibc-linked launcher, it failed on Debian 12 and Ubuntu 22.04
+and passed on Ubuntu 24.04 — v0.1.1's signature exactly.
+
+**The Windows half gets the same treatment, which it never had before.** A
+`windows-latest` job installs the MSI, requires `rn.exe`'s version information,
+the Run entry and the Start Menu entry to be there, waits for `/api/health` and
+the page, then uninstalls while rn is running and checks that rn stopped,
+its files and entries are gone, and the user's `app\.env` is not. Then the
+Windows files are signed, once signing is configured, and only then published.
+What that runner cannot show is Smart App Control, which it does not have.
 
 **What `install.ps1` requires, and now says so.** The build path always named
 its tools the way `install.sh` does — `cargo`, `npm`, `dx`, each with what it is

@@ -3,6 +3,7 @@ name = "fe"
 version = "0.1.0"
 authors = ["pde"]
 edition = "2021"
+license = "MIT OR Apache-2.0"
 
 [dependencies]
 # The wire types, defined once. default-features = false switches off the

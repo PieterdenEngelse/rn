@@ -3,6 +3,7 @@ name = "rn"
 version = "0.1.5"
 authors = ["pde"]
 edition = "2021"
+license = "MIT OR Apache-2.0"
 
 # The installed entry point. Deliberately tiny: it must run before Node exists,
 # so it cannot depend on anything Node provides.

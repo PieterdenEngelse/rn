@@ -54,9 +54,10 @@ dist/rn/install.sh                    # → ~/.local/share/rn + rn.service + men
 ~/.local/share/rn/install.sh --uninstall
 
 # The Windows package is cross-built from here — no Windows machine involved.
-# Needs cargo-xwin (cargo install cargo-xwin); everything else is shared.
+# Needs cargo-xwin (cargo install cargo-xwin) and llvm-rc (apt install llvm),
+# which compiles rn.exe's version information; the MSI needs wixl and msitools.
 ./scripts/package.sh --target windows # → dist/rn-win
-./scripts/release.sh                  # publishes both assets (--no-windows for Linux only)
+./scripts/package-msi.sh              # → dist/rn-windows-x64.msi
 
 # On the Windows machine itself, in order of least effort:
 .\install.ps1 -FromRelease            # download the published package; no toolchain at all
@@ -64,9 +65,11 @@ dist/rn/install.sh                    # → ~/.local/share/rn + rn.service + men
 .\scripts\install.ps1                 # build from the checkout (needs Rust, Node, dx)
 .\scripts\install.ps1 -Uninstall
 
-# Publish that package as a GitHub release, and install it on a machine that
-# has no toolchains at all (needs gh, signed in; the repo is private).
-./scripts/release.sh                  # build, checksum, publish v<version>
+# Publish a release, and install it on a machine that has no toolchains at all.
+# The build happens on GitHub (.github/workflows/release.yml), because only a
+# GitHub-built release can be code-signed — docs/signing.md. Needs gh, signed in.
+./scripts/release.sh --test           # build and test on GitHub, publish nothing
+./scripts/release.sh                  # tag v<version> and push; the workflow publishes
 ./scripts/install.sh --from-release   # download that release and install it
 ```
 
