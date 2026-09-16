@@ -118,11 +118,28 @@ always resolve to the newest release, so they do not go stale here:
 
 Each package is the whole installed tree — launcher, private Node runtime,
 backend and page — about 40 MB compressed. Unpack one and run the install
-script inside it. [All releases](https://github.com/PieterdenEngelse/rn/releases):
-[v0.1.1](https://github.com/PieterdenEngelse/rn/releases/tag/v0.1.1) is the
-first to carry a Windows package, cross-built on Linux.
+script inside it.
+
+Take the newest, and the links above always do.
+[v0.1.1](https://github.com/PieterdenEngelse/rn/releases/tag/v0.1.1) is the one
+to avoid: its Linux launcher was built against a newer glibc than most
+distributions ship and does not start on Debian 12 or Ubuntu 22.04 at all. Its
+release notes say so, and v0.1.2 fixed it by linking the launcher statically
+against musl. [All releases](https://github.com/PieterdenEngelse/rn/releases).
 
 ### Linux (x86-64)
+
+**What it needs:** glibc 2.28 or newer — Debian 10, Ubuntu 20.04, RHEL 8 and
+anything since — plus `curl`, `tar`, `gzip` and `sha256sum`, which `install.sh`
+checks by name before it starts. The launcher links no libc at all, so that
+floor is the bundled Node's rather than rn's own. Checked rather than assumed:
+`release.sh` installs and boots the package in clean Debian 12, Ubuntu 22.04
+and Ubuntu 24.04 containers before it will publish it, and
+`scripts/smoke-release.sh --tag <tag>` lets you run the same check against a
+release yourself.
+
+For the systemd user unit and the menu entry you need a systemd user session;
+without one, pass `--no-service` and start `~/.local/share/rn/rn` yourself.
 
 From a published release, which needs no toolchain and no account. `install.sh`
 uses `gh` when it is installed and signed in, and plain `curl` otherwise —
@@ -158,11 +175,21 @@ Double-clicking
 is the whole of it, and nothing needs to be installed first — not even `gh`,
 since the asset comes over plain HTTPS.
 
+**What it needs:** Windows PowerShell 5.0 or newer, which Windows 10 and 11
+ship in the box. `install.ps1` checks the version, enables TLS 1.2 before it
+reaches GitHub — older Windows still defaults to TLS 1.0/1.1, which GitHub
+refuses with an error naming neither — and names `Invoke-WebRequest`,
+`Get-FileHash`, `Expand-Archive` and `Register-ScheduledTask` before it needs
+them, rather than failing on whichever is missing.
+
 The same thing by hand, if you would rather watch each step:
 
-    iwr -useb https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install.ps1 -OutFile install.ps1
-    Unblock-File .\install.ps1
-    .\install.ps1 -FromRelease
+    iwr -useb https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install-gui.ps1 -OutFile install-gui.ps1
+    Unblock-File .\install-gui.ps1
+    .\install-gui.ps1 -FromRelease
+
+`install-gui.ps1` is the dialogs; it runs `install.ps1`, which is the install.
+Fetch that one instead to skip the windows entirely.
 
 `Unblock-File` is not optional there: a file downloaded from the internet is
 marked as such, and PowerShell refuses to run what is marked. The `.cmd` avoids
@@ -179,13 +206,28 @@ Either way you get `%LOCALAPPDATA%\Programs\rn`, a scheduled task that starts
 it at logon, and a Start Menu entry.
 
 One caveat, and it is a real one: **none of this has been run on Windows yet.**
-The package is cross-built on Linux and the scripts were written there. What
-has been checked is everything up to the install itself — the launcher compiles
-and links for Windows, the scripts parse and lint clean, and the whole
-`-FromRelease` path was run against the live release in PowerShell: download,
-checksum, unpack, every expected file in place. What nobody has watched is the
-installing. `-NoWeb -NoAutostart -NoStart` is the smallest first step, and the
-Linux install remains the tested one.
+The package is cross-built on Linux and the scripts were written there, on a
+machine with no PowerShell and no Windows at all.
+
+What has been checked, so the caveat is not larger than it needs to be: the
+launcher compiles and links for Windows as a real PE binary; every `.ps1`
+parses and passes PSScriptAnalyzer in a PowerShell 7 container
+(`scripts/check-ps.sh`), including the copies taken back out of the published
+zip; and the guards above were exercised by extracting them from `install.ps1`
+and running them. That static checking is not decoration — it caught a
+null-on-the-right comparison and an output-capture scheme that could not have
+worked, both before release.
+
+What nobody has watched is the installing, and the dialogs are the least
+verifiable part of it: Windows Forms cannot be loaded on Linux even in a
+container, so no window in `install-gui.ps1` has ever been drawn. It falls back
+to installing in the console on any host where Windows Forms will not load,
+which is a path needing nothing the installer did not already need — so the
+graphical half can be entirely wrong and the install should still work.
+
+`-NoWeb -NoAutostart -NoStart` is the smallest first step, the Linux install
+remains the tested one, and a report of what actually happens is worth more
+than anything else in this section.
 
 ## After installing
 
