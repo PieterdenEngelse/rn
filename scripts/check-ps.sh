@@ -9,7 +9,7 @@
 # PowerShell scripts here "parse and lint clean", and until this existed
 # nothing in the tree could establish that: there is no pwsh, no powershell and
 # no PSScriptAnalyzer on this machine, so the claim rested on nothing runnable.
-# It is still kept out of check.sh on purpose, because it needs Docker and the
+# It is still kept out of check.sh on purpose, because it needs a container and the
 # network — check.sh gates every rn-land, and a step that fails when the
 # network is down would make landing depend on something unrelated to the
 # change. Run this when a .ps1 changes; that is the only time it can tell you
@@ -30,8 +30,8 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 die() { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
 
-command -v docker >/dev/null || die "this needs docker, which is not on PATH"
-docker info >/dev/null 2>&1 || die "docker is installed but not usable as this user"
+. "$(dirname "${BASH_SOURCE[0]}")/container-runtime.sh"
+rn_pick_container || die "this needs a container runtime: $RN_CONTAINER_HINT"
 
 work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
 cat > "$work/run.ps1" <<'INNER'
@@ -104,7 +104,8 @@ if ($failed) { exit 1 }
 Write-Host "`nPowerShell scripts parse and lint clean."
 INNER
 
-docker run --rm --pull=missing \
+# shellcheck disable=SC2046  # run opts are meant to word-split
+"$RN_CONTAINER" run --rm --pull=missing $(rn_container_run_opts) \
     -v "$REPO:/repo:ro" -v "$work/run.ps1:/run.ps1:ro" \
     -e "ANALYZER=$ANALYZER" \
     "$IMAGE" pwsh -NoProfile -File /run.ps1

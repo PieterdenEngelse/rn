@@ -65,8 +65,9 @@ done
 [ -n "$PKG" ] && [ -n "$TAG" ] && die "--package and --tag are different sources; pick one"
 [ -n "$PKG" ] && [ ! -e "$PKG/rn" ] && die "$PKG holds no rn launcher — build one with scripts/package.sh"
 
-command -v docker >/dev/null || die "this needs docker, which is not on PATH"
-docker info >/dev/null 2>&1 || die "docker is installed but not usable as this user"
+# Docker or podman, decided in one place for all three scripts that need one.
+. "$(dirname "${BASH_SOURCE[0]}")/container-runtime.sh"
+rn_pick_container || die "this needs a container runtime: $RN_CONTAINER_HINT"
 
 # Written out rather than passed as -c, so the quoting inside it is its own and
 # the failure messages survive. Mounted read-only, like the package.
@@ -160,6 +161,7 @@ else
 fi
 step "Smoke test: installing $source_desc on ${#IMAGES[@]} image(s)"
 log "no rustc, node, npm, gh or git in any of them"
+log "runtime: $RN_CONTAINER"
 
 declare -a results=()
 failed=0
@@ -169,7 +171,8 @@ for img in "${IMAGES[@]}"; do
     mounts=(-v "$runner:/run.sh:ro")
     [ -n "$PKG" ] && mounts+=(-v "$PKG:/pkg:ro")
     set +e
-    docker run --rm --pull=missing "${mounts[@]}" \
+    # shellcheck disable=SC2046  # run opts are meant to word-split
+    "$RN_CONTAINER" run --rm --pull=missing $(rn_container_run_opts) "${mounts[@]}" \
         -e "REPO=$REPO" -e "TAG=$TAG" -e "RELEASE_DESC=$source_desc" \
         "$img" bash /run.sh
     rc=$?

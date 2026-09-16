@@ -211,17 +211,18 @@ NOTES
 # not have.
 if [ "$SMOKE" = 1 ]; then
     step "Smoke test before publishing"
-    if ! command -v docker >/dev/null || ! docker info >/dev/null 2>&1; then
+    . "$REPO_ROOT/scripts/container-runtime.sh"
+    if ! rn_pick_container; then
         # Not a warning. Skipping is allowed, but it has to be asked for: a
         # release that quietly skipped its only cross-distribution check looks
         # exactly like one that passed it.
-        die "the smoke test needs docker, which is not usable here.
+        die "the smoke test needs a container runtime: $RN_CONTAINER_HINT
        Run it elsewhere, or publish without it: --no-smoke"
     fi
     "$REPO_ROOT/scripts/smoke-release.sh" --package "$PKG" \
         || die "the package does not install and run on a clean distribution, so it was not published.
        Nothing has been uploaded and $TAG does not exist; fix it and run this again."
-    log "installs and boots on every image checked"
+    log "installs and boots on every image checked (via $RN_CONTAINER)"
 else
     warn "--no-smoke: this package was not installed on any distribution but this one"
 fi

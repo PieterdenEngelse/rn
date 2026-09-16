@@ -373,9 +373,11 @@ What that leaves: the pairing to keep honest is `install.ps1` against
 `install.sh`. And every `.ps1` here is still written on Linux and unrun on
 Windows — they parse and lint clean, which is not the same claim, and
 `scripts/check-ps.sh` is now what backs even that much. It is deliberately not
-part of `check.sh`: it needs Docker and the network, and `check.sh` gates every
-`rn-land`, so a step that fails when the network is down would make landing
-depend on something unrelated to the change. Run it when a `.ps1` changes.
+part of `check.sh`: it needs a container and the network, and `check.sh` gates
+every `rn-land`, so a step that fails when the network is down would make
+landing depend on something unrelated to the change. Run it when a `.ps1`
+changes. Docker or podman — `scripts/container-runtime.sh` decides that once
+for the three scripts that need a userspace which is not this machine's.
 
 Detail, measured sizes and the build checklist: `docs/packaging.md`.
 

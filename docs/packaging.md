@@ -645,6 +645,18 @@ cannot see the local variable they were appending to, so the progress label
 would have sat on "Starting..." for the whole install. It redirects to files
 now, like its Linux twin.
 
+All three of those run their container through `scripts/container-runtime.sh`,
+which picks Docker or podman and honours `RN_CONTAINER` to force one. Docker
+leads only because it is what they were checked against; every call is `info`
+and `run --rm --pull=missing -v src:dst:ro -e VAR image cmd`, which podman takes
+with the same spelling, rootless. The podman path has not been run — there is
+none on this machine — and that file says so rather than implying coverage it
+lacks. It also names the one difference that will not look like a runtime
+problem when it bites: on an SELinux-enforcing host a plain `:ro` bind mount
+into podman is denied, and `RN_CONTAINER_RUN_OPTS="--security-opt label=disable"`
+is the way out, preferred over `:z` mounts that would relabel files in your
+working tree as a side effect of running a test.
+
 **`check-ps.sh`** is what backs "the .ps1 files parse and lint clean", a claim
 that until it existed rested on nothing runnable here. It runs the PowerShell 7
 container over `scripts/*.ps1`: parse every file, then PSScriptAnalyzer at
