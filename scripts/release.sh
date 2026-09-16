@@ -124,6 +124,19 @@ if [ "$WINDOWS" = 1 ]; then
     log "rn-windows-x64.zip  $(du -h "$out/rn-windows-x64.zip" | cut -f1)"
     log "sha256 $(cut -d' ' -f1 "$out/rn-windows-x64.zip.sha256")"
     ASSETS+=("$out/rn-windows-x64.zip" "$out/rn-windows-x64.zip.sha256")
+
+    # install-rn.cmd rides along as an asset of its own, because the README's
+    # Windows link has to be a download and a raw.githubusercontent.com URL is
+    # not one: it is served as text/plain with no Content-Disposition, so a
+    # click opens the script as a page of text. A release asset is served as an
+    # attachment, and releases/latest/download/install-rn.cmd — the URL the
+    # README uses — resolves only while every release carries it.
+    #
+    # Taken from the working tree rather than rewritten: .gitattributes pins it
+    # to CRLF, which cmd.exe needs, and an upload keeps the bytes as they are.
+    grep -q $'\r$' scripts/install-rn.cmd \
+        || die "scripts/install-rn.cmd has LF endings; cmd.exe needs CRLF (see .gitattributes)"
+    ASSETS+=("$REPO_ROOT/scripts/install-rn.cmd")
 fi
 
 cat > "$out/notes.md" <<NOTES
@@ -164,7 +177,7 @@ and a menu entry; \`~/.local/share/rn/install.sh --uninstall\` removes it and
 keeps \`~/.config/rn\`.
 
 **Windows — download
-[install-rn.cmd](https://raw.githubusercontent.com/$REPO/main/scripts/install-rn.cmd)
+[install-rn.cmd](https://github.com/$REPO/releases/download/$TAG/install-rn.cmd)
 and double-click it.** Same three windows, and nothing to install first.
 Windows asks once whether you meant to run a file you downloaded; that prompt
 is the mark-of-the-web check doing its job, and Run is the answer. Or, from a

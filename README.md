@@ -45,7 +45,7 @@ machine that runs it. The install is per-user, needs no root, and an uninstall
 is a delete.
 
 **Windows: download
-[install-rn.cmd](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install-rn.cmd)
+[install-rn.cmd](https://github.com/PieterdenEngelse/rn/releases/latest/download/install-rn.cmd)
 and double-click it.** It asks before installing anything — where the files go,
 what is downloaded, what is left alone — then names each step as it runs and
 offers to open rn at the end. The package is checked against its published
@@ -94,7 +94,7 @@ habit with anything that installs software:
 
 | platform | file | | |
 |---|---|---|---|
-| Windows | [`scripts/install-rn.cmd`](scripts/install-rn.cmd) | the double-clickable one | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install-rn.cmd) |
+| Windows | [`scripts/install-rn.cmd`](scripts/install-rn.cmd) | the double-clickable one | [download](https://github.com/PieterdenEngelse/rn/releases/latest/download/install-rn.cmd) |
 | Windows | [`scripts/install-gui.ps1`](scripts/install-gui.ps1) | the dialogs around it | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install-gui.ps1) |
 | Windows | [`scripts/install.ps1`](scripts/install.ps1) | what does the work | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install.ps1) |
 | Linux | [`scripts/install.sh`](scripts/install.sh) | what does the work | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install.sh) |
@@ -171,7 +171,7 @@ login, and a menu entry that opens the page.
 ### Windows (x86-64)
 
 Double-clicking
-[install-rn.cmd](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install-rn.cmd)
+[install-rn.cmd](https://github.com/PieterdenEngelse/rn/releases/latest/download/install-rn.cmd)
 is the whole of it, and nothing needs to be installed first — not even `gh`,
 since the asset comes over plain HTTPS.
 
