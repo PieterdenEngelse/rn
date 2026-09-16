@@ -51,7 +51,9 @@ what is downloaded, what is left alone — then names each step as it runs and
 offers to open rn at the end. The package is checked against its published
 checksum before anything is unpacked. Windows asks once whether you meant to
 run a file you downloaded; that prompt is the mark-of-the-web check doing its
-job, and Run is the answer.
+job, and Run is the answer. **With Smart App Control on, rn will not install or
+run at all** — see [Smart App Control](#smart-app-control) below before you
+start.
 
 A console window stays open behind the dialogs on purpose: on a host with no
 Windows Forms the install runs there instead, and hiding the window would hide
@@ -182,6 +184,38 @@ refuses with an error naming neither — and names `Invoke-WebRequest`,
 `Get-FileHash`, `Expand-Archive` and `Register-ScheduledTask` before it needs
 them, rather than failing on whichever is missing.
 
+#### Smart App Control
+
+**rn does not currently run on a PC with Smart App Control turned on.** Check
+first: Windows Security → App & browser control → Smart App Control settings.
+New Windows 11 installs often have it on, or in evaluation mode — which blocks
+nothing yet, but Windows can switch it on later, and rn would then stop
+starting.
+
+It blocks rn twice, and getting past the first block only reaches the second:
+
+- **The downloaded `install-rn.cmd`** is stopped with *"Smart App Control has
+  blocked an app with a dangerous file extension"*. There is no Run anyway. A
+  `.cmd` cannot carry a code signature at all, so no release of this file can
+  pass it.
+- **`rn.exe` itself** is unsigned, and is blocked however it arrives — including
+  unpacked from a zip that carries no download mark: *"An Application Control
+  policy has blocked this file"*. So `Unblock-File`, and the by-hand route
+  below, do not help: they clear the first block and stop at this one. The
+  bundled `node.exe` is signed by the OpenJS Foundation and is not affected.
+
+Measured on 2026-09-16 against v0.1.5, on Windows 11 25H2 with Smart App Control
+on. Event Viewer keeps the record, under Applications and Services Logs →
+Microsoft → Windows → CodeIntegrity → Operational, as events 3033, 3077 and
+3118.
+
+Until the launcher is signed, the only way to run rn on such a machine is to
+turn Smart App Control off on that same settings page. **Read what the page
+says before you do:** Smart App Control has historically been impossible to turn
+back on without resetting Windows. The fix belongs on this side — signing
+`rn.exe` with a trusted certificate, and replacing the `.cmd` with a signed
+entry point — and neither has been done yet ([`docs/todo.md`](docs/todo.md)).
+
 The same thing by hand, if you would rather watch each step:
 
     iwr -useb https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install-gui.ps1 -OutFile install-gui.ps1
@@ -205,9 +239,11 @@ machine itself:
 Either way you get `%LOCALAPPDATA%\Programs\rn`, a scheduled task that starts
 it at logon, and a Start Menu entry.
 
-One caveat, and it is a real one: **none of this has been run on Windows yet.**
-The package is cross-built on Linux and the scripts were written there, on a
-machine with no PowerShell and no Windows at all.
+One caveat, and it is a real one: **the install has not been run end to end on
+Windows yet.** The package is cross-built on Linux and the scripts were written
+there, on a machine with no PowerShell and no Windows at all. The one Windows
+run so far is the one above, and Smart App Control stopped it before any of the
+install could.
 
 What has been checked, so the caveat is not larger than it needs to be: the
 launcher compiles and links for Windows as a real PE binary; every `.ps1`

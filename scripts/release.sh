@@ -180,8 +180,13 @@ keeps \`~/.config/rn\`.
 [install-rn.cmd](https://github.com/$REPO/releases/download/$TAG/install-rn.cmd)
 and double-click it.** Same three windows, and nothing to install first.
 Windows asks once whether you meant to run a file you downloaded; that prompt
-is the mark-of-the-web check doing its job, and Run is the answer. Or, from a
-PowerShell prompt:
+is the mark-of-the-web check doing its job, and Run is the answer.
+
+**With Smart App Control on, rn does not install or run**: the \`.cmd\` is
+blocked as a dangerous file extension, and the unsigned \`rn.exe\` is blocked
+however it arrives. The README's Smart App Control section has the detail.
+
+Or, from a PowerShell prompt:
 
     iwr -useb https://raw.githubusercontent.com/$REPO/main/scripts/install-gui.ps1 -OutFile install-gui.ps1
     Unblock-File .\install-gui.ps1

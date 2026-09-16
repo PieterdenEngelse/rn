@@ -10,6 +10,34 @@ item.
 
 ---
 
+## Smart App Control blocks rn on Windows — 2026-09-16
+
+The first Windows run of anything here, on Windows 11 25H2 with Smart App
+Control on, against v0.1.5. Two blocks, and they stack:
+
+- The downloaded `install-rn.cmd` is refused as "a dangerous file extension",
+  with no Run anyway. A `.cmd` cannot be Authenticode-signed, so this is a
+  property of the file type rather than of this release.
+- `rn.exe`, unpacked from the release zip with no download mark on it, is
+  refused too: "An Application Control policy has blocked this file",
+  CodeIntegrity events 3033/3077/3118. It is `NotSigned`. The bundled
+  `node.exe` carries the OpenJS Foundation's signature and runs.
+
+**What goes wrong while this is open:** on any machine with Smart App Control
+on, rn cannot be installed or started by any route in the README — the
+by-hand one included, since `Unblock-File` clears only the first block. Machines
+in evaluation mode work until Windows switches it on, and then rn stops
+starting. The only workaround is turning Smart App Control off, which has
+historically been one-way without a reset. The README's Windows section says so.
+
+Fixing it takes two things: signing `rn.exe` with a certificate Windows trusts,
+which `release.sh` can do during the cross-build (`jsign` and `osslsigncode`
+both sign PE files from Linux), and a signed entry point to replace the `.cmd`.
+Neither can be verified from Linux, for the same reason nothing on the Windows
+side can.
+
+---
+
 ## The link tracker has no home for its redirector — 2026-09-09
 
 `docs/link-tracking.md` §7 is now landed in full, step 8 included. What §3
