@@ -37,11 +37,11 @@ historically been one-way without a reset. The README's Windows section says so.
 
 Fixing it takes a signed `rn.exe` and a signed entry point to replace the
 `.cmd`. **The pipeline for both is in place; a trusted certificate is not.**
-v0.1.6 shipped the MSI (`scripts/package-msi.sh`), built on GitHub-hosted
-runners and installed on a Windows runner before publishing, with version
-information in `rn.exe`. The workflow signs `rn.exe` and the MSI when the
-`WINDOWS_PFX_BASE64` secret holds a `.pfx` — RERAG's pipeline, with
-osslsigncode — and was checked with a self-signed one.
+v0.1.6 shipped an MSI, built on GitHub-hosted runners and installed on a
+Windows runner before publishing, with version information in `rn.exe`; the
+next release's MSI is a WiX setup wizard (`scripts/msi/rn.wxs`). The workflow
+signs `rn.exe` and the MSI with signtool when the `WINDOWS_PFX_BASE64` secret
+holds a `.pfx` — RERAG's pipeline — which was checked with a self-signed one.
 
 What remains is the certificate, and it is the hard part: a self-signed `.pfx`
 signs but Smart App Control still blocks it, and public CAs have not issued

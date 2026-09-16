@@ -1,4 +1,4 @@
-# Build, test, sign and publish a release.
+# Build, sign, test and publish a release.
 #
 #   push a v* tag      build everything, sign the Windows files if a
 #                      certificate is configured, test, publish the release
@@ -11,17 +11,21 @@
 # check out, with the certificate kept in repository secrets rather than on a
 # laptop, and so the Windows half is installed on real Windows before it ships.
 #
-# The Windows half is still cross-built on Linux with the same package.sh the
-# dev machine runs, so there is one build script and not two. Before this
-# workflow, nothing in the Windows half had ever run on Windows at all.
+# Three stages, two operating systems:
 #
-# Signing is RERAG's pipeline: a .pfx in the WINDOWS_PFX_BASE64 secret, its
-# password in WINDOWS_PFX_PASSWORD, rn.exe signed before it is packed into the
-# MSI and the zip, the MSI signed after, and an RFC 3161 timestamp so the
-# signatures outlive the certificate. With no secret the build stays unsigned
-# and nothing fails. RERAG ran signtool on a Windows runner; rn's Windows files
-# are built on Linux, so the same steps run with osslsigncode. docs/signing.md
-# says what the certificate has to be for Smart App Control to accept it.
+#   build     (Linux)    package.sh builds both package trees — the Windows one
+#                        is cross-built, one build script for both — and the
+#                        Linux one is smoke-tested in clean containers.
+#   windows   (Windows)  RERAG's signing pipeline around the MSI: rn.exe is
+#                        signed with signtool, the MSI is built with WiX v5
+#                        (a setup wizard, which Linux tooling cannot build),
+#                        and the MSI is signed. No WINDOWS_PFX_BASE64 secret:
+#                        unsigned, and nothing fails.
+#   windows-test         screenshots every page of the wizard, then installs
+#                        silently, checks rn answers, and uninstalls.
+#
+# docs/signing.md says what the certificate has to be for Smart App Control to
+# accept it.
 
 name: Release
 
@@ -36,9 +40,8 @@ on:
       - "be/package-lock.json"
       - "be/.nvmrc"
       - "scripts/package.sh"
-      - "scripts/package-msi.sh"
-      - "scripts/sign-windows.sh"
-      - "scripts/rn.wxs"
+      - "scripts/package-msi.ps1"
+      - "scripts/msi/**"
       - "scripts/install-node.sh"
       - "scripts/release-notes.sh"
       - "scripts/smoke-release.sh"
@@ -56,14 +59,13 @@ env:
 
 jobs:
   build:
-    name: Build and smoke-test the packages
+    name: Build the packages, smoke-test Linux
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
       publish: ${{ steps.version.outputs.publish }}
-      signed: ${{ steps.sign.outputs.enabled }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -93,13 +95,12 @@ jobs:
           fi
 
       - name: System packages
-        # msitools/wixl build the MSI; llvm provides llvm-rc for rn.exe's
-        # version resource (launcher/build.rs); clang and lld are what
-        # cargo-xwin compiles and links the Windows launcher with; zip packs
-        # the Windows asset; osslsigncode signs rn.exe and the MSI.
+        # llvm provides llvm-rc for rn.exe's version resource
+        # (launcher/build.rs); clang and lld are what cargo-xwin compiles and
+        # links the Windows launcher with.
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends wixl msitools llvm clang lld zip osslsigncode
+          sudo apt-get install -y -qq --no-install-recommends llvm clang lld
           llvm-rc --version | head -1 || { echo "::error::llvm-rc is not on PATH"; exit 1; }
 
       - name: Rust
@@ -112,8 +113,7 @@ jobs:
 
       - name: cargo-xwin's MSVC CRT and SDK
         # cargo-xwin downloads Microsoft's CRT and SDK headers on first use:
-        # 7m28s on the first run of this workflow, for files that only change
-        # when cargo-xwin does.
+        # over seven minutes, for files that only change when cargo-xwin does.
         uses: actions/cache@v6
         with:
           path: ~/.cache/cargo-xwin
@@ -168,69 +168,18 @@ jobs:
       - name: Linux package
         run: scripts/package.sh
 
-      - name: Configure code signing
-        # Decode the certificate from the WINDOWS_PFX_BASE64 secret. Every
-        # signing step below is gated on steps.sign.outputs.enabled, so with no
-        # secret set the build stays UNSIGNED and nothing here fails. A
-        # self-signed .pfx proves the pipeline end to end, but Windows does not
-        # trust it: Smart App Control still blocks what it signs.
-        id: sign
-        env:
-          PFX_B64: ${{ secrets.WINDOWS_PFX_BASE64 }}
-        run: |
-          if [ -z "$PFX_B64" ]; then
-            echo "::notice::No WINDOWS_PFX_BASE64 secret: rn.exe and the MSI will be UNSIGNED."
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          umask 077
-          printf '%s' "$PFX_B64" | base64 -d > "$RUNNER_TEMP/codesign.pfx"
-          echo "pfx=$RUNNER_TEMP/codesign.pfx" >> "$GITHUB_OUTPUT"
-          echo "enabled=true" >> "$GITHUB_OUTPUT"
-          echo "Code signing enabled"
-
       - name: Windows package
         run: scripts/package.sh --target windows
-
-      - name: Sign rn.exe
-        # Before package-msi.sh packs it, so the copies inside the MSI and the
-        # zip carry the signature too. RFC 3161 timestamp: the signature stays
-        # valid after the certificate expires.
-        if: steps.sign.outputs.enabled == 'true'
-        env:
-          PFX: ${{ steps.sign.outputs.pfx }}
-          PFX_PW: ${{ secrets.WINDOWS_PFX_PASSWORD }}
-        run: scripts/sign-windows.sh dist/rn-win/rn.exe
-
-      - name: MSI
-        run: scripts/package-msi.sh
-
-      - name: Sign the MSI
-        if: steps.sign.outputs.enabled == 'true'
-        env:
-          PFX: ${{ steps.sign.outputs.pfx }}
-          PFX_PW: ${{ secrets.WINDOWS_PFX_PASSWORD }}
-        run: scripts/sign-windows.sh dist/rn-windows-x64.msi
-
-      - name: Remove the decoded certificate
-        if: always() && steps.sign.outputs.enabled == 'true'
-        run: rm -f "$RUNNER_TEMP/codesign.pfx"
 
       - name: Smoke-test the Linux package in clean containers
         run: scripts/smoke-release.sh --package dist/rn
 
-      - name: Assemble the assets
+      - name: Linux assets
         run: |
-          mkdir -p out/linux out/windows
+          mkdir -p out/linux
           tar czf out/linux/rn-linux-x64.tar.gz -C dist rn
           (cd out/linux && sha256sum rn-linux-x64.tar.gz > rn-linux-x64.tar.gz.sha256)
           cp dist/rn/BUILD out/linux/BUILD
-          (cd dist && zip -qry ../out/windows/rn-windows-x64.zip rn-win)
-          cp dist/rn-windows-x64.msi out/windows/
-          # After signing, which already happened above: a signature changes
-          # the bytes a checksum describes.
-          (cd out/windows && for f in rn-windows-x64.zip rn-windows-x64.msi; do sha256sum "$f" > "$f.sha256"; done)
-          ls -l out/linux out/windows
 
       - name: Upload the Linux assets
         uses: actions/upload-artifact@v7
@@ -238,6 +187,117 @@ jobs:
           name: linux
           path: out/linux/
           if-no-files-found: error
+
+      - name: Upload the Windows package tree
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-tree
+          path: dist/rn-win/
+          if-no-files-found: error
+
+  windows:
+    name: Sign, build the MSI, sign it
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 30
+    outputs:
+      signed: ${{ steps.sign.outputs.enabled }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Download the Windows package tree
+        uses: actions/download-artifact@v8
+        with:
+          name: windows-tree
+          path: dist/rn-win
+
+      - name: WiX v5 and its UI extension
+        # v5 rather than v6/v7, whose binaries come with a maintenance-fee
+        # agreement to accept; scripts/msi/rn.wxs says why.
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          wix extension add --global WixToolset.UI.wixext/5.0.2
+          wix --version
+
+      - name: Configure code signing
+        # Decode the certificate from the WINDOWS_PFX_BASE64 secret and put
+        # signtool on PATH. Every signing step below is gated on
+        # steps.sign.outputs.enabled, so with no secret set the build stays
+        # UNSIGNED and nothing here fails. A self-signed .pfx proves the
+        # pipeline end to end, but Windows does not trust it: Smart App Control
+        # still blocks what it signs.
+        id: sign
+        shell: pwsh
+        env:
+          PFX_B64: ${{ secrets.WINDOWS_PFX_BASE64 }}
+        run: |
+          if (-not $env:PFX_B64) {
+            Write-Host "::notice::No WINDOWS_PFX_BASE64 secret: rn.exe and the MSI will be UNSIGNED."
+            "enabled=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            exit 0
+          }
+          $pfx = Join-Path $env:RUNNER_TEMP "codesign.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:PFX_B64))
+          # signtool.exe ships with the Windows 10 SDK but isn't on PATH.
+          $st = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue |
+                Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $st) { Write-Error "signtool.exe not found in the Windows SDK"; exit 1 }
+          $st.DirectoryName | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "pfx=$pfx" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "enabled=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          Write-Host "Code signing enabled (signtool: $($st.FullName))"
+
+      - name: Sign rn.exe
+        # Before the MSI is built, so the copies inside the MSI and the zip
+        # carry the signature too. RFC 3161 timestamp keeps the signature valid
+        # past the certificate's expiry.
+        if: steps.sign.outputs.enabled == 'true'
+        shell: pwsh
+        env:
+          PFX: ${{ steps.sign.outputs.pfx }}
+          PFX_PW: ${{ secrets.WINDOWS_PFX_PASSWORD }}
+        run: |
+          signtool sign /f "$env:PFX" /p "$env:PFX_PW" /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 dist\rn-win\rn.exe
+          if ($LASTEXITCODE -ne 0) { Write-Error "signtool failed for rn.exe"; exit 1 }
+          Write-Host "  signed rn.exe -> $((Get-AuthenticodeSignature dist\rn-win\rn.exe).Status)"
+
+      - name: Build the MSI
+        shell: pwsh
+        run: .\scripts\package-msi.ps1
+
+      - name: Sign the MSI
+        if: steps.sign.outputs.enabled == 'true'
+        shell: pwsh
+        env:
+          PFX: ${{ steps.sign.outputs.pfx }}
+          PFX_PW: ${{ secrets.WINDOWS_PFX_PASSWORD }}
+        run: |
+          signtool sign /f "$env:PFX" /p "$env:PFX_PW" /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /d "rn" dist\rn-windows-x64.msi
+          if ($LASTEXITCODE -ne 0) { Write-Error "signtool failed for the MSI"; exit 1 }
+          Write-Host "  signed the MSI -> $((Get-AuthenticodeSignature dist\rn-windows-x64.msi).Status)"
+
+      - name: Remove the decoded certificate
+        if: always() && steps.sign.outputs.enabled == 'true'
+        shell: pwsh
+        run: Remove-Item (Join-Path $env:RUNNER_TEMP "codesign.pfx") -Force -ErrorAction SilentlyContinue
+
+      - name: Windows assets
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force out\windows | Out-Null
+          # The zip holds one rn-win directory, which install.ps1 -FromRelease
+          # looks inside for rn.exe. PowerShell 7 writes forward-slash entries.
+          Compress-Archive -Path dist\rn-win -DestinationPath out\windows\rn-windows-x64.zip
+          Copy-Item dist\rn-windows-x64.msi out\windows\
+          # After signing: a signature changes the bytes a checksum describes.
+          # sha256sum's own "<hash>  <name>" format, which install.ps1 reads.
+          foreach ($f in "rn-windows-x64.zip", "rn-windows-x64.msi") {
+            $h = (Get-FileHash "out\windows\$f" -Algorithm SHA256).Hash.ToLower()
+            [IO.File]::WriteAllText("out\windows\$f.sha256", "$h  $f`n")
+          }
+          Get-ChildItem out\windows | Format-Table Name, Length
 
       - name: Upload the Windows assets
         uses: actions/upload-artifact@v7
@@ -247,8 +307,8 @@ jobs:
           if-no-files-found: error
 
   windows-test:
-    name: Install the MSI on Windows
-    needs: build
+    name: Walk through the wizard, install the MSI, uninstall
+    needs: [build, windows]
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -258,10 +318,56 @@ jobs:
           name: windows
           path: assets
 
-      - name: Install, check, uninstall
+      - name: Screenshot every page of the setup wizard
+        # Opens the MSI the way a double-click does, captures each page,
+        # and cancels on the Ready page, so nothing is installed. The images
+        # are uploaded, to be looked at: nothing here can judge whether a page
+        # reads well. Allowed to fail, since it depends on the runner's desktop.
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Drawing, System.Windows.Forms
+          $shots = Join-Path $env:RUNNER_TEMP "wizard"
+          New-Item -ItemType Directory -Force $shots | Out-Null
+          $wsh = New-Object -ComObject WScript.Shell
+          function Shot($name) {
+            Start-Sleep -Seconds 2
+            $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+            $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+            $bmp.Save((Join-Path $shots "$name.png"), [System.Drawing.Imaging.ImageFormat]::Png)
+            $g.Dispose(); $bmp.Dispose()
+            Write-Host "  captured $name"
+          }
+          function Keys($k) { [void]$wsh.AppActivate("rn Setup"); Start-Sleep -Milliseconds 400; $wsh.SendKeys($k) }
+
+          $p = Start-Process msiexec.exe -ArgumentList "/i", "`"$((Resolve-Path assets\rn-windows-x64.msi).Path)`"" -PassThru
+          foreach ($i in 1..30) { if ($wsh.AppActivate("rn Setup")) { break }; Start-Sleep -Seconds 1 }
+          Shot "1-welcome"
+          Keys "%n"; Shot "2-what-happens"
+          Keys "%n"; Shot "3-license"
+          Keys "%a"; Start-Sleep -Milliseconds 500; Keys "%n"; Shot "4-ready"
+          Keys "{ESC}"; Start-Sleep -Seconds 1; Keys "%y"; Shot "5-cancelled"
+          Keys "{ENTER}"
+          Start-Sleep -Seconds 3
+          if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
+          if (Test-Path (Join-Path $env:LOCALAPPDATA "Programs\rn\rn.exe")) {
+            Write-Host "::error::cancelling the wizard left rn installed"; exit 1
+          }
+
+      - name: Upload the wizard screenshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: wizard-screenshots
+          path: ${{ runner.temp }}/wizard/
+          if-no-files-found: warn
+
+      - name: Install silently, check, uninstall
         shell: pwsh
         env:
-          SIGNED: ${{ needs.build.outputs.signed }}
+          SIGNED: ${{ needs.windows.outputs.signed }}
         run: |
           $ErrorActionPreference = "Stop"
           $msi    = (Resolve-Path assets\rn-windows-x64.msi).Path
@@ -269,24 +375,23 @@ jobs:
           $run    = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
           $menu   = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\rn.lnk"
           function Fail($m) { Write-Host "::error::$m"; exit 1 }
-          function Msi($verb, $log) {
-            $p = Start-Process msiexec.exe -ArgumentList $verb, "`"$msi`"", "/qn", "/l*v", "`"$log`"" -Wait -PassThru
+          function Msi($verb, $log, $extra) {
+            $a = @($verb, "`"$msi`"", "/qn", "/l*v", "`"$log`"") + $extra
+            $p = Start-Process msiexec.exe -ArgumentList $a -Wait -PassThru
             if ($p.ExitCode -ne 0) { Fail "msiexec $verb exited $($p.ExitCode); see the uploaded log" }
           }
 
           # Signed or not, say which, and when signing was on, require that a
           # signature is actually there. Status is Valid only for a certificate
           # this runner trusts; a self-signed one reads UnknownError, which
-          # still proves the file was signed and is reported as such.
+          # still proves the file was signed.
           Write-Host "==> signatures (signing: $env:SIGNED)"
-          foreach ($f in $msi) {
-            $s = Get-AuthenticodeSignature $f
-            Write-Host "  $(Split-Path $f -Leaf): $($s.Status) $($s.SignerCertificate.Subject)"
-            if ($env:SIGNED -eq "true" -and $s.Status -eq "NotSigned") { Fail "signing was on, but $f is not signed" }
-          }
+          $s = Get-AuthenticodeSignature $msi
+          Write-Host "  rn-windows-x64.msi: $($s.Status) $($s.SignerCertificate.Subject)"
+          if ($env:SIGNED -eq "true" -and $s.Status -eq "NotSigned") { Fail "signing was on, but the MSI is not signed" }
 
           Write-Host "==> install"
-          Msi "/i" "$env:RUNNER_TEMP\install.log"
+          Msi "/i" "$env:RUNNER_TEMP\install.log" @()
           $s = Get-AuthenticodeSignature (Join-Path $prefix "rn.exe")
           Write-Host "  rn.exe signature: $($s.Status) $($s.SignerCertificate.Subject)"
           if ($env:SIGNED -eq "true" -and $s.Status -eq "NotSigned") { Fail "signing was on, but the installed rn.exe is not signed" }
@@ -319,7 +424,7 @@ jobs:
 
           Write-Host "==> uninstall, with rn still running"
           Set-Content (Join-Path $prefix "app\.env") "BACKEND_PORT=3010"
-          Msi "/x" "$env:RUNNER_TEMP\uninstall.log"
+          Msi "/x" "$env:RUNNER_TEMP\uninstall.log" @()
           Start-Sleep -Seconds 2
           $left = @(Get-Process | Where-Object { $_.Path -like "$prefix*" })
           if ($left.Count -gt 0) { Fail "still running after uninstall: $($left.ProcessName -join ', ')" }
@@ -327,6 +432,11 @@ jobs:
           if (-not (Test-Path (Join-Path $prefix "app\.env"))) { Fail "uninstall removed the user's app\.env" }
           if (Get-ItemProperty $run -Name rn -ErrorAction SilentlyContinue) { Fail "the Run entry survived uninstall" }
           if (Test-Path $menu) { Fail "the Start Menu entry survived uninstall" }
+
+          Write-Host "==> install with AUTOSTART cleared: no Run entry"
+          Msi "/i" "$env:RUNNER_TEMP\install-noautostart.log" @('AUTOSTART=""')
+          if (Get-ItemProperty $run -Name rn -ErrorAction SilentlyContinue) { Fail "AUTOSTART was cleared, but a Run entry was written" }
+          Msi "/x" "$env:RUNNER_TEMP\uninstall-noautostart.log" @()
           Write-Host "PASS"
 
       - name: Upload the installer logs
@@ -339,7 +449,7 @@ jobs:
 
   publish:
     name: Publish the release
-    needs: [build, windows-test]
+    needs: [build, windows, windows-test]
     if: needs.build.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -365,7 +475,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.build.outputs.tag }}
-          SIGNED: ${{ needs.build.outputs.signed == 'true' && 'yes' || 'no' }}
+          SIGNED: ${{ needs.windows.outputs.signed == 'true' && 'yes' || 'no' }}
         run: |
           set -euo pipefail
           # install-rn.cmd rides along for the links that already point at it

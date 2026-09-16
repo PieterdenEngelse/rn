@@ -21,9 +21,9 @@
 # cannot. So the build moved, and this script is what is left for the machine
 # to do: check that the commit is one anybody can rebuild, and name it.
 #
-# The build tools are still the same scripts — package.sh, package-msi.sh,
-# smoke-release.sh — so anything the workflow does can be run here to look at
-# it. Only publishing is the workflow's alone.
+# The build tools are still the same scripts — package.sh and smoke-release.sh
+# here, package-msi.ps1 on a Windows machine — so anything the workflow does can
+# be run by hand to look at it. Only publishing is the workflow's alone.
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"

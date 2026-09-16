@@ -107,7 +107,7 @@ habit with anything that installs software:
 
 | platform | file | | |
 |---|---|---|---|
-| Windows | [`scripts/rn.wxs`](scripts/rn.wxs) | what the MSI installs, and why | built by [`scripts/package-msi.sh`](scripts/package-msi.sh) |
+| Windows | [`scripts/msi/rn.wxs`](scripts/msi/rn.wxs) | what the MSI installs and shows, and why | built by [`scripts/package-msi.ps1`](scripts/package-msi.ps1) |
 | Windows | [`scripts/install-rn.cmd`](scripts/install-rn.cmd) | the double-clickable script | [download](https://github.com/PieterdenEngelse/rn/releases/latest/download/install-rn.cmd) |
 | Windows | [`scripts/install-gui.ps1`](scripts/install-gui.ps1) | the dialogs around it | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install-gui.ps1) |
 | Windows | [`scripts/install.ps1`](scripts/install.ps1) | what does the work | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install.ps1) |
@@ -187,23 +187,36 @@ login, and a menu entry that opens the page.
 
 **The MSI** —
 [rn-windows-x64.msi](https://github.com/PieterdenEngelse/rn/releases/latest/download/rn-windows-x64.msi)
-— is the whole of it. What it installs, and why each piece is the way it is, is
-written at the top of [`scripts/rn.wxs`](scripts/rn.wxs):
+— is the whole of it. It is a setup wizard that says what it will do before it
+does anything:
+
+1. **Welcome** — what rn is.
+2. **What this installer will do** — where rn goes, the Start Menu entry, that
+   it runs in the background, that your settings are never touched, and a
+   checkbox for starting rn when you sign in to Windows.
+3. **License** — MIT or Apache 2.0, at your option.
+4. **Ready**, then **progress**.
+5. **Finished** — with *Open rn in my browser now*, checked.
+
+What it installs, and why each piece is the way it is, is written at the top of
+[`scripts/msi/rn.wxs`](scripts/msi/rn.wxs):
 
 - the package into `%LOCALAPPDATA%\Programs\rn`, with no administrator prompt;
-- a Run entry under your user that starts rn at logon — not the scheduled task
-  the script route registers, because a Run entry is plain installer data that
-  uninstall removes with nothing to go wrong;
+- unless you clear the checkbox, a Run entry under your user that starts rn at
+  sign-in — not the scheduled task the script route registers, because a Run
+  entry is plain installer data that uninstall removes with nothing to go wrong;
 - a Start Menu entry that opens <http://127.0.0.1:3010/>;
 - and rn started once at the end, so the page answers straight away.
 
-It shows Windows' own progress bar and no pages of its own: it is built on Linux
-with `wixl`, which has no dialogs. Uninstall from Settings → Apps stops rn first
+**rn opens a console window when it starts**, the one showing lines like
+`"step":"listening"`. That window *is* rn: closing it stops rn. The page is in
+your browser, not in that window. Uninstall from Settings → Apps stops rn first
 and keeps `%USERPROFILE%\.config\rn` and your `app\.env`. **Use the MSI or the
 scripts below, not both** — they install into the same directory, and the
 scripts' `-Uninstall` would delete files the MSI believes it owns.
 
-Before a release is published, the release workflow installs its MSI on a clean
+Before a release is published, the release workflow screenshots every page of
+the wizard for review, and installs its MSI on a clean
 Windows runner, waits for the page to answer, uninstalls it again while rn is
 running and checks nothing was left behind or taken that should not have been.
 That runner has no Smart App Control, so it says nothing about the next section.

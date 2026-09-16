@@ -446,13 +446,15 @@ Only linux-x64 is in scope right now. When the others come:
   installs), and the page is wasm.
 
       scripts/package.sh --target windows      # → dist/rn-win
-      scripts/package-msi.sh                   # → dist/rn-windows-x64.msi
+      .\scripts\package-msi.ps1                # on Windows → dist\rn-windows-x64.msi
 
   The Windows launcher also needs `llvm-rc` (apt install llvm), which
-  `launcher/build.rs` uses to compile `rn.exe`'s version information: code
-  signing requires it, so `package.sh` will not package an `rn.exe` without
-  it. The MSI needs `wixl` and `msitools`. Releases are published by the
-  workflow, not from here (§11).
+  `launcher/build.rs` uses to compile `rn.exe`'s version information, and
+  `package.sh` will not package an `rn.exe` without it. The MSI is the one
+  piece that is not built here: it is a setup wizard, built with WiX v5, whose
+  MSI back end runs only on Windows. It was built here with `wixl` for v0.1.6,
+  which has no dialogs, and that installer explained nothing. Releases are
+  published by the workflow, not from here (§11).
 
   One thing is dropped for Windows that ships on Linux: `app/node_modules/
   .bin`, which holds Unix symlinks — npm writes `.cmd` and `.ps1` shims there
@@ -619,8 +621,9 @@ rather than on this machine (`docs/signing.md`); and the MSI has to be installed
 on real Windows before it ships, which a runner can do. Until then `release.sh`
 did all of what follows on this machine; the order is unchanged.
 
-The workflow builds both packages with `package.sh` and wraps the Windows one
-in an MSI with `package-msi.sh`, then tars and zips them. `release.sh` refuses a
+The workflow builds both packages with `package.sh` on Linux, then on a Windows
+runner signs `rn.exe`, wraps the Windows tree in an MSI with `package-msi.ps1`,
+signs that, and zips the tree. `release.sh` refuses a
 dirty tree, a branch other than `main` and a HEAD that is not what origin
 holds — a release nobody can rebuild from a commit is not a release — and the
 workflow refuses a tag that disagrees with `launcher/Cargo.toml`.
