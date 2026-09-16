@@ -231,14 +231,17 @@ fi
 cp "$REPO/scripts/$INSTALLER" "$OUT/$INSTALLER"
 chmod 755 "$OUT/$INSTALLER"
 # The graphical front end travels with the package it installs, so a downloaded
-# tarball offers the same two ways in as the repository does. It is a face over
-# install.sh and finds it by sitting beside it, which is exactly the layout
-# here. Linux only, because there is nothing on the Windows side for it to be
-# the twin of — install-gui.sh's header says why.
-if [ "$TARGET" = linux ]; then
-    cp "$REPO/scripts/install-gui.sh" "$OUT/install-gui.sh"
-    chmod 755 "$OUT/install-gui.sh"
-fi
+# tarball or zip offers the same two ways in as the repository does. It is a
+# face over the installer beside it and finds it by sitting next to it, which is
+# exactly the layout here. Both targets now — the Windows half used to be
+# skipped because it did not exist, and the comment here still said so for one
+# release after it did.
+case "$TARGET" in
+    linux)   GUI_INSTALLER=install-gui.sh ;;
+    windows) GUI_INSTALLER=install-gui.ps1 ;;
+esac
+cp "$REPO/scripts/$GUI_INSTALLER" "$OUT/$GUI_INSTALLER"
+chmod 755 "$OUT/$GUI_INSTALLER"
 {
     echo "rn $(git -C "$REPO" describe --always --dirty), built $(date -u +%Y-%m-%dT%H:%MZ) for $TARGET"
     echo "node $(cat "$OUT/runtime/VERSION" 2>/dev/null || echo unknown)"
