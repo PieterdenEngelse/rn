@@ -610,6 +610,35 @@ It builds the package (unless `--from` names one), tars it with a
 without a page, and one whose runtime signature was not verified — a release
 nobody can rebuild from a commit is not a release.
 
+**`smoke-release.sh`** is the fourth, and answers the one question this
+machine cannot: does the release work for someone else?
+
+    scripts/smoke-release.sh                     # the latest release, three images
+    scripts/smoke-release.sh --tag v0.1.2
+    scripts/smoke-release.sh --package dist/rn   # before publishing, not after
+
+It installs into a clean `debian:12`, `ubuntu:22.04` and `ubuntu:24.04`
+container — no rustc, node, npm, gh or git in any of them — and drives the
+whole chain: fetch `install.sh` over HTTPS, download the asset, verify its
+sha256, unpack, install, start the launcher, boot the bundled Node, bring up
+all three listeners, answer `/api/health`, and serve the page. The probe is the
+bundled node rather than curl, so it needs nothing installed and can never
+itself be the reason a run fails.
+
+It earns its place by having caught the bug it was written for. Pointed at
+v0.1.1 it still fails, with the reason in plain sight:
+
+    /root/.local/share/rn/rn: /lib/x86_64-linux-gnu/libc.so.6:
+        version `GLIBC_2.39' not found
+
+What it does not cover, and must not be read as covering: systemd (a container
+has no user session, so the install runs `--no-service`, leaving the unit, the
+menu entry and the port-in-use check unexercised), the graphical installer (no
+X — `install-gui.sh`'s dialogs need a desktop VM), and anything but x86_64
+glibc Linux. An EOL image whose apt repositories have been archived reports
+SKIP rather than FAIL, and a run where *everything* skipped is an error, not a
+pass: the set that was checked was empty.
+
 `install.sh --from-release` downloads that asset with `gh`, because the repo
 is private, checks it against the published sha256, unpacks it and installs
 it exactly as it installs a locally built package. So the machine that

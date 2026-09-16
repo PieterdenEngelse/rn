@@ -730,8 +730,11 @@ yours.
   public unauthenticated endpoint, which is the one thing rn has never had.
 - `docs/packaging.md` — shipping this as an installable app: the installed
   layout, why the runtime is private, and (§11) `scripts/package.sh`,
-  `scripts/install.sh` and `scripts/release.sh`, which build it, install it,
-  and publish it so a machine with no toolchains can install it too.
+  `scripts/install.sh`, `scripts/release.sh` and `scripts/smoke-release.sh`,
+  which build it, install it, publish it so a machine with no toolchains can
+  install it too — and then prove that on one, in a container, because this
+  machine has every prerequisite installed and so cannot answer that question
+  about itself.
 - `docs/os.md` — rebuilding the dev machine itself with chezmoi: what gets
   captured, the bootstrap scripts, and how to prove a restore works. Phases
   1 to 5 exist: the private `dotfiles` repo, `capture.sh`, the dotfiles, the
