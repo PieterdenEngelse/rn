@@ -610,7 +610,35 @@ It builds the package (unless `--from` names one), tars it with a
 without a page, and one whose runtime signature was not verified — a release
 nobody can rebuild from a commit is not a release.
 
-**`smoke-release.sh`** is the fourth, and answers the one question this
+**`install-gui.ps1`** is `install-gui.sh`'s Windows twin, and `install-rn.cmd`
+now fetches it rather than `install.ps1`: the same three windows — a
+confirmation, a progress window naming the step from `install.ps1`'s own
+`==> ` lines, and a result offering to open rn or the log at
+`%LOCALAPPDATA%\rn-install.log`. It decides nothing and forwards every
+argument untouched.
+
+It is the least verifiable file in the tree and is built accordingly. WinForms
+is Windows-only and there is no PowerShell here at all, so if `Add-Type` cannot
+load it the script runs `install.ps1` in the console instead and says so — a
+path needing nothing the installer did not already need, which means the
+graphical half can be entirely wrong and the install still works. Two bugs were
+caught statically before it ever ran: a null-on-the-right comparison, and an
+output-capture scheme using `Register-ObjectEvent` whose `-Action` blocks
+cannot see the local variable they were appending to, so the progress label
+would have sat on "Starting..." for the whole install. It redirects to files
+now, like its Linux twin.
+
+**`check-ps.sh`** is what backs "the .ps1 files parse and lint clean", a claim
+that until it existed rested on nothing runnable here. It runs the PowerShell 7
+container over `scripts/*.ps1`: parse every file, then PSScriptAnalyzer at
+Error and Warning, with three rules excluded by name and with a reason printed
+in the output. It is not part of `check.sh` — it needs Docker and the network,
+and `check.sh` gates every land. What it cannot say: the container is
+PowerShell 7 on Linux while a stock Windows box runs Windows PowerShell 5.1, so
+a 5.1-only syntax error could still get through, and nothing Windows-only is
+executed by it at all.
+
+**`smoke-release.sh`** is the fifth, and answers the one question this
 machine cannot: does the release work for someone else?
 
     scripts/smoke-release.sh                     # the latest release, three images

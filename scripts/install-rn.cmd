@@ -5,9 +5,16 @@ rem  Why a .cmd and not the .ps1 next to it: double-clicking a .ps1 opens it in
 rem  Notepad. Windows will not execute a PowerShell script from Explorer, by
 rem  design, and no amount of wanting changes that. A .cmd *is* executed on
 rem  double-click, so this one exists to be the thing that gets clicked: it
-rem  fetches scripts/install.ps1 and runs it with -FromRelease, which downloads
-rem  the published package, checks it against its published sha256, and
-rem  installs it.
+rem  fetches scripts/install-gui.ps1 and runs it with -FromRelease, which
+rem  downloads the published package, checks it against its published sha256,
+rem  and installs it.
+rem
+rem  install-gui.ps1 rather than install.ps1: it is a face over install.ps1 and
+rem  decides nothing, but it asks before installing, names each step while it
+rem  runs, and offers to open rn at the end. This console window stays for the
+rem  fetch and as the place errors can still land, deliberately -- a host with
+rem  no Windows Forms falls back to installing right here, and hiding the
+rem  window would hide that too.
 rem
 rem  What it needs on the machine: nothing. Not Rust, not Node, not git, not
 rem  gh. Windows ships the PowerShell this uses.
@@ -22,15 +29,15 @@ rem  unreadable. Its .ps1 neighbours need the opposite (see install.ps1).
 
 setlocal
 set "REPO=PieterdenEngelse/rn"
-set "URL=https://raw.githubusercontent.com/%REPO%/main/scripts/install.ps1"
-set "PS1=%TEMP%\rn-install.ps1"
+set "URL=https://raw.githubusercontent.com/%REPO%/main/scripts/install-gui.ps1"
+set "PS1=%TEMP%\rn-install-gui.ps1"
 
 echo.
 echo   Installing rn from the latest release.
 echo   Nothing else needs to be installed first.
 echo.
 
-echo   Fetching the installer...
+echo   Fetching the installer. It will ask before it installs anything.
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$ProgressPreference='SilentlyContinue'; try { Invoke-WebRequest -UseBasicParsing -Uri '%URL%' -OutFile '%PS1%' } catch { Write-Host $_.Exception.Message; exit 1 }"
 if errorlevel 1 goto nodownload
@@ -43,7 +50,7 @@ if errorlevel 1 goto failed
 
 del "%PS1%" >nul 2>&1
 echo.
-echo   Done. rn starts at logon; the Start Menu entry opens it.
+echo   Finished. The installer window says what it did.
 echo.
 pause
 exit /b 0

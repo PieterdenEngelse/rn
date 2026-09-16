@@ -46,10 +46,16 @@ is a delete.
 
 **Windows: download
 [install-rn.cmd](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install-rn.cmd)
-and double-click it.** It fetches the installer and the published package,
-checks the package against its published checksum, and installs. Windows asks
-once whether you meant to run a file you downloaded; that prompt is the
-mark-of-the-web check doing its job, and Run is the answer.
+and double-click it.** It asks before installing anything — where the files go,
+what is downloaded, what is left alone — then names each step as it runs and
+offers to open rn at the end. The package is checked against its published
+checksum before anything is unpacked. Windows asks once whether you meant to
+run a file you downloaded; that prompt is the mark-of-the-web check doing its
+job, and Run is the answer.
+
+A console window stays open behind the dialogs on purpose: on a host with no
+Windows Forms the install runs there instead, and hiding the window would hide
+that too.
 
 **Linux: put it in the applications menu**, since nothing a browser downloads
 is executable on a click there. Copy
@@ -89,7 +95,8 @@ habit with anything that installs software:
 | platform | file | | |
 |---|---|---|---|
 | Windows | [`scripts/install-rn.cmd`](scripts/install-rn.cmd) | the double-clickable one | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install-rn.cmd) |
-| Windows | [`scripts/install.ps1`](scripts/install.ps1) | what it runs | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install.ps1) |
+| Windows | [`scripts/install-gui.ps1`](scripts/install-gui.ps1) | the dialogs around it | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install-gui.ps1) |
+| Windows | [`scripts/install.ps1`](scripts/install.ps1) | what does the work | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install.ps1) |
 | Linux | [`scripts/install.sh`](scripts/install.sh) | what does the work | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install.sh) |
 | Linux | [`scripts/install-gui.sh`](scripts/install-gui.sh) | the dialogs around it | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install-gui.sh) |
 | Linux | [`scripts/rn-install.desktop`](scripts/rn-install.desktop) | the menu entry | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/rn-install.desktop) |

@@ -347,18 +347,35 @@ and everything else in the tree is identical on either target. A release
 carries both assets, so `install.ps1 -FromRelease` installs on a Windows
 machine with no toolchain on it.
 
-`install-gui.sh` has no twin either, and should not grow one on the strength of
-the rule alone. It is the dialogs Linux needs to make clicking an icon a real
-install — a confirmation, the step being run, a result — and Windows needs none
-of them, because `install-rn.cmd` *is* a console window and already reports
-there. A PowerShell GUI to match would be several hundred lines of WinForms
-written on Linux and unrun on Windows, which is the drift this rule exists to
-prevent rather than an instance of obeying it. The file's header says so.
+`install-gui.sh` **does** have a twin, `install-gui.ps1`, and the argument
+against it is worth keeping because it was wrong. It ran: Windows needs no
+dialogs, because `install-rn.cmd` *is* a console window and already reports
+there, so a PowerShell GUI would only be WinForms written on Linux and unrun on
+Windows. The first half does not follow from the second. A console full of
+scrolling text is what the tool happens to emit, not what someone installing an
+app should have to read, and "it reports somewhere" is a different claim from
+"a person can tell what happened" — which is the same standard the info-panel
+rule applies everywhere else here.
+
+What the objection was actually about is testing, and that part stands, so it
+is answered rather than waved away. `install-gui.ps1` cannot be run here at
+all: WinForms is Windows-only and this machine has no PowerShell of any kind.
+So it is written to fail visibly rather than silently, it falls back to running
+`install.ps1` in the console on any host where WinForms will not load — a path
+that needs nothing the installer did not already need — and
+`scripts/check-ps.sh` parses and lints every `.ps1` in a PowerShell container,
+which is the most that can honestly be claimed from Linux. That checker earned
+its place immediately: it caught a null-on-the-right comparison in the new file
+that would have misbehaved silently on Windows.
 
 What that leaves: the pairing to keep honest is `install.ps1` against
 `packaging.md` §1, whose layout it has to produce exactly, rather than against
 `install.sh`. And every `.ps1` here is still written on Linux and unrun on
-Windows — they parse and lint clean, which is not the same claim.
+Windows — they parse and lint clean, which is not the same claim, and
+`scripts/check-ps.sh` is now what backs even that much. It is deliberately not
+part of `check.sh`: it needs Docker and the network, and `check.sh` gates every
+`rn-land`, so a step that fails when the network is down would make landing
+depend on something unrelated to the change. Run it when a `.ps1` changes.
 
 Detail, measured sizes and the build checklist: `docs/packaging.md`.
 
