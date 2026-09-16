@@ -649,13 +649,21 @@ All three of those run their container through `scripts/container-runtime.sh`,
 which picks Docker or podman and honours `RN_CONTAINER` to force one. Docker
 leads only because it is what they were checked against; every call is `info`
 and `run --rm --pull=missing -v src:dst:ro -e VAR image cmd`, which podman takes
-with the same spelling, rootless. The podman path has not been run — there is
-none on this machine — and that file says so rather than implying coverage it
-lacks. It also names the one difference that will not look like a runtime
-problem when it bites: on an SELinux-enforcing host a plain `:ro` bind mount
-into podman is denied, and `RN_CONTAINER_RUN_OPTS="--security-opt label=disable"`
-is the way out, preferred over `:z` mounts that would relabel files in your
-working tree as a side effect of running a test.
+with the same spelling, rootless. Both are run rather than argued: podman 5.7.0
+rootless passes `check-ps.sh`, the full `smoke-release.sh` matrix and the
+release gate, identically to Docker.
+
+Running it earned its keep immediately. The default images are fully qualified
+(`docker.io/library/debian:12`) because Docker resolves a bare `debian:12`
+against Docker Hub and podman does not — it only worked here because Ubuntu
+ships an alias in `registries.conf.d/shortnames.conf`, and on a host without
+that the failure names a registry rather than this project.
+
+What is still only documented is SELinux: this machine does not enforce it, so
+on Fedora or RHEL a plain `:ro` bind mount into podman is denied, and
+`RN_CONTAINER_RUN_OPTS="--security-opt label=disable"` is the way out —
+preferred over `:z` mounts, which would relabel files in your working tree as a
+side effect of running a test.
 
 **`check-ps.sh`** is what backs "the .ps1 files parse and lint clean", a claim
 that until it existed rested on nothing runnable here. It runs the PowerShell 7

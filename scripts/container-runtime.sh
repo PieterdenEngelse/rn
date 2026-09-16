@@ -21,15 +21,24 @@
 # takes with the same spelling — rootless, which is the better default of the
 # two. If podman is the one you have, nothing here should notice.
 #
-# NOT CHECKED AGAINST PODMAN. There is none on this machine, so the podman path
-# is argued rather than run, and this file says so rather than implying a
-# coverage it does not have. The flags are ordinary enough that it should work;
-# "should" is the honest word.
+# Both are run, not argued. Checked with podman 5.7.0 rootless: check-ps.sh
+# parses and lints clean through it, and smoke-release.sh installs and boots the
+# package on all three default images, as does the release gate. The bind
+# mounts, the read-only flags and the -e variables behave identically; rootless
+# ownership mapping did not get in the way of anything the install does.
 #
-# One difference worth naming because it will not look like a runtime problem
-# when it happens: on an SELinux-enforcing host — Fedora, RHEL — a plain
-# `-v host:path:ro` bind mount into podman is denied, and the container sees an
-# empty or inaccessible directory rather than an error that names SELinux.
+# It did find one thing, which is why running it beat reasoning about it: image
+# names are now fully qualified in smoke-release.sh. Docker resolves a bare
+# `debian:12` against Docker Hub; podman does not, and only resolved it here
+# because Ubuntu ships an alias for it in registries.conf.d/shortnames.conf.
+# On a podman host without that, a short name errors or prompts, and says so in
+# terms of a registry rather than of this project.
+#
+# Still untested, and named rather than implied: SELinux. This machine does not
+# enforce it, so the one difference below is documented from podman's behaviour
+# rather than from having hit it. On Fedora or RHEL a plain `-v host:path:ro`
+# bind mount into podman is denied, and the container sees an empty or
+# inaccessible directory rather than an error that names SELinux.
 # RN_CONTAINER_RUN_OPTS is the way out without this file guessing:
 #
 #     RN_CONTAINER_RUN_OPTS="--security-opt label=disable" scripts/check-ps.sh

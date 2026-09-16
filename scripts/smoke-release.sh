@@ -6,6 +6,8 @@
 #   scripts/smoke-release.sh --tag v0.1.2        a particular release
 #   scripts/smoke-release.sh --package dist/rn   a package built here, before publishing
 #   scripts/smoke-release.sh --image debian:11   one image instead of the default three
+#                                                (a short name is yours to resolve; the
+#                                                 defaults are fully qualified — see below)
 #
 # Why this exists. Every prerequisite rn has is installed on the machine that
 # builds it, so that machine cannot answer the only question that matters about
@@ -40,7 +42,14 @@
 set -euo pipefail
 
 REPO=PieterdenEngelse/rn
-IMAGES=(debian:12 ubuntu:22.04 ubuntu:24.04)
+# Fully qualified on purpose. Docker resolves a bare `debian:12` against Docker
+# Hub by default; podman does not, and only resolved it here because Ubuntu
+# ships /etc/containers/registries.conf.d/shortnames.conf with an alias for it.
+# On a podman host without that file, and with unqualified-search-registries
+# commented out as it is by default, a short name errors or prompts instead —
+# and the failure names a registry rather than this script. Both runtimes take
+# the long form, so the long form is what is written.
+IMAGES=(docker.io/library/debian:12 docker.io/library/ubuntu:22.04 docker.io/library/ubuntu:24.04)
 TAG=""
 PKG=""
 PREFIX=/root/.local/share/rn
