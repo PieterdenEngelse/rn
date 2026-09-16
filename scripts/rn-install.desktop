@@ -27,9 +27,14 @@
 # them. Single quotes around the whole command — the obvious shell instinct —
 # is rejected outright by desktop-file-validate.
 #
-# To use it: copy to ~/.local/share/applications/ and it appears in the menu,
-# or to ~/Desktop and `chmod +x` it, which is what xfdesktop wants before it
-# will launch a file rather than open it.
+# To use it: copy to ~/.local/share/applications/ and launch it from the menu.
+# That route executes the entry. ~/Desktop plus `chmod +x` also puts an icon on
+# the desktop, but whether a double-click there *runs* the entry is the desktop
+# environment's decision and not this file's. Measured on XFCE here: the click
+# went to the registered handler for application/x-desktop, which is
+# `xfce4-panel --add=launcher` — named "Create Launcher on the panel" — so the
+# desktop offered to add rn to the panel and no installer ran. Executable, valid
+# and correctly quoted the whole time; the file never entered into it.
 Type=Application
 Version=1.0
 Name=Install rn

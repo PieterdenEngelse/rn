@@ -51,14 +51,20 @@ checks the package against its published checksum, and installs. Windows asks
 once whether you meant to run a file you downloaded; that prompt is the
 mark-of-the-web check doing its job, and Run is the answer.
 
-**Linux: a clickable icon.**
-[`scripts/rn-install.desktop`](scripts/rn-install.desktop) is a launcher — copy
-it to `~/.local/share/applications/` for a menu entry, or to `~/Desktop` and
-`chmod +x` it for an icon on the desktop, because nothing a browser downloads
-is executable on a click there. Double-clicking it asks what you would expect
-to be asked before software installs itself — where the files go, what is
-downloaded, what is left alone — then shows the step it is on, and finishes by
-offering to open rn.
+**Linux: put it in the applications menu**, since nothing a browser downloads
+is executable on a click there. Copy
+[`scripts/rn-install.desktop`](scripts/rn-install.desktop) in and launch
+**Install rn** from the menu:
+
+    mkdir -p ~/.local/share/applications
+    curl -fsSL https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/rn-install.desktop \
+      -o ~/.local/share/applications/rn-install.desktop
+    chmod +x ~/.local/share/applications/rn-install.desktop
+    update-desktop-database ~/.local/share/applications
+
+It then asks what you would expect to be asked before software installs itself
+— where the files go, what is downloaded, what is left alone — shows the step
+it is on, and finishes by offering to open rn.
 
 **Or one line**, which is the same install without the windows:
 
@@ -69,6 +75,14 @@ one that has neither, the launcher opens a terminal and runs the line above in
 it instead; the install is the same either way, because the windows are a face
 over the same script.
 
+The same file works as a desktop icon — copy it to `~/Desktop` and `chmod +x`
+it — but that route is not reliable and the menu is. On XFCE here, a
+double-click handed the file to `application/x-desktop`'s registered handler,
+which is `xfce4-panel --add=launcher`: the desktop offered to add rn to the
+panel instead of installing it, and no installer ever ran. Nothing in the file
+causes that, and nothing in the file can prevent it — which is the argument for
+leading with the menu rather than the desktop.
+
 The scripts behind both, to read before running either — which is the better
 habit with anything that installs software:
 
@@ -78,7 +92,7 @@ habit with anything that installs software:
 | Windows | [`scripts/install.ps1`](scripts/install.ps1) | what it runs | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install.ps1) |
 | Linux | [`scripts/install.sh`](scripts/install.sh) | what does the work | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install.sh) |
 | Linux | [`scripts/install-gui.sh`](scripts/install-gui.sh) | the dialogs around it | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install-gui.sh) |
-| Linux | [`scripts/rn-install.desktop`](scripts/rn-install.desktop) | the clickable launcher | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/rn-install.desktop) |
+| Linux | [`scripts/rn-install.desktop`](scripts/rn-install.desktop) | the menu entry | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/rn-install.desktop) |
 
 Either one is enough on its own: both download a published package and install
 it, needing no toolchain, no clone and nothing else on the machine, and both
