@@ -3,6 +3,7 @@ name = "shared"
 version = "0.1.0"
 authors = ["pde"]
 edition = "2021"
+license = "MIT OR Apache-2.0"
 
 # Every value that crosses a process boundary is defined here once. Rust
 # consumers depend on this crate directly; Node consumes the TypeScript this

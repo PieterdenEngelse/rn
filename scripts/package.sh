@@ -78,6 +78,8 @@ command -v npm >/dev/null || die "npm is not on PATH; it builds app/node_modules
 if [ "$TARGET" = windows ]; then
     command -v cargo-xwin >/dev/null \
         || die "cargo-xwin is not on PATH; it links the Windows launcher: cargo install cargo-xwin"
+    command -v "${RN_RC:-llvm-rc}" >/dev/null \
+        || die "${RN_RC:-llvm-rc} is not on PATH; it compiles rn.exe's version information (launcher/build.rs): apt install llvm"
 fi
 
 # Where this worktree's cargo writes, the same rule check.sh and serve.sh use.
@@ -97,6 +99,18 @@ if [ "$TARGET" = windows ]; then
     (cd "$REPO" && cargo xwin build --release -p rn --target x86_64-pc-windows-msvc)
     src_exe="$RN_TARGET_DIR/x86_64-pc-windows-msvc/release/rn.exe"
     head -c2 "$src_exe" | grep -q '^MZ' || die "$src_exe is not a PE executable"
+    # launcher/build.rs compiles the version resource when it finds a resource
+    # compiler, and only warns when it does not, so a development build still
+    # works. A package is where that stops being optional: SignPath will not
+    # sign a binary whose product name and version are not set, and a release
+    # that cannot be signed is caught here rather than at the approval step.
+    # The name is stored as UTF-16, hence the zero bytes.
+    if ! LC_ALL=C grep -qaP 'P\x00r\x00o\x00d\x00u\x00c\x00t\x00N\x00a\x00m\x00e\x00\x00\x00r\x00n\x00' "$src_exe"; then
+        die "rn.exe has no version information (ProductName rn), so it could not be signed.
+       launcher/build.rs needs a resource compiler: install llvm (llvm-rc), or set RN_RC.
+       Its cargo warning above says what it tried."
+    fi
+    log "$LAUNCHER  version information present"
 else
     # musl, statically linked, and not a preference. A plain `cargo build` here
     # links against the build machine's glibc and records the highest symbol

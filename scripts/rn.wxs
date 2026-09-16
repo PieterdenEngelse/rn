@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The Windows installer: scripts/package-msi.sh builds rn-windows-x64.msi from
+  this file and the package tree scripts/package.sh - -target windows produces.
+
+  Built with wixl (msitools) on Linux, not with the WiX toolset, so the Windows
+  package still needs no Windows machine to exist. wixl implements a subset of
+  WiX 3: no dialogs at all, so double-clicking the MSI shows Windows' own
+  progress bar and nothing else. That is the trade for staying on one build
+  machine; install-gui.ps1 is still the route that explains itself.
+
+  What it installs, and why each piece is what install.ps1 does or deliberately
+  is not:
+
+  - The package tree, into %LOCALAPPDATA%\Programs\rn. Per-user and no
+    administrator prompt, the same prefix install.ps1 uses.
+  - Autostart as a Run value under HKCU, not the logon scheduled task
+    install.ps1 registers. A Run value is plain MSI data, removed by uninstall
+    with nothing to go wrong; a scheduled task from an installer needs a custom
+    action. The cost is the task's restart-on-failure, which matters less than
+    it sounds: the launcher already restarts the Node process it supervises.
+  - A Start Menu entry that opens the page, via the rn.url beside rn.exe.
+  - rn started once at the end of a first install, so the page answers without
+    logging out and back in.
+
+  What it never touches: %USERPROFILE%\.config\rn, and app\.env, which the MSI
+  did not install and so does not remove.
+
+  ProductVersion comes in as -D Version; an MSI version is three numbers, which
+  is what launcher/Cargo.toml carries.
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*"
+           Name="rn"
+           Language="1033"
+           Version="$(var.Version)"
+           Manufacturer="Pieter den Engelse"
+           UpgradeCode="A6BC9870-EC42-44F9-9F95-20DA20AED644">
+
+    <Package InstallerVersion="500"
+             Compressed="yes"
+             InstallScope="perUser"
+             Description="rn $(var.Version)"
+             Comments="Automation, driven by Node, with a Rust launcher. https://github.com/PieterdenEngelse/rn" />
+
+    <Media Id="1" Cabinet="rn.cab" EmbedCab="yes" />
+
+    <!-- A newer install replaces an older one in place; an older MSI refuses to
+         install over a newer one rather than quietly downgrading. -->
+    <MajorUpgrade DowngradeErrorMessage="A newer rn is already installed. Uninstall it first to install this older version." />
+
+    <!-- Apps & features: where the entry links to, and its icon-less name. -->
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/PieterdenEngelse/rn" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="LocalAppDataFolder">
+        <Directory Id="ProgramsDir" Name="Programs">
+          <Directory Id="INSTALLDIR" Name="rn" />
+        </Directory>
+      </Directory>
+      <Directory Id="ProgramMenuFolder" />
+    </Directory>
+
+    <DirectoryRef Id="INSTALLDIR">
+      <!-- Declared here rather than harvested, so the launch action below can
+           name it by a stable Id. -->
+      <Component Id="Launcher" Guid="A820AA14-4D7F-42E5-8AAC-9BD5DB516412">
+        <File Id="RnExe" Name="rn.exe" Source="$(var.SourceDir)/rn.exe" KeyPath="yes" />
+      </Component>
+
+      <!-- Per-user components want a registry key path rather than a file one,
+           so each of these owns a value under HKCU\Software\rn. -->
+      <Component Id="Autostart" Guid="0F35AFFB-8EE4-4B5F-8928-DCB027AC9A39">
+        <RegistryValue Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run"
+                       Name="rn" Type="string" Value="&quot;[INSTALLDIR]rn.exe&quot;" KeyPath="yes" />
+        <!-- The component's own directory, INSTALLDIR: removed on uninstall once
+             it is empty, which it is not while the user's app\.env is there. -->
+        <RemoveFolder Id="RemoveInstallDir" On="uninstall" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="ProgramMenuFolder">
+      <Component Id="StartMenu" Guid="D31500AA-ED58-4987-A362-29C9A3E6FD4F">
+        <Shortcut Id="OpenPage" Name="rn" Description="Open rn in the browser"
+                  Target="[INSTALLDIR]rn.url" WorkingDirectory="INSTALLDIR" />
+        <RegistryValue Root="HKCU" Key="Software\rn" Name="StartMenu" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <Feature Id="Main" Title="rn" Level="1">
+      <ComponentRef Id="Launcher" />
+      <ComponentRef Id="Autostart" />
+      <ComponentRef Id="StartMenu" />
+      <ComponentGroupRef Id="AppFiles" />
+    </Feature>
+
+    <!-- Stop whatever is running out of the install directory before its files
+         are replaced or removed. Windows will not delete a running executable,
+         and without this an upgrade or uninstall stalls on "files in use" or
+         leaves a reboot pending.
+
+         Matched by path rather than by name, for the reason install.ps1 gives:
+         `rn.exe - -stop` and a plain taskkill /IM would also stop a development
+         backend running from a checkout. The bundled node.exe is under the
+         same directory, so it goes too. Inline PowerShell rather than a script
+         file, so Smart App Control's rule about unsigned scripts does not
+         apply, and Return="ignore" because nothing running is the usual case.
+
+         Two actions because wixl runs a command only from a file in the
+         package or from a path held in a property, and the property has to be
+         set by an action: a Property element's value is never formatted, so
+         [System64Folder] would reach Windows as those literal characters.
+
+         Every PowerShell $ is written $$. wixl's preprocessor treats a lone $
+         as the start of a variable and silently drops it when no ( follows,
+         so $_ became _ and the command matched nothing, without an error. -->
+
+    <CustomAction Id="SetPowerShell"
+                  Property="POWERSHELL"
+                  Value="[System64Folder]WindowsPowerShell\v1.0\powershell.exe" />
+    <CustomAction Id="StopRunning"
+                  Property="POWERSHELL"
+                  ExeCommand="-NoProfile -NonInteractive -WindowStyle Hidden -Command &quot;$$d='[INSTALLDIR]'; Get-Process | Where-Object { $$_.Path -and $$_.Path.StartsWith($$d, 'OrdinalIgnoreCase') } | Stop-Process -Force; Start-Sleep -Milliseconds 800&quot;"
+                  Return="ignore" />
+
+    <!-- Start rn once after a first install or an upgrade, detached: the
+         installer must not wait on a process that runs until logoff. -->
+    <CustomAction Id="LaunchRn"
+                  FileKey="RnExe"
+                  ExeCommand=""
+                  Return="asyncNoWait" />
+
+    <InstallExecuteSequence>
+      <Custom Action="SetPowerShell" After="CostFinalize" />
+      <Custom Action="StopRunning" After="SetPowerShell" />
+      <Custom Action="LaunchRn" After="InstallFinalize">NOT REMOVE~="ALL"</Custom>
+    </InstallExecuteSequence>
+  </Product>
+</Wix>

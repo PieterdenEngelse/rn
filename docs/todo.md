@@ -30,11 +30,17 @@ in evaluation mode work until Windows switches it on, and then rn stops
 starting. The only workaround is turning Smart App Control off, which has
 historically been one-way without a reset. The README's Windows section says so.
 
-Fixing it takes two things: signing `rn.exe` with a certificate Windows trusts,
-which `release.sh` can do during the cross-build (`jsign` and `osslsigncode`
-both sign PE files from Linux), and a signed entry point to replace the `.cmd`.
-Neither can be verified from Linux, for the same reason nothing on the Windows
-side can.
+Fixing it takes a signed `rn.exe` and a signed entry point to replace the
+`.cmd`. **The pipeline for both is in place; the certificate is not.** There is
+an MSI (`scripts/package-msi.sh`), `rn.exe` carries the version information
+signing requires, rn is MIT OR Apache-2.0, releases are built on GitHub-hosted
+runners, the MSI is installed on a Windows runner before publishing, and a
+SignPath step waits in the workflow for its settings. What remains needs a
+person, in order: an unsigned release with the MSI in it, the SignPath
+Foundation application, the SignPath project and the repository settings.
+`docs/signing.md` has each step. This item closes when a signed MSI has been
+installed and run on a machine with Smart App Control on — no runner has it,
+so nothing short of that proves it.
 
 ---
 

@@ -1,6 +1,7 @@
 {
   "name": "rn-fe",
   "private": true,
+  "license": "MIT OR Apache-2.0",
   "version": "0.1.0",
   "scripts": {
     "css:build": "tailwindcss -i ./assets/styling/index.css -o ./assets/styling/output.css --minify",

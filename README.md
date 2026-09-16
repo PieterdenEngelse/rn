@@ -41,23 +41,22 @@ run is not a job you trust yet.
 ## Installing
 
 rn carries its own Node, so **nothing needs to be installed first** on the
-machine that runs it. The install is per-user, needs no root, and an uninstall
-is a delete.
+machine that runs it. The install is per-user and needs no root or
+administrator.
 
 **Windows: download
-[install-rn.cmd](https://github.com/PieterdenEngelse/rn/releases/latest/download/install-rn.cmd)
-and double-click it.** It asks before installing anything — where the files go,
-what is downloaded, what is left alone — then names each step as it runs and
-offers to open rn at the end. The package is checked against its published
-checksum before anything is unpacked. Windows asks once whether you meant to
-run a file you downloaded; that prompt is the mark-of-the-web check doing its
-job, and Run is the answer. **With Smart App Control on, rn will not install or
-run at all** — see [Smart App Control](#smart-app-control) below before you
-start.
+[rn-windows-x64.msi](https://github.com/PieterdenEngelse/rn/releases/latest/download/rn-windows-x64.msi)
+and double-click it.** It installs into `%LOCALAPPDATA%\Programs\rn`, starts rn
+at logon, adds a Start Menu entry that opens the page, and starts rn once when
+it finishes. Remove it from Settings → Apps. **Releases are not code-signed
+yet, and with Smart App Control on Windows blocks them** — see
+[Smart App Control](#smart-app-control) below before you start.
 
-A console window stays open behind the dialogs on purpose: on a host with no
-Windows Forms the install runs there instead, and hiding the window would hide
-that too.
+The MSI comes with the first release after v0.1.5, and the link above answers
+404 until that release exists. v0.1.5 and earlier have only the
+[`install-rn.cmd`](https://github.com/PieterdenEngelse/rn/releases/latest/download/install-rn.cmd)
+route, which asks before installing anything and names each step, and which the
+[Windows](#windows-x86-64) section below still describes.
 
 **Linux: put it in the applications menu**, since nothing a browser downloads
 is executable on a click there. Copy
@@ -96,7 +95,8 @@ habit with anything that installs software:
 
 | platform | file | | |
 |---|---|---|---|
-| Windows | [`scripts/install-rn.cmd`](scripts/install-rn.cmd) | the double-clickable one | [download](https://github.com/PieterdenEngelse/rn/releases/latest/download/install-rn.cmd) |
+| Windows | [`scripts/rn.wxs`](scripts/rn.wxs) | what the MSI installs, and why | built by [`scripts/package-msi.sh`](scripts/package-msi.sh) |
+| Windows | [`scripts/install-rn.cmd`](scripts/install-rn.cmd) | the double-clickable script | [download](https://github.com/PieterdenEngelse/rn/releases/latest/download/install-rn.cmd) |
 | Windows | [`scripts/install-gui.ps1`](scripts/install-gui.ps1) | the dialogs around it | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install-gui.ps1) |
 | Windows | [`scripts/install.ps1`](scripts/install.ps1) | what does the work | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install.ps1) |
 | Linux | [`scripts/install.sh`](scripts/install.sh) | what does the work | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install.sh) |
@@ -116,6 +116,7 @@ always resolve to the newest release, so they do not go stale here:
 | platform | package | | |
 |---|---|---|---|
 | Linux | `rn-linux-x64.tar.gz` | [download](https://github.com/PieterdenEngelse/rn/releases/latest/download/rn-linux-x64.tar.gz) | [sha256](https://github.com/PieterdenEngelse/rn/releases/latest/download/rn-linux-x64.tar.gz.sha256) |
+| Windows | `rn-windows-x64.msi` | [download](https://github.com/PieterdenEngelse/rn/releases/latest/download/rn-windows-x64.msi) | [sha256](https://github.com/PieterdenEngelse/rn/releases/latest/download/rn-windows-x64.msi.sha256) |
 | Windows | `rn-windows-x64.zip` | [download](https://github.com/PieterdenEngelse/rn/releases/latest/download/rn-windows-x64.zip) | [sha256](https://github.com/PieterdenEngelse/rn/releases/latest/download/rn-windows-x64.zip.sha256) |
 
 Each package is the whole installed tree — launcher, private Node runtime,
@@ -135,8 +136,8 @@ against musl. [All releases](https://github.com/PieterdenEngelse/rn/releases).
 anything since — plus `curl`, `tar`, `gzip` and `sha256sum`, which `install.sh`
 checks by name before it starts. The launcher links no libc at all, so that
 floor is the bundled Node's rather than rn's own. Checked rather than assumed:
-`release.sh` installs and boots the package in clean Debian 12, Ubuntu 22.04
-and Ubuntu 24.04 containers before it will publish it, and
+the release workflow installs and boots the package in clean Debian 12, Ubuntu
+22.04 and Ubuntu 24.04 containers before it will publish it, and
 `scripts/smoke-release.sh --tag <tag>` lets you run the same check against a
 release yourself.
 
@@ -172,12 +173,35 @@ login, and a menu entry that opens the page.
 
 ### Windows (x86-64)
 
-Double-clicking
+**The MSI** —
+[rn-windows-x64.msi](https://github.com/PieterdenEngelse/rn/releases/latest/download/rn-windows-x64.msi)
+— is the whole of it. What it installs, and why each piece is the way it is, is
+written at the top of [`scripts/rn.wxs`](scripts/rn.wxs):
+
+- the package into `%LOCALAPPDATA%\Programs\rn`, with no administrator prompt;
+- a Run entry under your user that starts rn at logon — not the scheduled task
+  the script route registers, because a Run entry is plain installer data that
+  uninstall removes with nothing to go wrong;
+- a Start Menu entry that opens <http://127.0.0.1:3010/>;
+- and rn started once at the end, so the page answers straight away.
+
+It shows Windows' own progress bar and no pages of its own: it is built on Linux
+with `wixl`, which has no dialogs. Uninstall from Settings → Apps stops rn first
+and keeps `%USERPROFILE%\.config\rn` and your `app\.env`. **Use the MSI or the
+scripts below, not both** — they install into the same directory, and the
+scripts' `-Uninstall` would delete files the MSI believes it owns.
+
+Before a release is published, the release workflow installs its MSI on a clean
+Windows runner, waits for the page to answer, uninstalls it again while rn is
+running and checks nothing was left behind or taken that should not have been.
+That runner has no Smart App Control, so it says nothing about the next section.
+
+**Or with the scripts**, which were the only route up to v0.1.5.
 [install-rn.cmd](https://github.com/PieterdenEngelse/rn/releases/latest/download/install-rn.cmd)
-is the whole of it, and nothing needs to be installed first — not even `gh`,
+is double-clickable, and nothing needs to be installed first — not even `gh`,
 since the asset comes over plain HTTPS.
 
-**What it needs:** Windows PowerShell 5.0 or newer, which Windows 10 and 11
+**What the scripts need:** Windows PowerShell 5.0 or newer, which Windows 10 and 11
 ship in the box. `install.ps1` checks the version, enables TLS 1.2 before it
 reaches GitHub — older Windows still defaults to TLS 1.0/1.1, which GitHub
 refuses with an error naming neither — and names `Invoke-WebRequest`,
@@ -192,7 +216,15 @@ New Windows 11 installs often have it on, or in evaluation mode — which blocks
 nothing yet, but Windows can switch it on later, and rn would then stop
 starting.
 
-It blocks rn twice, and getting past the first block only reaches the second:
+Smart App Control lets a program run when it is signed with a certificate
+Windows trusts, and no release of rn has been. The fix is under way — see
+[Code signing policy](#code-signing-policy) — and until a signed release exists
+everything below still holds. The MSI does not change it on its own: an
+unsigned MSI is blocked like any other untrusted download, and it installs the
+same unsigned `rn.exe`.
+
+For the script route it blocks rn twice, and getting past the first block only
+reaches the second:
 
 - **The downloaded `install-rn.cmd`** is stopped with *"Smart App Control has
   blocked an app with a dangerous file extension"*. There is no Run anyway. A
@@ -212,9 +244,9 @@ Microsoft → Windows → CodeIntegrity → Operational, as events 3033, 3077 an
 Until the launcher is signed, the only way to run rn on such a machine is to
 turn Smart App Control off on that same settings page. **Read what the page
 says before you do:** Smart App Control has historically been impossible to turn
-back on without resetting Windows. The fix belongs on this side — signing
-`rn.exe` with a trusted certificate, and replacing the `.cmd` with a signed
-entry point — and neither has been done yet ([`docs/todo.md`](docs/todo.md)).
+back on without resetting Windows. The fix belongs on this side: a signed MSI
+with a signed `rn.exe` inside it. The MSI and the signing pipeline exist; the
+certificate does not yet ([`docs/signing.md`](docs/signing.md)).
 
 The same thing by hand, if you would rather watch each step:
 
@@ -239,11 +271,12 @@ machine itself:
 Either way you get `%LOCALAPPDATA%\Programs\rn`, a scheduled task that starts
 it at logon, and a Start Menu entry.
 
-One caveat, and it is a real one: **the install has not been run end to end on
+One caveat, and it is a real one: **the scripts have not been run end to end on
 Windows yet.** The package is cross-built on Linux and the scripts were written
-there, on a machine with no PowerShell and no Windows at all. The one Windows
-run so far is the one above, and Smart App Control stopped it before any of the
-install could.
+there, on a machine with no PowerShell and no Windows at all. The MSI is the
+part that is installed on real Windows before every release; the scripts are
+not, and the one run of them so far was stopped by Smart App Control before any
+of the install could start.
 
 What has been checked, so the caveat is not larger than it needs to be: the
 launcher compiles and links for Windows as a real PE binary; every `.ps1`
@@ -261,9 +294,8 @@ to installing in the console on any host where Windows Forms will not load,
 which is a path needing nothing the installer did not already need — so the
 graphical half can be entirely wrong and the install should still work.
 
-`-NoWeb -NoAutostart -NoStart` is the smallest first step, the Linux install
-remains the tested one, and a report of what actually happens is worth more
-than anything else in this section.
+`-NoWeb -NoAutostart -NoStart` is the smallest first step, and a report of what
+actually happens is worth more than anything else in this section.
 
 ## After installing
 
@@ -310,3 +342,65 @@ it. Worth knowing before reading the code: every value crossing the Node/Rust
 boundary is defined once in `shared/`, and the launcher spawns Node with an
 environment built from nothing rather than inherited — `docs/packaging.md`
 says why both of those are load-bearing rather than fastidious.
+
+## Code signing policy
+
+**Status: being set up, not yet applied for.** No release of rn is code-signed
+yet. The
+Windows files are meant to be signed through the
+[SignPath Foundation](https://signpath.org), which gives open-source projects a
+code-signing certificate and signs with it through
+[SignPath.io](https://about.signpath.io). Once a signed release exists, this
+section will say: *Free code signing provided by SignPath.io, certificate by
+SignPath Foundation.* Until then that sentence would be a claim, and it is not
+made here.
+
+What gets signed: the Windows installer `rn-windows-x64.msi`, the `rn.exe`
+launcher inside it, and the `rn.exe` inside `rn-windows-x64.zip`. Nothing else.
+The bundled `node.exe` is Node's own, already signed by the OpenJS Foundation,
+and is shipped as Node publishes it; SignPath's terms do not allow re-signing
+another project's binaries.
+
+How a signed release is made, so it can be checked: the
+[release workflow](.github/workflows/release.yml) builds every asset on
+GitHub-hosted runners from a tagged commit in this repository, installs the MSI
+on a clean Windows runner, and only then submits the Windows files to SignPath.
+Every signing request waits for a person to approve it. `docs/signing.md` has
+the whole path and the SignPath configuration.
+
+**Team roles**
+
+| role | who |
+|---|---|
+| Committers and reviewers | [PieterdenEngelse](https://github.com/PieterdenEngelse) |
+| Approvers | [PieterdenEngelse](https://github.com/PieterdenEngelse) |
+
+Changes from anyone else are reviewed by a committer before they are merged.
+Everyone in a role uses multi-factor authentication on GitHub and on SignPath.
+
+**Privacy policy**
+
+This program will not transfer any information to other networked systems
+unless specifically requested by the user or the person installing or operating
+it. Concretely: rn has no telemetry and no account, and it listens on loopback
+only. What it sends is what its jobs are set up to send — mail you configure,
+notifications to URLs you give it, feeds you list. One job runs on a schedule
+without being set up first: `watch-upstreams`, daily at 04:00, fetches public
+version information from nodejs.org, GitHub, crates.io and the npm registry,
+sending nothing about you but the ordinary request itself. It can be set to
+manual on the Jobs page.
+
+## License
+
+rn is licensed under either of
+
+- [Apache License, Version 2.0](LICENSE-APACHE)
+- [MIT license](LICENSE-MIT)
+
+at your option. Unless you explicitly state otherwise, any contribution
+intentionally submitted for inclusion in rn by you, as defined in the Apache-2.0
+license, shall be dual licensed as above, without any additional terms or
+conditions.
+
+The Node runtime bundled into every package is Node.js, under its own MIT
+license, which ships beside it as `runtime/LICENSE`.
