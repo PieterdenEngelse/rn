@@ -42,7 +42,7 @@ REPO=PieterdenEngelse/rn
 RAW=https://raw.githubusercontent.com/$REPO/main/scripts/install.sh
 LOG="${XDG_CACHE_HOME:-$HOME/.cache}/rn-install.log"
 TITLE="Install rn"
-PREFIX="${XDG_DATA_HOME:-$HOME/.local/share}/rn"
+PREFIX="${XDG_DATA_HOME:-$HOME/.local/share}/rn"   # --prefix overrides it below
 
 # Kept deliberately, not in a mktemp directory: the result window offers to
 # show it, and someone who closes that window still wants it afterwards.
@@ -72,6 +72,18 @@ fi
 have_local_package() {
     [ -n "$INSTALL" ] && [ -e "$(dirname "$INSTALL")/rn" ]
 }
+
+# The confirmation names the install directory, so it has to name the one that
+# will actually be used. install.sh takes --prefix and this file passes every
+# argument through, so without reading it too the window states a path with
+# confidence and the files land somewhere else — worse than saying nothing,
+# because it is the sentence someone reads to decide whether to go ahead.
+# install.sh remains the authority: this only mirrors what it was told.
+for _i in "${!args[@]}"; do
+    [ "${args[$_i]}" = "--prefix" ] || continue
+    _n=$(( _i + 1 ))
+    [ -n "${args[$_n]:-}" ] && PREFIX="${args[$_n]}"
+done
 
 wants_release() {
     local a
