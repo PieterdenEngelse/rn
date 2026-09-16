@@ -49,8 +49,21 @@ administrator.
 and double-click it.** It installs into `%LOCALAPPDATA%\Programs\rn`, starts rn
 at logon, adds a Start Menu entry that opens the page, and starts rn once when
 it finishes. Remove it from Settings → Apps. **Releases are not code-signed
-yet, and with Smart App Control on Windows blocks them** — see
-[Smart App Control](#smart-app-control) below before you start.
+yet** — see [Smart App Control](#smart-app-control) below for what that can mean
+on Windows 11.
+
+**Which browser you download with matters.** Edge stops the MSI with
+*"rn-windows-x64.msi isn't commonly downloaded. Make sure you trust
+rn-windows-x64.msi before you open it."* Chrome downloads the same file without
+a word. The file is not the difference: Edge applies Microsoft Defender
+SmartScreen's download reputation, and an unsigned file that few people have
+downloaded yet has none, so every new release starts with that warning. In
+Edge the file is still yours to keep: open the downloads panel (Ctrl+J), hover
+over the file, then **…** → **Keep**, and if asked, **Show more** → **Keep
+anyway**. Seen on 2026-09-16 with v0.1.6: Edge warned, and Chrome finished four
+downloads of it, each recorded as not dangerous. RERAG's MSI got the same Edge
+warning in July. A code-signed release builds reputation that carries over from
+one version to the next, which is what makes the warning go away for good.
 
 The MSI arrived with v0.1.6. v0.1.5 and earlier have only the
 [`install-rn.cmd`](https://github.com/PieterdenEngelse/rn/releases/latest/download/install-rn.cmd)
@@ -209,21 +222,36 @@ them, rather than failing on whichever is missing.
 
 #### Smart App Control
 
-**rn does not currently run on a PC with Smart App Control turned on.** Check
-first: Windows Security → App & browser control → Smart App Control settings.
-New Windows 11 installs often have it on, or in evaluation mode — which blocks
-nothing yet, but Windows can switch it on later, and rn would then stop
-starting.
+**Whether Smart App Control lets an unsigned rn run is not something rn
+controls, and on one PC it changed within a day.** Check the setting first:
+Windows Security → App & browser control → Smart App Control settings. New
+Windows 11 installs often have it on, or in evaluation mode, which blocks
+nothing yet but can switch itself on later.
 
 Smart App Control lets a program run when it is signed with a certificate
-Windows trusts, and no release of rn has been — see
-[Code signing](#code-signing). Until a signed release exists, everything below
-still holds. The MSI does not change it on its own: an
-unsigned MSI is blocked like any other untrusted download, and it installs the
-same unsigned `rn.exe`.
+Windows trusts, *or* when Microsoft's cloud reputation service already
+considers that exact file safe. No release of rn is signed (see
+[Code signing](#code-signing)), so everything rests on the second, which
+Microsoft decides and can change without anything on the PC changing. What was
+actually observed, on one Windows 11 25H2 PC with Smart App Control on the whole
+time, on 2026-09-16:
 
-For the script route it blocks rn twice, and getting past the first block only
-reaches the second:
+- **13:24–13:26:** blocked. The downloaded `install-rn.cmd` was refused as *"a
+  dangerous file extension"*, and v0.1.5's `rn.exe`, unpacked from the zip, as
+  *"An Application Control policy has blocked this file"*.
+- **16:10:** the v0.1.6 MSI, downloaded with Chrome, installed, started rn,
+  and the page answered — no block, no warning from Smart App Control.
+- **16:15:** the *same* v0.1.5 `rn.exe` that was blocked at 13:26 ran too.
+
+So the verdict on unchanged files flipped from block to allow in under three
+hours, while Windows still reported Smart App Control as On. The likeliest
+reason is that Microsoft's reputation service reassessed them, but nothing on
+the PC says so. Treat it as a moving target: an unsigned rn may run, may be
+blocked, and a new release starts over. A trusted signature is what makes the
+answer stop depending on the day.
+
+What a block looked like, for the script route, when it happened — it stopped
+rn twice, and getting past the first only reached the second:
 
 - **The downloaded `install-rn.cmd`** is stopped with *"Smart App Control has
   blocked an app with a dangerous file extension"*. There is no Run anyway. A
@@ -235,13 +263,10 @@ reaches the second:
   below, do not help: they clear the first block and stop at this one. The
   bundled `node.exe` is signed by the OpenJS Foundation and is not affected.
 
-Measured on 2026-09-16 against v0.1.5, on Windows 11 25H2 with Smart App Control
-on. Event Viewer keeps the record, under Applications and Services Logs →
+Event Viewer keeps the record of a block, under Applications and Services Logs →
 Microsoft → Windows → CodeIntegrity → Operational, as events 3033, 3077 and
-3118.
-
-Until the launcher is signed, the only way to run rn on such a machine is to
-turn Smart App Control off on that same settings page. **Read what the page
+3118. If rn is blocked there, try again later — the verdict above changed on its
+own — or turn Smart App Control off on that same settings page. **Read what the page
 says before you do:** Smart App Control has historically been impossible to turn
 back on without resetting Windows. The fix belongs on this side: a signed MSI
 with a signed `rn.exe` inside it. The MSI and the signing pipeline exist; a

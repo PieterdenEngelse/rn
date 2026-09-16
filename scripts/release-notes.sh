@@ -64,10 +64,12 @@ NOTES
 else
 cat <<NOTES
 > [!WARNING]
-> **This release is not code-signed.** On a PC with Smart App Control on,
-> Windows blocks both the MSI and \`rn.exe\`, and there is no Run anyway. Check
-> Windows Security → App & browser control → Smart App Control settings first.
-> The [README](https://github.com/$REPO#smart-app-control) has the detail.
+> **This release is not code-signed.** Edge warns that the MSI "isn't commonly
+> downloaded" (Chrome did not, when checked); keep it from Edge's downloads
+> panel. On a PC with Smart App Control on, Windows may block the MSI or
+> \`rn.exe\` with no Run anyway — or may not: it depends on Microsoft's reputation
+> for these exact files, which has been seen to change within hours. The
+> [README](https://github.com/$REPO#smart-app-control) has the detail.
 
 NOTES
 fi

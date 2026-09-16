@@ -5,8 +5,17 @@ App Control on, v0.1.5's downloaded `install-rn.cmd` was blocked as "a
 dangerous file extension", and its `rn.exe` was blocked as well, however it
 arrived — CodeIntegrity events 3033, 3077 and 3118. Smart App Control lets a
 program run when Microsoft's cloud already trusts that exact file, or when it
-is signed with a certificate Windows trusts. A new build of rn is never the
-first, so it has to be the second.
+is signed with a certificate Windows trusts. A new build of rn never starts
+with the first, so it cannot count on it.
+
+**The same day, it got the first anyway.** At 16:10 the unsigned v0.1.6 MSI,
+downloaded with Chrome, installed and started rn on that PC, and by 16:15 the
+very v0.1.5 `rn.exe` blocked at 13:26 ran too — same bytes, same folder, a
+byte-for-byte copy with no cached attributes included, Smart App Control
+reporting On throughout. So the cloud verdict on those files changed within
+three hours. That is good news for those two files and none for the next
+release, whose bytes start with no reputation again; it is why a trusted
+signature is still the fix, rather than waiting.
 
 The same machine ran RERAG's `ag.exe`, which is just as unsigned. That was
 checked, because it looked like a counter-example: a byte-for-byte copy of it,

@@ -23,11 +23,16 @@ Control on, against v0.1.5. Two blocks, and they stack:
   CodeIntegrity events 3033/3077/3118. It is `NotSigned`. The bundled
   `node.exe` carries the OpenJS Foundation's signature and runs.
 
-**What goes wrong while this is open:** on any machine with Smart App Control
-on, rn cannot be installed or started by any route in the README — the
-by-hand one included, since `Unblock-File` clears only the first block. Machines
-in evaluation mode work until Windows switches it on, and then rn stops
-starting. The only workaround is turning Smart App Control off, which has
+**Then, at 16:10 the same day, it worked.** The unsigned v0.1.6 MSI installed
+and ran on that PC, and the v0.1.5 `rn.exe` blocked at 13:26 ran as well — same
+bytes, Smart App Control On throughout. The verdict came from Microsoft's
+reputation for those exact files, and it changed within hours.
+
+**What goes wrong while this is open:** whether rn installs and starts on a
+machine with Smart App Control on depends on Microsoft's reputation for that
+release's exact files — blocked with no Run anyway one hour, allowed a few hours
+later — and every release starts over with new bytes. Edge also warns on every
+new MSI ("isn't commonly downloaded"). A user cannot tell which they will get. The only workaround is turning Smart App Control off, which has
 historically been one-way without a reset. The README's Windows section says so.
 
 Fixing it takes a signed `rn.exe` and a signed entry point to replace the
