@@ -40,4 +40,16 @@ Icon=system-software-install
 Terminal=false
 Categories=System;
 Keywords=rn;install;automation;
-StartupNotify=true
+# False, and it has to be. Startup notification is a contract: the launcher
+# tells the window manager a launch is beginning, and the launched program
+# tells it when its window is up. Exec here is `bash -c`, which never sends
+# that completion — no shell does — so the sequence stays open until it times
+# out, and xfwm4 spends that time associating whatever window does appear with
+# the workspace the sequence recorded rather than the one in front of the
+# person. On this machine that is visible as a workspace switch on double-click:
+# you click the icon and the desktop changes under you.
+#
+# Nothing is lost by declaring false. The notification buys a busy cursor for a
+# program that can honour it; this one cannot, and the dialog is up in about a
+# second regardless.
+StartupNotify=false
