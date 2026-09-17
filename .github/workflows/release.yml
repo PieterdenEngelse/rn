@@ -259,9 +259,13 @@ jobs:
           PFX: ${{ steps.sign.outputs.pfx }}
           PFX_PW: ${{ secrets.WINDOWS_PFX_PASSWORD }}
         run: |
-          signtool sign /f "$env:PFX" /p "$env:PFX_PW" /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 dist\rn-win\rn.exe
-          if ($LASTEXITCODE -ne 0) { Write-Error "signtool failed for rn.exe"; exit 1 }
-          Write-Host "  signed rn.exe -> $((Get-AuthenticodeSignature dist\rn-win\rn.exe).Status)"
+          # Both launchers: rn.exe for a terminal, rnw.exe (no console window)
+          # for what the installer starts.
+          foreach ($exe in "rn.exe", "rnw.exe") {
+            signtool sign /f "$env:PFX" /p "$env:PFX_PW" /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 "dist\rn-win\$exe"
+            if ($LASTEXITCODE -ne 0) { Write-Error "signtool failed for $exe"; exit 1 }
+            Write-Host "  signed $exe -> $((Get-AuthenticodeSignature "dist\rn-win\$exe").Status)"
+          }
 
       - name: Build the MSI
         shell: pwsh
@@ -395,7 +399,7 @@ jobs:
           $s = Get-AuthenticodeSignature (Join-Path $prefix "rn.exe")
           Write-Host "  rn.exe signature: $($s.Status) $($s.SignerCertificate.Subject)"
           if ($env:SIGNED -eq "true" -and $s.Status -eq "NotSigned") { Fail "signing was on, but the installed rn.exe is not signed" }
-          foreach ($f in "rn.exe", "rn.url", "runtime\bin\node.exe", "app\src\server.ts", "app\web\index.html") {
+          foreach ($f in "rn.exe", "rnw.exe", "rn.url", "runtime\bin\node.exe", "app\src\server.ts", "app\web\index.html") {
             if (-not (Test-Path (Join-Path $prefix $f))) { Fail "not installed: $prefix\$f" }
           }
           if (Test-Path (Join-Path $prefix "install.ps1")) { Fail "install.ps1 should not be in an MSI install" }
@@ -404,7 +408,7 @@ jobs:
           if ($v.ProductName -ne "rn" -or $v.ProductVersion -ne "${{ needs.build.outputs.version }}") {
             Fail "rn.exe version information is '$($v.ProductName)' '$($v.ProductVersion)'"
           }
-          if ((Get-ItemProperty $run -Name rn -ErrorAction SilentlyContinue).rn -ne "`"$prefix\rn.exe`"") { Fail "no Run entry for rn" }
+          if ((Get-ItemProperty $run -Name rn -ErrorAction SilentlyContinue).rn -ne "`"$prefix\rnw.exe`"") { Fail "the Run entry does not start rnw.exe" }
           if (-not (Test-Path $menu)) { Fail "no Start Menu entry at $menu" }
 
           Write-Host "==> the MSI started rn; waiting for it to answer"
@@ -421,6 +425,25 @@ jobs:
           $page = Invoke-WebRequest http://127.0.0.1:3010/ -UseBasicParsing -TimeoutSec 5
           Write-Host "  page:   $($page.StatusCode)"
           if ($page.StatusCode -ne 200) { Fail "the page did not load" }
+
+          # The point of rnw.exe: nothing rn started has a window, and the log
+          # went to the file instead. conhost.exe is what backs a console
+          # window, so a console child of rn would show up as one.
+          Write-Host "==> no console windows"
+          $ours = @(Get-Process | Where-Object { $_.Path -like "$prefix*" })
+          foreach ($p in $ours) {
+            Write-Host "  $($p.ProcessName) pid=$($p.Id) window=$($p.MainWindowHandle)"
+            if ($p.MainWindowHandle -ne 0) { Fail "$($p.ProcessName) has a window" }
+          }
+          if (-not ($ours.ProcessName -contains "rnw")) { Fail "rnw is not what is running" }
+          $ids = $ours.Id
+          $consoles = @(Get-CimInstance Win32_Process -Filter "Name = 'conhost.exe'" | Where-Object { $ids -contains $_.ParentProcessId })
+          if ($consoles.Count -gt 0) { Fail "a console host was started for rn's processes" }
+          $log = Join-Path $env:USERPROFILE ".local\state\rn\rn.log"
+          if (-not (Test-Path $log)) { Fail "no log at $log" }
+          $listening = Select-String -Path $log -Pattern '"step":"listening"' -Quiet
+          Write-Host "  log: $log ($((Get-Item $log).Length) bytes, listening line: $listening)"
+          if (-not $listening) { Fail "the log has no listening line from Node" }
 
           Write-Host "==> uninstall, with rn still running"
           Set-Content (Join-Path $prefix "app\.env") "BACKEND_PORT=3010"

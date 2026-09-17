@@ -51,6 +51,10 @@ impl NodeCommand {
         // status page can show something more useful than "supervised: true".
         c.env("RN_LAUNCHER_PID", std::process::id().to_string());
 
+        // Under rnw.exe there is no console to share, and Windows would give
+        // node.exe a window of its own. See launcher/src/console.rs.
+        crate::console::hide_window(&mut c);
+
         Self(c)
     }
 

@@ -1,6 +1,7 @@
 //! rn launcher internals, exposed as a library so the enforcement tests can
 //! reach them. The binary is a thin shell over this.
 
+pub mod console;
 pub mod credentials;
 pub mod layout;
 pub mod node_command;

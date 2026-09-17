@@ -48,8 +48,8 @@ own Node. The install is per-user and needs no root or administrator.
 A setup wizard says what it will do before it does anything: it installs into
 \`%LOCALAPPDATA%\Programs\rn\`, adds a Start Menu entry that opens the page,
 starts rn at sign-in unless you clear that box, and starts rn when it finishes,
-with an option to open the page. rn shows a console window while it runs;
-closing that window stops rn. Remove it from Settings → Apps; that keeps
+with an option to open the page. rn runs with no window; its log is in
+\`%USERPROFILE%\.local\state\rn\rn.log\`. Remove it from Settings → Apps; that keeps
 \`%USERPROFILE%\.config\rn\` and your \`app\.env\`.
 
 NOTES

@@ -96,28 +96,34 @@ if [ "$TARGET" = windows ]; then
     # and cargo-xwin fetches the CRT and SDK headers itself, so this needs no
     # mingw and no root. The launcher's own Windows code paths are compiled
     # for the first time by this command — on Linux they are only parsed.
+    # Both launchers: rn.exe for a terminal, rnw.exe — the same code with no
+    # console window — for what the installer starts (launcher/src/console.rs).
     (cd "$REPO" && cargo xwin build --release -p rn --target x86_64-pc-windows-msvc)
     src_exe="$RN_TARGET_DIR/x86_64-pc-windows-msvc/release/rn.exe"
-    head -c2 "$src_exe" | grep -q '^MZ' || die "$src_exe is not a PE executable"
-    # launcher/build.rs compiles the version resource when it finds a resource
-    # compiler, and only warns when it does not, so a development build still
-    # works. A package is where that stops being optional: a release's rn.exe
-    # is signed, and a signed binary with no product name or version is caught
-    # here rather than by a user wondering what they are running.
-    # The name is stored as UTF-16, hence the zero bytes, and a key is followed
-    # by its terminator *and* padding to a 4-byte boundary before the value —
-    # the first version of this check allowed only the terminator, and failed a
-    # build whose resource was fine.
-    if ! LC_ALL=C grep -qaP 'P\x00r\x00o\x00d\x00u\x00c\x00t\x00N\x00a\x00m\x00e\x00(\x00\x00)+r\x00n\x00\x00\x00' "$src_exe"; then
-        if LC_ALL=C grep -qaP 'V\x00S\x00_\x00V\x00E\x00R\x00S\x00I\x00O\x00N\x00_\x00I\x00N\x00F\x00O\x00' "$src_exe"; then
-            die "rn.exe has version information, but its ProductName is not rn; see launcher/build.rs"
-        fi
-        die "rn.exe has no version information (ProductName rn), so it could not be signed.
+    src_rnw="$RN_TARGET_DIR/x86_64-pc-windows-msvc/release/rnw.exe"
+    for exe in "$src_exe" "$src_rnw"; do
+        name=$(basename "$exe")
+        head -c2 "$exe" | grep -q '^MZ' || die "$exe is not a PE executable"
+        # launcher/build.rs compiles the version resource when it finds a
+        # resource compiler, and only warns when it does not, so a development
+        # build still works. A package is where that stops being optional: a
+        # release's launchers are signed, and a signed binary with no product
+        # name or version is caught here rather than by a user wondering what
+        # they are running. The name is stored as UTF-16, hence the zero bytes,
+        # and a key is followed by its terminator *and* padding to a 4-byte
+        # boundary before the value — the first version of this check allowed
+        # only the terminator, and failed a build whose resource was fine.
+        if ! LC_ALL=C grep -qaP 'P\x00r\x00o\x00d\x00u\x00c\x00t\x00N\x00a\x00m\x00e\x00(\x00\x00)+r\x00n\x00\x00\x00' "$exe"; then
+            if LC_ALL=C grep -qaP 'V\x00S\x00_\x00V\x00E\x00R\x00S\x00I\x00O\x00N\x00_\x00I\x00N\x00F\x00O\x00' "$exe"; then
+                die "$name has version information, but its ProductName is not rn; see launcher/build.rs"
+            fi
+            die "$name has no version information (ProductName rn), so it could not be signed.
        launcher/build.rs needs a resource compiler: install llvm (llvm-rc), or set RN_RC.
        Its cargo warning above says what it tried; with no warning, the .res was
        compiled but did not reach the linker."
-    fi
-    log "$LAUNCHER  version information present"
+        fi
+        log "$name  version information present"
+    done
 else
     # musl, statically linked, and not a preference. A plain `cargo build` here
     # links against the build machine's glibc and records the highest symbol
@@ -138,10 +144,14 @@ else
     # work is spawning one child and waiting on it.
     rustup target list --installed 2>/dev/null | grep -qx x86_64-unknown-linux-musl \
         || die "the Linux launcher needs the musl target: rustup target add x86_64-unknown-linux-musl"
-    (cd "$REPO" && cargo build --release -p rn --target x86_64-unknown-linux-musl)
+    # --bin rn: rnw exists for Windows' console windows and is not shipped here.
+    (cd "$REPO" && cargo build --release -p rn --bin rn --target x86_64-unknown-linux-musl)
     src_exe="$RN_TARGET_DIR/x86_64-unknown-linux-musl/release/rn"
 fi
 install -m 755 "$src_exe" "$OUT/$LAUNCHER"
+if [ "$TARGET" = windows ]; then
+    install -m 755 "$src_rnw" "$OUT/rnw.exe"
+fi
 
 # Checked rather than trusted, like every other rule here that matters. A
 # glibc-linked launcher is indistinguishable from a good one on this machine —

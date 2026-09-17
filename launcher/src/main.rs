@@ -18,7 +18,9 @@ use std::time::{Duration, Instant};
 const MAX_RAPID_RESTARTS: u32 = 5;
 const RAPID_WINDOW: Duration = Duration::from_secs(10);
 
-fn main() {
+/// Public so src/rnw.rs, which compiles this file again as the windowless
+/// launcher, can call it.
+pub fn main() {
     if let Err(err) = run() {
         eprintln!("rn: {err}");
         std::process::exit(1);

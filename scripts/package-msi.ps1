@@ -42,7 +42,7 @@ function Die($m) { Write-Host "`nERROR: $m" -ForegroundColor Red; exit 1 }
 if (-not (Get-Command wix -ErrorAction SilentlyContinue)) {
     Die "wix is not on PATH: dotnet tool install --global wix --version 5.0.2"
 }
-foreach ($f in "rn.exe", "runtime\bin\node.exe", "app\src\server.ts", "BUILD") {
+foreach ($f in "rn.exe", "rnw.exe", "runtime\bin\node.exe", "app\src\server.ts", "BUILD") {
     if (-not (Test-Path (Join-Path $From $f))) {
         Die "$From is not a Windows package: $f is missing (scripts/package.sh --target windows)"
     }
