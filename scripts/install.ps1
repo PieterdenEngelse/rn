@@ -554,7 +554,11 @@ if (-not $NoAutostart) {
     # the failure people spend an evening on.
     Assert-Cmdlet "Register-ScheduledTask" "it is what starts rn when you log on" `
         "Rerun with -NoAutostart and start $Prefix\rn.exe yourself."
-    $action = New-ScheduledTaskAction -Execute (Join-Path $Prefix "rn.exe") `
+    # rnw.exe when the package has it: the same launcher with no console window
+    # (launcher/src/console.rs). A package from before it existed gets rn.exe,
+    # and the window that comes with it.
+    $taskExe = if (Test-Path (Join-Path $Prefix "rnw.exe")) { "rnw.exe" } else { "rn.exe" }
+    $action = New-ScheduledTaskAction -Execute (Join-Path $Prefix $taskExe) `
                                       -WorkingDirectory (Join-Path $Prefix "app")
     # DOMAIN\user, not a bare name: the bare form is accepted in some places
     # and silently matches nothing in others.
@@ -571,8 +575,11 @@ if (-not $NoAutostart) {
                            -Principal $principal -Settings $settings -Force `
                            -Description "rn (installed: the launcher and the Node process it supervises)" | Out-Null
     Write-Log "registered the logon task $TaskName"
-    Write-Warn "rn.exe is a console program, so the task shows a console window at logon."
-    Write-Warn "That is the honest behaviour of this build; hiding it needs a windowless launcher."
+    if ($taskExe -eq "rnw.exe") {
+        Write-Log "the task runs rnw.exe: no window; its log is in $env:USERPROFILE\.local\state\rn\rn.log"
+    } else {
+        Write-Warn "this package has no rnw.exe, so the task runs rn.exe and shows a console window at logon."
+    }
 
     # A .url, not a .lnk: the entry opens the page, and the backend behind it
     # is the task's job — the same split as the .desktop file on Linux, which

@@ -73,18 +73,21 @@
     <StandardDirectory Id="System64Folder" />
 
     <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
-      <!-- rn.exe is declared on its own so the launch action can name it. -->
+      <!-- rnw.exe, the launcher without a console window, is declared on its
+           own so the launch action can name it. rn.exe, the same launcher for
+           a terminal, comes in with the rest. launcher/src/console.rs says
+           why there are two. -->
       <Component Id="Launcher">
-        <File Id="RnExe" Source="$(var.SourceDir)\rn.exe" KeyPath="yes" />
+        <File Id="RnwExe" Source="$(var.SourceDir)\rnw.exe" KeyPath="yes" />
       </Component>
       <Files Include="$(var.SourceDir)\**">
-        <Exclude Files="$(var.SourceDir)\rn.exe" />
+        <Exclude Files="$(var.SourceDir)\rnw.exe" />
       </Files>
     </ComponentGroup>
 
     <Component Id="Autostart" Directory="INSTALLFOLDER" Guid="0F35AFFB-8EE4-4B5F-8928-DCB027AC9A39" Condition="AUTOSTART = 1">
       <RegistryValue Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run"
-                     Name="rn" Type="string" Value="&quot;[INSTALLFOLDER]rn.exe&quot;" KeyPath="yes" />
+                     Name="rn" Type="string" Value="&quot;[INSTALLFOLDER]rnw.exe&quot;" KeyPath="yes" />
     </Component>
 
     <Component Id="StartMenu" Directory="ProgramMenuFolder" Guid="D31500AA-ED58-4987-A362-29C9A3E6FD4F">
@@ -116,9 +119,9 @@
                   Execute="immediate"
                   Return="ignore" />
 
-    <!-- Start rn once after installing, detached. -->
+    <!-- Start rn once after installing, detached, with no window. -->
     <CustomAction Id="LaunchRn"
-                  FileRef="RnExe"
+                  FileRef="RnwExe"
                   ExeCommand=""
                   Execute="immediate"
                   Return="asyncNoWait" />

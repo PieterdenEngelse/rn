@@ -46,8 +46,10 @@ pub fn is_alive(pid: i32) -> bool {
     // a Windows tool, reads its output and exits. NodeCommand would be the
     // wrong thing here — it seals an environment for a child that is ours.
     #[allow(clippy::disallowed_methods)]
-    std::process::Command::new("tasklist")
-        .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+    let mut cmd = std::process::Command::new("tasklist");
+    // rnw.exe runs this at every start; without the flag it flashes a window.
+    crate::console::hide_window(&mut cmd);
+    cmd.args(["/FI", &format!("PID eq {pid}"), "/NH"])
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).contains(&pid.to_string()))
         .unwrap_or(false)
@@ -206,12 +208,21 @@ pub fn stop(pid: i32, wait: std::time::Duration) -> Result<(), String> {
 #[cfg(windows)]
 pub fn stop(pid: i32, _wait: std::time::Duration) -> Result<(), String> {
     // A Windows tool, not Node — see the note on is_alive above.
-    #[allow(clippy::disallowed_methods)]
-    let ok = std::process::Command::new("taskkill")
-        .args(["/PID", &pid.to_string(), "/T"])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
+    //
+    // Plain taskkill asks politely, by closing the process's windows, and
+    // rnw.exe has none to close: it answers "can only be terminated forcefully"
+    // and nothing stops. So /F is the fallback when asking did not work.
+    let kill = |force: bool| {
+        #[allow(clippy::disallowed_methods)]
+        let mut cmd = std::process::Command::new("taskkill");
+        crate::console::hide_window(&mut cmd);
+        cmd.args(["/PID", &pid.to_string(), "/T"]);
+        if force {
+            cmd.arg("/F");
+        }
+        cmd.output().map(|o| o.status.success()).unwrap_or(false)
+    };
+    let ok = kill(false) || kill(true);
     if ok {
         remove();
         Ok(())

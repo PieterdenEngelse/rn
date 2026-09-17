@@ -208,9 +208,13 @@ What it installs, and why each piece is the way it is, is written at the top of
 - a Start Menu entry that opens <http://127.0.0.1:3010/>;
 - and rn started once at the end, so the page answers straight away.
 
-**rn opens a console window when it starts**, the one showing lines like
-`"step":"listening"`. That window *is* rn: closing it stops rn. The page is in
-your browser, not in that window. Uninstall from Settings → Apps stops rn first
+**rn runs with no window.** The installer starts `rnw.exe`, the same launcher
+as `rn.exe` without a console, so the page in your browser is the only thing
+you see. Its log, and Node's, go to `%USERPROFILE%\.local\state\rn\rn.log`
+(the previous run's is `rn.log.1`). From a terminal, `rn --status` says whether
+it is running and `rn --stop` stops it. Up to v0.1.7 the installer started
+`rn.exe` instead, which opened a console window that stopped rn when closed.
+Uninstall from Settings → Apps stops rn first
 and keeps `%USERPROFILE%\.config\rn` and your `app\.env`. **Use the MSI or the
 scripts below, not both** — they install into the same directory, and the
 scripts' `-Uninstall` would delete files the MSI believes it owns.
