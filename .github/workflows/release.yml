@@ -427,8 +427,10 @@ jobs:
           if ($page.StatusCode -ne 200) { Fail "the page did not load" }
 
           # The point of rnw.exe: nothing rn started has a window, and the log
-          # went to the file instead. conhost.exe is what backs a console
-          # window, so a console child of rn would show up as one.
+          # went to the file instead. A console child started with
+          # CREATE_NO_WINDOW still gets a conhost.exe — the first run of this
+          # check failed on exactly that, with no window anywhere — so a console
+          # host fails the check only when it has a window of its own.
           Write-Host "==> no console windows"
           $ours = @(Get-Process | Where-Object { $_.Path -like "$prefix*" })
           foreach ($p in $ours) {
@@ -437,8 +439,13 @@ jobs:
           }
           if (-not ($ours.ProcessName -contains "rnw")) { Fail "rnw is not what is running" }
           $ids = $ours.Id
-          $consoles = @(Get-CimInstance Win32_Process -Filter "Name = 'conhost.exe'" | Where-Object { $ids -contains $_.ParentProcessId })
-          if ($consoles.Count -gt 0) { Fail "a console host was started for rn's processes" }
+          $hosts = @(Get-CimInstance Win32_Process -Filter "Name = 'conhost.exe'" | Where-Object { $ids -contains $_.ParentProcessId })
+          foreach ($h in $hosts) {
+            $parent = ($ours | Where-Object Id -eq $h.ParentProcessId).ProcessName
+            $win = (Get-Process -Id $h.ProcessId -ErrorAction SilentlyContinue).MainWindowHandle
+            Write-Host "  conhost pid=$($h.ProcessId) for $parent, window=$win"
+            if ($win -and $win -ne 0) { Fail "the console host for $parent has a visible window" }
+          }
           $log = Join-Path $env:USERPROFILE ".local\state\rn\rn.log"
           if (-not (Test-Path $log)) { Fail "no log at $log" }
           $listening = Select-String -Path $log -Pattern '"step":"listening"' -Quiet
