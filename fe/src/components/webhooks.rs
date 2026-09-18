@@ -2211,7 +2211,27 @@ fn JobOptions(jobs: Vec<String>, catalogue: Vec<CatalogueJob>, selected: String)
 /// credential is noticed — a hook whose secret is unset refuses every delivery
 /// — but it covers every credential this install declares, jobs included.
 #[component]
-fn CredentialsBoard() -> Element {
+pub(crate) fn CredentialsBoard(
+    /// Show only these credentials, in this order, instead of every one the
+    /// install declares.
+    ///
+    /// For Config → Connection's Webhooks board, which owns exactly the
+    /// secrets its deliveries are checked against. A filtered view rather than
+    /// a second editor, for the reason `ParamBlock` is rendered twice: one
+    /// place that writes a credential, drawn where the question is asked.
+    #[props(default = None)]
+    only: Option<Vec<String>>,
+    /// The file itself — its path, whether it exists, and the form for adding
+    /// a credential nothing has declared yet.
+    ///
+    /// Off in a filtered view. Those are facts about the install rather than
+    /// about a board, and a board showing four rows has no business offering
+    /// to create a fifth under a name it would not then show. The permission
+    /// warning is *not* part of this: a world-readable credentials file is
+    /// worth saying wherever a credential is on screen.
+    #[props(default = true)]
+    chrome: bool,
+) -> Element {
     let mut reload = use_signal(|| 0u32);
     let creds = use_resource(move || {
         reload();
@@ -2279,12 +2299,14 @@ fn CredentialsBoard() -> Element {
                         // trailing clause wraps whatever you do, and a wrapped
                         // "— read by the launcher" begins a line with a dash
                         // attached to nothing.
-                        div { class: HINT,
-                            div { code { "{c.path}" } }
-                            if c.exists {
-                                div { "read by the launcher on every start" }
-                            } else {
-                                div { "not created yet — saving one here creates it, mode 600" }
+                        if chrome {
+                            div { class: HINT,
+                                div { code { "{c.path}" } }
+                                if c.exists {
+                                    div { "read by the launcher on every start" }
+                                } else {
+                                    div { "not created yet — saving one here creates it, mode 600" }
+                                }
                             }
                         }
                         if let Some(w) = c.permission_warning.clone() {
@@ -2303,13 +2325,30 @@ fn CredentialsBoard() -> Element {
                             }
                         }
 
-                        if c.entries.is_empty() {
+                        // The filter is applied to the response rather than
+                        // asked of the backend: /api/credentials answers with
+                        // what the install declares, and a board wanting four
+                        // of those is a rendering question, not an endpoint.
+                        {
+                            let shown: Vec<_> = match only.clone() {
+                                Some(names) => names
+                                    .iter()
+                                    .filter_map(|n| c.entries.iter().find(|e| &e.name == n).cloned())
+                                    .collect(),
+                                None => c.entries.clone(),
+                            };
+                            rsx! {
+                        if shown.is_empty() {
                             p { class: "text-gray-400",
-                                "Nothing declares a credential yet, and the file names none."
+                                if only.is_some() {
+                                    "Nothing here declares a credential."
+                                } else {
+                                    "Nothing declares a credential yet, and the file names none."
+                                }
                             }
                         } else {
                             div { class: "space-y-1",
-                                for entry in c.entries.iter() {
+                                for entry in shown.iter() {
                                     CredentialRow {
                                         key: "{entry.name}",
                                         entry: entry.clone(),
@@ -2353,8 +2392,10 @@ fn CredentialsBoard() -> Element {
                                 }
                             }
                         }
+                            }
+                        }
 
-                        if adding() {
+                        if adding() && chrome {
                             div { class: "rounded border border-gray-700 p-3 space-y-2",
                                 Field {
                                     label: "credential name".to_string(),
@@ -2400,7 +2441,7 @@ fn CredentialsBoard() -> Element {
                                     }
                                 }
                             }
-                        } else {
+                        } else if chrome {
                             button {
                                 class: "text-xs cursor-pointer hover:underline bg-transparent border-0 p-0",
                                 style: "color: #22d3ee;",

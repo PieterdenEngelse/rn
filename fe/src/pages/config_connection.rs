@@ -1,8 +1,9 @@
 use crate::api::{
-    fetch_connection, fetch_jobs, fetch_params, save_settings, AppliesAt, Category,
-    ConnectionResponse, JobsResponse, ParamsResponse, RuntimeParam,
+    fetch_connection, fetch_jobs, fetch_params, fetch_webhooks, save_settings, AppliesAt,
+    Category, ConnectionResponse, JobsResponse, ParamsResponse, RuntimeParam, WebhooksResponse,
 };
 use crate::components::param::{unsaved_ids, PARAM_BOARD_BASE_CLASS, PARAM_BOARD_TITLE_CLASS};
+use crate::components::webhooks::CredentialsBoard;
 use crate::pages::config::ParamBlock;
 use std::collections::BTreeMap;
 use crate::app::Route;
@@ -28,6 +29,10 @@ pub fn ConfigConnection() -> Element {
     // separate fetch rather than a copy of the values into /api/connection,
     // for the reason the jobs payload is fetched separately below: one
     // definition, read twice, is the arrangement that cannot drift.
+    // The webhooks made on the page, for the credentials they name. Read-only
+    // here: this page shows which secrets a delivery is checked against, and
+    // the hooks themselves stay where they are made.
+    let hooks = use_resource(fetch_webhooks);
     let mut params_reload = use_signal(|| 0u32);
     let params = use_resource(move || {
         let _ = params_reload();
@@ -74,6 +79,11 @@ pub fn ConfigConnection() -> Element {
                             conn: c.clone(),
                             params: match &*params.read_unchecked() {
                                 Some(Ok(p)) => Some(p.clone()),
+                                _ => None,
+                            },
+                            jobs: j.clone(),
+                            webhooks: match &*hooks.read_unchecked() {
+                                Some(Ok(w)) => Some(w.clone()),
                                 _ => None,
                             },
                             draft,
@@ -365,6 +375,12 @@ fn Integrations(
     /// boards draw their prose either way — what an integration can be here
     /// does not depend on the settings loading.
     params: Option<ParamsResponse>,
+    /// The catalogue, for the credentials the jobs' own webhook blocks name.
+    jobs: Option<JobsResponse>,
+    /// The webhooks made on Config → Jobs, which name credentials no job file
+    /// mentions. Both halves, or the board would show the secrets of one door
+    /// and call it the list.
+    webhooks: Option<WebhooksResponse>,
     draft: Signal<BTreeMap<String, serde_json::Value>>,
     /// Whether the draft has been filled from the server. Nothing saves while
     /// this is false: a save writes the body as the whole file, so an empty
@@ -432,6 +448,25 @@ fn Integrations(
             .iter()
             .any(|r| pending.contains(&r.id) && r.applies_at == AppliesAt::Restart)
     });
+
+    // Every credential a delivery could be checked against, from both places a
+    // webhook can be declared: a job's own block, and the store behind Config
+    // → Jobs. Deduplicated, because one secret can back several hooks and a
+    // board listing it twice would imply two.
+    let mut hook_credentials: Vec<String> = jobs
+        .as_ref()
+        .map(|j| {
+            j.catalogue
+                .iter()
+                .filter_map(|c| c.webhook.as_ref().map(|w| w.credential.clone()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if let Some(w) = webhooks.as_ref() {
+        hook_credentials.extend(w.webhooks.iter().map(|h| h.def.credential.clone()));
+    }
+    hook_credentials.sort();
+    hook_credentials.dedup();
 
     let mut saving = use_signal(|| false);
     let mut status = use_signal(|| Option::<String>::None);
@@ -510,6 +545,35 @@ fn Integrations(
                             if_wrong: WEBHOOK_IF_WRONG.to_string(),
                         }
                     },
+                    // No registry parameter belongs to this shape — the hooks
+                    // port is read from the environment at startup and is not
+                    // a setting — so what it owns is the secrets its
+                    // deliveries are checked against, and nothing else.
+                    settings: Some(rsx! {
+                        div { class: "mt-2 pt-2 border-t border-gray-700",
+                            span { class: PARAM_BOARD_TITLE_CLASS, "Settings" }
+                            p { class: "text-gray-400 text-xs mt-1 mb-2",
+                                if hook_credentials.is_empty() {
+                                    "No webhook declares a credential yet. One is declared by a job's webhook block, or by a webhook made on Config → Jobs."
+                                } else {
+                                    "The secret each delivery is checked against. A hook whose secret is unset refuses every delivery, and the provider's own log is the only place that shows."
+                                }
+                            }
+                            CredentialsBoard {
+                                only: Some(hook_credentials.clone()),
+                                chrome: false,
+                            }
+                            p { class: "text-gray-400 text-xs mt-2",
+                                "The hooks themselves — and any credential nothing declares yet — are on "
+                                Link {
+                                    to: Route::ConfigJobs {},
+                                    class: "text-blue-400 hover:text-blue-300",
+                                    "Config → Jobs"
+                                }
+                                "."
+                            }
+                        }
+                    }),
                     watched: rsx! {
                         "Watched on "
                         Link {
@@ -639,6 +703,30 @@ fn Integrations(
                             glossary: vec![ctx_entry()],
                         }
                     },
+                    // No filtered list of its own, and the reason is the
+                    // interesting part rather than an omission: nothing marks a
+                    // credential as an OAuth one. A token that came out of an
+                    // authorization-code flow and a token pasted from a
+                    // settings page are the same string under the same name,
+                    // and a board claiming to show "the OAuth credentials"
+                    // would be inventing a distinction the store does not hold.
+                    settings: Some(rsx! {
+                        div { class: "mt-2 pt-2 border-t border-gray-700",
+                            span { class: PARAM_BOARD_TITLE_CLASS, "Settings" }
+                            p { class: "text-gray-400 text-xs mt-1",
+                                "One setting, and it is not distinguishable from any other: the \
+                                 token. Nothing records that a credential came from an OAuth flow \
+                                 rather than from a settings page, so it is set beside every other \
+                                 credential on "
+                                Link {
+                                    to: Route::ConfigJobs {},
+                                    class: "text-blue-400 hover:text-blue-300",
+                                    "Config → Jobs"
+                                }
+                                ". There is no flow to configure — that is this board's whole point."
+                            }
+                        }
+                    }),
                     // The one board whose pointer is mostly a negative, and it
                     // says so rather than going quiet — a blank where the other
                     // three carry a route reads as an oversight.
