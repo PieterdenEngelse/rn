@@ -173,6 +173,51 @@ const FORGET_IF_WRONG: &str =
      for it a second time when the first appears to have done nothing is how someone ends up \
      resetting a job twice and still seeing no report.";
 
+/// The endpoint panel, built per job because the path is the job's id and the
+/// proof is the job's own declaration — a fixed string would be wrong on both
+/// halves for every job but the one it was written for.
+fn hook_what(id: &str, w: &WebhookInfo) -> String {
+    format!(
+        "This job is reachable from outside rn. A POST to /api/hooks/{id} starts a run, and the \
+         path is the job's id — the listener looks it up in the same catalogue this page lists.\n\n\
+         It is not the API port. The hooks listener is a second socket on its own port, and it \
+         is the only part of rn that is ever meant to be exposed — Monitor → Connection says \
+         which port it is and what has been reaching it. Everything else, including the page you \
+         are reading, stays on the API port.\n\n\
+         A delivery must carry {proof}, made with the {credential} credential, or it is refused \
+         before this job is started. The signature is computed over the exact bytes of the body, \
+         so nothing in the path may reformat it — a relay that re-serialises JSON breaks every \
+         signature it forwards, which is measured rather than argued in docs/tunnel.md.\n\n\
+         An id that names no job answers 404, and so does an id that exists but declares no \
+         webhook. The same 404 for both, deliberately: an endpoint that distinguished them would \
+         be a way to enumerate the catalogue from outside.",
+        id = id,
+        proof = sent_as(w),
+        credential = w.credential,
+    )
+}
+
+const HOOK_WHY: &str =
+    "It is the only trigger rn does not initiate. A schedule fires when this machine decides and \
+     Run now fires when you do; a webhook fires when somebody else's system has news, which is \
+     the whole point of an integration — you find out that the build broke or the ticket arrived \
+     without polling for it.\n\nIt is also the only part of rn a stranger can reach, so the URL \
+     is a capability rather than an address: whoever holds it can make deliveries at your \
+     listener. That is why it is the one thing a tunnel should be pointed at, and why the \
+     signature is not optional — there is no unsigned mode on this door.";
+
+const HOOK_IF_WRONG: &str =
+    "A refusal tells the caller nothing beyond that it was refused. That is deliberate — an \
+     error explaining which check failed would help somebody guess the secret — so the reason is \
+     in the backend log instead: hook-signature-rejected, hook-secret-missing, hook-not-found.\n\n\
+     If the credential is not set, every delivery is refused and the provider's own delivery log \
+     is the only place it shows. Config → Connection says whether the secret is present.\n\n\
+     A second delivery carrying a delivery id already seen is refused as a replay, which is \
+     correct and has a consequence worth knowing: pressing \"redeliver\" on the provider's side \
+     does nothing until that id ages out of the log.\n\nAnd the path is the job's id, so renaming \
+     the job changes the URL. The provider keeps posting to the old one and gets a 404, which \
+     looks from here like a provider that stopped sending.";
+
 const ON_FAILURE_WHAT: &str =
     "The id of another job that runs when this one fails. The runner catches the failure, \
      records it, then looks that id up in the same catalogue this page lists and runs it — \
@@ -583,15 +628,37 @@ fn JobRow(
                             "{overridden_phrase(&overridden_fields(&job))}"
                         }
                     }
-                    match scheduled.as_ref() {
-                        Some(s) => rsx! {
-                            span { class: "text-gray-300 text-xs",
-                                "{s.schedule} · next {relative(s.next_run_at)}"
-                            }
-                        },
-                        None => rsx! {
-                            span { class: "text-gray-400 text-xs", "on request only" }
-                        },
+                    if let Some(s) = scheduled.as_ref() {
+                        span { class: "text-gray-300 text-xs",
+                            "{s.schedule} · next {relative(s.next_run_at)}"
+                        }
+                    }
+                    // The one trigger with an address. Without it a webhook job
+                    // read "on request only" — true of the button on this card
+                    // and false of the job, which is reachable from outside
+                    // this machine by anyone holding the URL. That is the most
+                    // consequential fact about such a job and it was the one
+                    // thing the row did not say.
+                    if let Some(w) = hook.as_ref() {
+                        span { class: "text-gray-300 text-xs",
+                            "POST "
+                            code { class: "text-gray-200", "/api/hooks/{job.id}" }
+                        }
+                        // Inline beside the fact it explains, like the handler
+                        // arrows above — the exception CLAUDE.md names to the
+                        // info column.
+                        InfoButton {
+                            title: format!("POST /api/hooks/{}", job.id),
+                            what: hook_what(&job.id, w),
+                            why: HOOK_WHY.to_string(),
+                            if_wrong: HOOK_IF_WRONG.to_string(),
+                        }
+                    }
+                    // Only when nothing else starts it. A job with a schedule
+                    // or an endpoint is not "on request only", and saying so
+                    // beside either one was the contradiction worth removing.
+                    if scheduled.is_none() && hook.is_none() {
+                        span { class: "text-gray-400 text-xs", "on request only" }
                     }
                     // Only when there is one. A row that said "on failure →
                     // nothing" would be noise on every job that has no handler,
