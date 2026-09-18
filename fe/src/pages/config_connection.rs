@@ -837,7 +837,13 @@ fn EventGroups() -> Element {
              and nobody is obliged to follow this — but the families repeat, and knowing which \
              one a delivery belongs to is most of knowing what a job should do with it."
         }
-        table { class: "w-full text-left border-collapse mt-3",
+        // Capped rather than filling the panel. The panel is the whole window,
+        // and at that width the Meaning column ends up half a screen from the
+        // examples it describes — three short cells with 600px of nothing
+        // between them, which is a row the eye has to track rather than read.
+        // The page-width rule's reason for giving prose a measure, applied to
+        // a table whose cells are all short.
+        table { class: "w-full max-w-4xl text-left border-collapse mt-3",
             thead {
                 tr {
                     th { class: "text-gray-300 font-semibold text-xs py-1 pr-6 border-b border-gray-700", "Category" }
