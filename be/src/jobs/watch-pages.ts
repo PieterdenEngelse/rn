@@ -55,6 +55,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { config } from "../config.ts";
 import { netPermissionHint } from "./net-permission.ts";
 import { PermanentFailure } from "./permanent.ts";
 import { MAX_VALUE_BYTES } from "./state.ts";
@@ -284,13 +285,20 @@ export const watchPages: Job = {
             id: "pages",
             label: "Pages to watch",
             type: "text",
-            default: "",
+            // The installed list, filled in by the runner when nobody supplies
+            // one — which is every scheduled run. See RN_WATCH_PAGES.
+            default: config.watchPages,
             placeholder: "empty — nothing is watched, and the run says so",
             info: {
                 what:
-                    "The URLs to fetch, separated by spaces, newlines or commas. http and https " +
-                    "only: a file: URL would turn this field into a way to read this machine's " +
-                    "disk, and nothing here needs another scheme.\n\nEach page is remembered " +
+                    "The URLs to fetch for this run only, separated by spaces, newlines or " +
+                    "commas. http and https only: a file: URL would turn this field into a way " +
+                    "to read this machine's disk, and nothing here needs another scheme.\n\n" +
+                    "Nothing is saved here. The box arrives holding the installed list — " +
+                    "RN_WATCH_PAGES, on Config → Runtime under Watching — which is what the " +
+                    "hourly run uses; editing it here covers this run and is gone by the next, " +
+                    "which is what you want for \"just check these two for a moment\".\n\n" +
+                    "Each page is remembered " +
                     "under its host and path, so the same page written two ways — a trailing " +
                     "slash, a different query string — is two different pages as far as this job " +
                     "is concerned.",
@@ -304,7 +312,12 @@ export const watchPages: Job = {
                     "has no way to follow links.",
                 ifWrong:
                     "A URL that is not http or https is named in the trace and skipped, and a run " +
-                    "with nothing usable left ends as skipped rather than as a failure.\n\nThe " +
+                    "with nothing usable left ends as skipped rather than as a failure.\n\n" +
+                    "An empty box on a scheduled job is the mistake this field cannot warn you " +
+                    "about from here: a schedule supplies no input, so what runs at the top of " +
+                    "the hour is the installed list and never what was typed on this card. If " +
+                    "the hourly run keeps skipping, the list on Config → Runtime is the one to " +
+                    "fill in.\n\nThe " +
                     "quiet mistake is a page that renders its content with JavaScript. This " +
                     "fetches HTML and runs nothing, so such a page reads as a nearly empty " +
                     "document that never changes — the first look reports its character count, " +
@@ -341,11 +354,13 @@ export const watchPages: Job = {
             id: "ignore",
             label: "Ignore lines containing",
             type: "text",
-            default: "",
+            default: config.watchPagesIgnore,
             placeholder: "nothing dropped — every line counts",
             info: {
                 what:
-                    "Comma-separated substrings. Any line containing one of them is dropped " +
+                    "Comma-separated substrings, for this run only — the box arrives holding " +
+                    "the installed list, RN_WATCH_PAGES_IGNORE on Config → Runtime. Any line " +
+                    "containing one of them is dropped " +
                     "before the page is compared, matched without regard to case. Plain " +
                     "substrings rather than patterns: a regular expression typed into a field is " +
                     "a way to hang this job on the page it was pointed at, and what people mean " +
@@ -414,7 +429,14 @@ export const watchPages: Job = {
                     "rather than dropped in silence: a typo'd URL makes a report with a hole in " +
                     "it that looks complete, which is worse than an empty one.\n\n" +
                     "If nothing survives, the run ends as skipped rather than as a failure. An " +
-                    "empty list is a job nobody has configured yet, not a job that broke.",
+                    "empty list is a job nobody has configured yet, not a job that broke.\n\n" +
+                    "Where the list comes from is worth knowing, because the two sources look " +
+                    "identical from inside run(). The runner fills a missing input from the " +
+                    "job's declared default, and that default is the installed setting — so a " +
+                    "scheduled run at the top of the hour gets RN_WATCH_PAGES, a run somebody " +
+                    "starts by hand gets whatever is in the box, and this code cannot tell " +
+                    "them apart. What was used is recorded on the run, which is where the two " +
+                    "become distinguishable again.",
                 reports: "unusable-page, listing what was rejected.",
             },
             {

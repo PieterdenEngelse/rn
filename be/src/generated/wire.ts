@@ -186,7 +186,7 @@ overridden: JobOverride, };
  * every variant but the mail ones is a single word — and lets the three
  * that are not spell themselves `mail-account` rather than `mailaccount`.
  */
-export type Category = "memory" | "concurrency" | "time" | "network" | "mail-account" | "mail-receiving" | "mail-sending" | "links" | "diagnostics" | "output" | "runtime" | "security";
+export type Category = "memory" | "concurrency" | "time" | "network" | "mail-account" | "mail-receiving" | "mail-sending" | "links" | "watching" | "diagnostics" | "output" | "runtime" | "security";
 
 /**
  * One entry in a command webhook's routing table: this action runs this

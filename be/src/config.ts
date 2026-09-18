@@ -396,6 +396,19 @@ export const config = {
      */
     mailWatchMailbox: process.env.RN_MAIL_WATCH_MAILBOX ?? "INBOX",
 
+    /**
+     * The pages watch-pages fetches on its schedule.
+     *
+     * Here rather than only in the job's input because a scheduled run
+     * supplies no input: the job fills its input default from this, so the
+     * hourly run and a run somebody starts by hand take the same path through
+     * `run()` and differ only in what they were handed.
+     */
+    watchPages: process.env.RN_WATCH_PAGES ?? "",
+
+    /** Lines containing one of these are dropped before a page is compared. */
+    watchPagesIgnore: process.env.RN_WATCH_PAGES_IGNORE ?? "",
+
     /** IMAP host the read-mail job connects to. */
     imapHost: process.env.RN_IMAP_HOST ?? "imap.gmail.com",
 
