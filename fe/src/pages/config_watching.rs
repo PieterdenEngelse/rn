@@ -12,10 +12,14 @@
 //! is read once at process start, so a watch list living there meant restarting
 //! the backend to add a URL.
 
-use crate::api::{delete_page, fetch_jobs, fetch_pages, save_page, JobsResponse, WatchedPage};
+use crate::api::{
+    delete_page, fetch_jobs, fetch_pages, save_page, CatalogueJob, JobsResponse, Outcome,
+    WatchedPage,
+};
 use crate::app::Route;
 use crate::components::param::{PARAM_INPUT_ROW_CLASS, PARAM_TEXT_INPUT_CLASS};
 use crate::components::{InfoButton, Panel};
+use crate::pages::monitor_jobs::relative;
 use dioxus::prelude::*;
 use dioxus_router::Link;
 
@@ -58,6 +62,14 @@ pub fn ConfigWatching() -> Element {
                         _ => None,
                     });
                     rsx! {
+                        JobState {
+                            jobs: match &*jobs.read_unchecked() {
+                                Some(Ok(j)) => Some(j.clone()),
+                                _ => None,
+                            },
+                            watching: resp.pages.len(),
+                        }
+
                         Panel {
                             title: "Watched pages".to_string(),
                             subtitle: Some(match resp.pages.len() {
@@ -146,6 +158,193 @@ pub fn ConfigWatching() -> Element {
         }
     }
 }
+
+/// What will actually happen to these records, and when.
+///
+/// The records are only half the answer. A list of pages says nothing about
+/// whether anything reads it, when it next will, whether the install is armed,
+/// or who gets told — and each of those can be the reason nothing appears to
+/// happen. They were all one click away on Monitor → Jobs, which is one click
+/// too many on the page where somebody has just typed a URL and is waiting.
+#[component]
+fn JobState(jobs: Option<JobsResponse>, watching: usize) -> Element {
+    let Some(j) = jobs else {
+        // The page works without this; it is a reading, not a control. Saying
+        // nothing beats a board of blanks that reads as "nothing is scheduled".
+        return rsx! {};
+    };
+
+    let job: Option<CatalogueJob> = j.catalogue.iter().find(|c| c.id == "watch-pages").cloned();
+    let scheduled = j.scheduled.iter().find(|s| s.id == "watch-pages").cloned();
+    let running = j.running.iter().any(|r| r.name == "watch-pages");
+    let last = j.last_runs.iter().find(|r| r.job_id == "watch-pages").cloned();
+    let handler = job.as_ref().and_then(|c| c.on_change.clone());
+    // A handler whose credential is missing is a notification that will fail at
+    // the moment it matters, and the card for it is on another page.
+    let handler_missing_credential = handler.as_ref().and_then(|h| {
+        j.catalogue
+            .iter()
+            .find(|c| &c.id == h)
+            .map(|c| c.credentials.iter().filter(|cr| !cr.set).map(|cr| cr.env_var.clone()).collect::<Vec<_>>())
+    });
+
+    rsx! {
+        Panel {
+            title: "What happens to these".to_string(),
+            subtitle: Some("the job that reads them, as it stands now".to_string()),
+            info: Some(rsx! {
+                InfoButton {
+                    title: "What happens to these".to_string(),
+                    what: STATE_WHAT.to_string(),
+                    why: STATE_WHY.to_string(),
+                    if_wrong: STATE_IF_WRONG.to_string(),
+                }
+            }),
+
+            if job.is_none() {
+                p { class: "text-amber-400",
+                    "The watch-pages job is not in this backend's catalogue — it is older than "
+                    "these records. Restart it with "
+                    code { class: "text-gray-200", "be/r" }
+                    " and this board fills in."
+                }
+            } else {
+                dl { class: "grid gap-x-6 gap-y-1 text-xs",
+                    style: "grid-template-columns: max-content 1fr;",
+
+                    dt { class: "text-gray-400", "Wakes" }
+                    dd { class: "text-gray-200",
+                        match scheduled.as_ref() {
+                            Some(s) => rsx! {
+                                span { "{s.schedule} · next {relative(s.next_run_at)}" }
+                                if running {
+                                    span { class: "text-gray-300", " · running now" }
+                                }
+                            },
+                            None => rsx! {
+                                span { class: "text-amber-400",
+                                    "not scheduled — nothing reads these until somebody presses Run now"
+                                }
+                            },
+                        }
+                    }
+
+                    dt { class: "text-gray-400", "Watching" }
+                    dd { class: "text-gray-200",
+                        if watching == 0 {
+                            span { class: "text-gray-400", "nothing yet — add a page below" }
+                        } else {
+                            span { "{watching} page(s), each on its own interval" }
+                        }
+                    }
+
+                    dt { class: "text-gray-400", "On a change" }
+                    dd { class: "text-gray-200",
+                        match handler.as_ref() {
+                            Some(h) => rsx! {
+                                span { "→ {h}" }
+                                if let Some(missing) = handler_missing_credential.as_ref() {
+                                    if !missing.is_empty() {
+                                        // The failure that only shows up when it
+                                        // matters: the handler refuses to start,
+                                        // hours after the change it was for.
+                                        span { class: "text-amber-400",
+                                            " · needs {missing.join(\", \")}, which is not set"
+                                        }
+                                    }
+                                }
+                            },
+                            None => rsx! {
+                                span { class: "text-gray-400",
+                                    "nobody is told — a change is reported on the run and stops there. "
+                                }
+                                Link {
+                                    to: Route::ConfigJobs {},
+                                    class: "text-blue-400 hover:text-blue-300",
+                                    "Wire one on Config → Jobs"
+                                }
+                            },
+                        }
+                    }
+
+                    dt { class: "text-gray-400", "Armed" }
+                    dd {
+                        if j.dry_run {
+                            span { class: "text-amber-400",
+                                "no — DRY_RUN is on, so every run reports changed: false and no handler fires. "
+                            }
+                            Link {
+                                to: Route::Config {},
+                                class: "text-blue-400 hover:text-blue-300",
+                                "Arm it on Config → Runtime"
+                            }
+                        } else {
+                            span { class: "text-gray-200", "yes — a change hands off for real" }
+                        }
+                    }
+
+                    dt { class: "text-gray-400", "Last run" }
+                    dd { class: "text-gray-200",
+                        match last.as_ref() {
+                            Some(r) => rsx! {
+                                span { class: outcome_class(&r.outcome), "{outcome_word(&r.outcome)}" }
+                                span { class: "text-gray-400", " · {relative(r.started_at)}" }
+                                if let Some(skipped) = r.skipped.as_ref() {
+                                    span { class: "text-gray-300", " · {skipped}" }
+                                }
+                            },
+                            None => rsx! { span { class: "text-gray-400", "never run" } },
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The outcome word, and its colour. Skipped is not red — a job that declined
+/// because there was nothing to do has worked correctly.
+fn outcome_word(outcome: &Option<Outcome>) -> &'static str {
+    match outcome {
+        Some(Outcome::Changed) => "changed",
+        Some(Outcome::Unchanged) => "unchanged",
+        Some(Outcome::Skipped) => "skipped",
+        Some(Outcome::Failed) => "failed",
+        None => "unreported",
+    }
+}
+
+fn outcome_class(outcome: &Option<Outcome>) -> &'static str {
+    match outcome {
+        Some(Outcome::Changed) => "text-green-400 font-medium",
+        Some(Outcome::Failed) => "text-red-400 font-medium",
+        _ => "text-gray-300 font-medium",
+    }
+}
+
+const STATE_WHAT: &str =
+    "The live state of the watch-pages job: when it next wakes, how many records it will read, \
+     who is told when something changes, whether this install is armed, and how its last run \
+     went. Everything here is read from the backend on every load — none of it is stored on this \
+     page.";
+
+const STATE_WHY: &str =
+    "A list of pages says nothing about whether anything reads it. Four separate things can each \
+     make a correctly configured list do nothing visible: the job not scheduled, DRY_RUN on, no \
+     handler wired, or the handler's credential missing. Every one of them was a click away on \
+     another page, which is one click too many when somebody has just typed a URL and is waiting \
+     to see what happens.\n\nIt is also where the answer to \"why did I not get an email\" \
+     lives, and the two most likely answers — disarmed, or nothing wired — are stated here in \
+     the words that name the fix.";
+
+const STATE_IF_WRONG: &str =
+    "\"Armed: no\" is the one to read first. A dry run reports changed: false by construction, \
+     and on-change fires on changed — so while DRY_RUN is on the page change appears on the run \
+     and no notification is ever sent. That is the switch working, not a fault.\n\nA first look \
+     at a newly added page reports nothing either: there was nothing to compare it against. The \
+     mail comes on the run after something actually moves.\n\nIf the board says the job is not \
+     in the catalogue, the backend is older than these records — it is launcher-supervised and \
+     does not watch source, so it keeps running the code it started with until be/r.";
 
 /// A record with the defaults a person would choose, for the add form.
 fn blank() -> WatchedPage {
