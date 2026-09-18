@@ -643,9 +643,13 @@ export const watchUpstreams: Job = {
             "\n\nThe part worth understanding is the memory. This job is also the reason " +
             "be/src/jobs/state.ts exists: a poller with nothing to compare against reports " +
             "every item every run, so the release that matters arrives looking exactly like the " +
-            "twenty that did not. What it remembers is written to ~/.config/rn/job-state.json, " +
-            "committed only when a run succeeds, and never at all while DRY_RUN is on — a dry " +
-            "run reports the same news tomorrow because it deliberately did not remember today.",
+            "twenty that did not. What it remembers is written to ~/.config/rn/job-state.json " +
+            "and committed only when a run succeeds. It is committed while DRY_RUN is on too, " +
+            "which is the exception this job declares with effectFree: every request it makes " +
+            "is a GET, so there is no rehearsal to keep honest, and withholding the memory " +
+            "would have meant a disarmed install re-reporting the same eleven releases every " +
+            "morning. What a dry run still withholds is changed, and with it the handoff to " +
+            "any follow-up job.",
         ifWrong:
             "Point it at a directory with no manifests and it skips, naming the path. Take an " +
             "ecosystem out of the list and that half stops being watched with nothing failing " +
@@ -655,6 +659,148 @@ export const watchUpstreams: Job = {
             "so every lookup is refused until nodejs.org, registry.npmjs.org and crates.io are " +
             "added to the allowlist on Config → Connection. The run says so rather than " +
             "reporting a bare permission error.",
+        stages: [
+            {
+                name: "Read the inputs",
+                lead: "Which checkout, which ecosystems, and whether to repeat what it has already said.",
+                body:
+                    "Three inputs, resolved before any file is opened. The repository root " +
+                    "is a path; the ecosystems are a comma-separated list narrowed to the " +
+                    "three this job knows — node, npm and cargo; repeat asks for the whole " +
+                    "standing list rather than only what moved.\n\n" +
+                    "An ecosystem it does not recognise is named in the trace rather than " +
+                    "dropped in silence. A typo like 'carog' would otherwise produce a " +
+                    "report that looks complete and is missing a third of the repository, " +
+                    "which is worse than an empty one.\n\n" +
+                    "Two conditions end the run here as skipped: a root that does not hold " +
+                    "be/.nvmrc — a packaged install has no checkout at all, which is a " +
+                    "normal state and not a fault — and a list that names nothing known.",
+                reports:
+                    "unknown-ecosystem, with what was asked for and the three that exist.",
+            },
+            {
+                name: "Read the manifests",
+                lead: "Build the watch list out of the repository itself, at the versions actually resolved.",
+                body:
+                    "Nothing here is hardcoded, and that is the design: a hand-kept list " +
+                    "goes stale in the direction that hides things, so the list is rebuilt " +
+                    "from the files on every run. A dependency added yesterday is watched " +
+                    "today; one removed stops being watched.\n\n" +
+                    "node — be/.nvmrc, which is the single source of truth for the version " +
+                    "the app ships. It becomes two entries, because there are two questions: " +
+                    "the newest release on the pinned major line, which is the upgrade with " +
+                    "no work in it, and the newest LTS line, which is the one with work in " +
+                    "it eventually.\n\n" +
+                    "npm — the dependencies of be/package.json and fe/package.json, read at " +
+                    "the version the sibling package-lock.json resolved. The lock and not " +
+                    "the range, deliberately: ^4.1.14 had already resolved to 4.3.3, and " +
+                    "comparing a caret range's floor against the newest release reports " +
+                    "every such dependency as behind forever, however current the install " +
+                    "is. A package.json with no lock beside it is named in the trace for " +
+                    "that reason.\n\n" +
+                    "cargo — the direct dependencies of the workspace manifests, at the " +
+                    "versions Cargo.lock resolved. Direct only: the lock holds several " +
+                    "hundred transitive crates and a report on all of them is one nobody " +
+                    "reads.",
+                reports:
+                    "read-manifests — the root, how many upstreams came out of it, and " +
+                    "which ecosystems were included. npm-unlocked and npm-unlocked-package " +
+                    "when a manifest has no lockfile beside it, cargo-unlocked and " +
+                    "cargo-ambiguous when a crate's resolved version cannot be pinned down.",
+            },
+            {
+                name: "Load what it remembers",
+                lead: "Three cursors — one per ecosystem — and the difference between empty and absent.",
+                body:
+                    "The memory is ctx.state: three keys, latest:node, latest:npm and " +
+                    "latest:cargo, each holding a small map of name to the newest version " +
+                    "this install has seen.\n\n" +
+                    "One key per ecosystem rather than one per package, which is the part " +
+                    "worth copying. A key built from the data — npm:daisyui, cargo:dioxus — " +
+                    "works on the first run and grows without bound afterwards; this job " +
+                    "alone would spend twenty of the thirty-two keys a job is allowed on " +
+                    "today's manifests. Three keys is three marks to move and a bound that " +
+                    "does not depend on how large the repository gets.\n\n" +
+                    "A missing cursor and an empty one are different answers, and the " +
+                    "distinction decides what the run reports. No cursor means this " +
+                    "ecosystem has never been looked at, so the run is a first look: it " +
+                    "states where things stand and calls that a reading, not news. An empty " +
+                    "map means it looked and found nothing.",
+            },
+            {
+                name: "Ask each registry",
+                lead: "Four lookups at a time, with one failure costing only its own answer.",
+                body:
+                    "Each upstream is looked up against its own registry: nodejs.org's " +
+                    "release index, registry.npmjs.org for a package's latest tag, " +
+                    "crates.io for a crate's newest stable release. Four run at once — " +
+                    "enough to keep a hundred lookups inside the two-minute ceiling, few " +
+                    "enough not to look like abuse to a public registry.\n\n" +
+                    "Node's release index is fetched at most once per run and only if a " +
+                    "node entry is in the list. It is by far the largest response here, and " +
+                    "both node entries are answered from the one copy.\n\n" +
+                    "A lookup that fails is collected rather than thrown: one registry " +
+                    "having a bad minute must not cost the report from the other two. The " +
+                    "exception is every lookup failing, which is not a report with holes in " +
+                    "it — it is no network, dead DNS, or a runtime refusing to make the " +
+                    "request at all. That throws, so it is retried and lands in the failure " +
+                    "list rather than arriving as a cheerful 'nothing new'.\n\n" +
+                    "How it throws depends on why. If the error looks like the runtime's own " +
+                    "network permission — Deno's allowlist — the failure is permanent and " +
+                    "not retried, because a grant is fixed when the process starts and " +
+                    "cannot widen while it runs, so attempts two and three are guaranteed " +
+                    "the same answer. Anything else is what the three attempts are for.",
+                reports:
+                    "lookup-failed, once per upstream that could not be answered, with the " +
+                    "error. A run with a few of these is a report with named holes in it " +
+                    "rather than a silent one.",
+            },
+            {
+                name: "Compare, and decide what is news",
+                lead: "Behind is a comparison; news is a change since the last run.",
+                body:
+                    "Two different questions, and conflating them is what makes a daily " +
+                    "report unreadable. Behind compares what the repository pins against " +
+                    "the newest release, by version ordering rather than string equality. " +
+                    "Moved compares the newest release against what this install saw last " +
+                    "time.\n\n" +
+                    "An upstream is reported when it is behind and one of three things is " +
+                    "true: the ecosystem is being looked at for the first time, the release " +
+                    "moved since the last run, or the run was asked to repeat everything. " +
+                    "An upstream that is behind and has not moved is counted and not " +
+                    "reported — it is the same sentence as yesterday, and printing it daily " +
+                    "is how a report becomes something you scroll past.\n\n" +
+                    "An upstream whose lookup failed keeps the mark it already had rather " +
+                    "than losing it. Forgetting on a 503 would make tomorrow announce a " +
+                    "release it had already told you about.",
+                reports:
+                    "behind, once per upstream worth reporting: which one, the version " +
+                    "pinned here, the newest published, and which manifest the pin came " +
+                    "from.",
+            },
+            {
+                name: "Remember, and hand the news on",
+                lead: "Stage the cursors, then let the runner commit them — and only then is anything a change.",
+                body:
+                    "New marks are staged, not written. The runner commits them after run() " +
+                    "returns and only if it returned without throwing, so a cursor cannot " +
+                    "move past releases a failed run had read and not reported. That is not " +
+                    "this job's decision to make, which is why the store is built that " +
+                    "way.\n\n" +
+                    "This job declares effectFree, so the commit happens under DRY_RUN too. " +
+                    "Every request it makes is a GET, so there is no rehearsal to keep " +
+                    "honest, and withholding the memory would mean a disarmed install " +
+                    "re-reporting the same list every morning — the background hum the " +
+                    "cursor exists to remove.\n\n" +
+                    "What a dry run does withhold is changed, and with it the handoff to " +
+                    "any job named in onChange. So a disarmed install still gets the report " +
+                    "on this page and tells nobody. Arming rn on Config → Runtime is what " +
+                    "turns the news into a notification.\n\n" +
+                    "Four endings: a first look, which records and announces nothing; " +
+                    "nothing new; a dry run with news to show; and a real change, which is " +
+                    "the only one that hands off.",
+            },
+        ],
     },
 
     async run(ctx: JobContext): Promise<JobResult> {

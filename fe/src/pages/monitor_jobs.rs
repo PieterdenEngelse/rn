@@ -559,6 +559,12 @@ fn JobRow(
                         what: job.info.what.clone(),
                         why: job.info.why.clone(),
                         if_wrong: job.info.if_wrong.clone(),
+                        // A tab per stage of the run, in the job's own order —
+                        // declared beside the code that performs them, so the
+                        // panel cannot describe a pipeline the job stopped
+                        // having. Empty for a job that declares none, and the
+                        // panel then draws no tab bar at all.
+                        stages: job.info.stages.clone().unwrap_or_default(),
                     }
                     code { class: "text-gray-400 text-xs", "{job.id}" }
                     if running {

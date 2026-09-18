@@ -842,6 +842,11 @@ fn JobConfigRow(
                     what: job.info.what.clone(),
                     why: job.info.why.clone(),
                     if_wrong: job.info.if_wrong.clone(),
+                    // The same stages Monitor → Jobs shows. This is where the
+                    // schedule and the handlers are *changed*, so "what does a
+                    // run actually do" is if anything a more pressing question
+                    // here than on the page that only watches it.
+                    stages: job.info.stages.clone().unwrap_or_default(),
                 }
             }
 

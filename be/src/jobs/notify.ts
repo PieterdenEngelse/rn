@@ -265,6 +265,116 @@ export const notify: Job = {
             "request that arrives and then times out waiting for the response is sent again, so " +
             "a duplicate notification is possible. That is the right trade — a duplicate is an " +
             "annoyance, a missed one is this job failing at the only thing it does.",
+        stages: [
+            {
+                name: "Check the format",
+                lead: "text, slack or discord — settled before the credential is read.",
+                body:
+                    "The format decides the body shape and the content type, and it is " +
+                    "checked first: an unrecognised name fails the run permanently, naming " +
+                    "the three that exist.\n\n" +
+                    "First, and not later, for a specific reason. If the format were checked " +
+                    "after the credential had been read and the request sent, a typo would " +
+                    "come back as a 400 from a URL the run record is not allowed to show — " +
+                    "an error message with no way to act on it. Refusing here turns the " +
+                    "same mistake into a sentence naming the valid values.\n\n" +
+                    "Permanent rather than retried, because the input is identical on the " +
+                    "next attempt.",
+            },
+            {
+                name: "Build the message",
+                lead: "The run that triggered this one, flattened into a title and a body.",
+                body:
+                    "This job is normally somebody else's onChange handler, and that run " +
+                    "arrives as the cause. The title is rn: <job> changed. The body opens " +
+                    "with the job, its outcome and how many milliseconds it took, then the " +
+                    "summary one line per value, then the last twenty steps of its trace.\n\n" +
+                    "If steps were dropped to fit, the body says so — the same rule the " +
+                    "runner follows with its own step cap. A silent truncation is how you " +
+                    "end up trusting a list that is not complete. The whole body is capped " +
+                    "at 1800 characters, since receivers vary in what they accept and a " +
+                    "notification nobody can read is not better than a short one.\n\n" +
+                    "With no cause — you pressed Run now — it builds a test message that " +
+                    "says so. That is the first thing anyone does after setting the URL, and " +
+                    "a test that looks like real news teaches you to distrust the next one.\n\n" +
+                    "The values in it were scrubbed of every configured secret by the runner " +
+                    "before the record was built, so a job that logged its own token has not " +
+                    "published it here. That protects against the accident. Nothing protects " +
+                    "against a job that deliberately sends one.",
+            },
+            {
+                name: "Shape the request",
+                lead: "One message, three envelopes: a plain body, or Slack's and Discord's JSON.",
+                body:
+                    "text sends title and body as one plain-text payload, which is what " +
+                    "ntfy.sh takes — no account, and it reaches a phone. slack sends " +
+                    "{\"text\": \"…\"} as JSON, which is what an incoming webhook expects. " +
+                    "discord sends {\"content\": \"…\"}.\n\n" +
+                    "The headers follow the format rather than being set by hand, so the " +
+                    "content type cannot disagree with the body — which is the failure that " +
+                    "produces a 400 saying only 'invalid_payload'.\n\n" +
+                    "The byte count computed here is what the dry run reports and what the " +
+                    "run record carries, so the size on a disarmed run and an armed one are " +
+                    "the same number.",
+            },
+            {
+                name: "Withhold the POST under DRY_RUN",
+                lead: "Built, shaped and measured — and not sent.",
+                body:
+                    "Everything above has happened: the format was checked, the message " +
+                    "built, the request shaped, the size known. Only the POST is withheld.\n\n" +
+                    "This is the job in rn where that distinction matters most, because its " +
+                    "side effect is the one that leaves the machine. A dry run here is a " +
+                    "genuine rehearsal — what the would-send step reports is what would have " +
+                    "gone out, not a guess at it.\n\n" +
+                    "Note what happens first: the credential has still not been read at this " +
+                    "point. A disarmed install can rehearse this job without the URL ever " +
+                    "entering the process.",
+                reports:
+                    "would-send — the format, the body size in bytes, and the title. The " +
+                    "run is skipped and changed: false.",
+            },
+            {
+                name: "Read the credential",
+                lead: "As late as possible, checked without ever quoting it.",
+                body:
+                    "The URL is read from the credential store at the last moment and held " +
+                    "in nothing but this scope. The runner has already refused to start the " +
+                    "job if it is absent, so a missing credential is reported before the run " +
+                    "rather than as a failure inside it.\n\n" +
+                    "It is checked to start with http:// or https://, and a malformed one " +
+                    "fails permanently — reformatting is not something waiting achieves. The " +
+                    "error deliberately does not echo the value. A malformed URL is still a " +
+                    "credential, and 'starts with' is enough to confirm somebody's guess.\n\n" +
+                    "The URL is a bearer capability: whoever learns it can post to your " +
+                    "phone. It is never written to a run record, never sent to this page, " +
+                    "and redacted out of any error message that happens to contain it.",
+            },
+            {
+                name: "POST, and classify the answer",
+                lead: "One request, and a status code that decides whether trying again could help.",
+                body:
+                    "The request goes out with the job's abort signal attached, so a run " +
+                    "that hits its thirty-second ceiling actually stops rather than leaving " +
+                    "a request in flight.\n\n" +
+                    "A non-2xx answer is read for its body — receivers put the real " +
+                    "complaint there, like Slack's invalid_payload — truncated to 200 " +
+                    "characters, because some put a whole HTML page there instead. The " +
+                    "status and the reason go in the error; the URL never does.\n\n" +
+                    "Then the classification, which is the part worth understanding. A 5xx " +
+                    "is the relay having a bad minute, and that is exactly what the three " +
+                    "attempts are for. A 4xx is the receiver rejecting this request, and " +
+                    "the request is byte-identical next time — so it fails permanently and " +
+                    "the run stops instead of spending a minute proving the point.\n\n" +
+                    "Retrying means at-least-once: a request that arrives and then times " +
+                    "out waiting for its response is sent again, so a duplicate " +
+                    "notification is possible. That is the right trade — a duplicate is an " +
+                    "annoyance, a missed one is this job failing at the only thing it does.",
+                reports:
+                    "sent — the format, the bytes and the status code the receiver answered. " +
+                    "The run returns changed: true, because something left the machine.",
+            },
+        ],
     },
 
     async run(ctx: JobContext): Promise<JobResult> {

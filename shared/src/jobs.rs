@@ -11,6 +11,41 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 
 wire! {
+    /// One stage of a job's run, in the order the job performs it.
+    ///
+    /// A job's three-paragraph `JobInfo` says what the job is for. It cannot
+    /// say what the job *does at 03:00*, in order, and that is the question
+    /// somebody reading a run record actually has: the trace shows `scanned`
+    /// then `would-delete` and nothing anywhere says which of those is a
+    /// decision and which is an action. So a job describes its own pipeline,
+    /// one entry per stage, and the panel renders them as tabs.
+    ///
+    /// Written from the job's own `run()` rather than from its purpose. A
+    /// stage that does not exist in the code is worse than no stage at all —
+    /// it is a wrong answer given confidently to somebody who cannot check it
+    /// without reading TypeScript.
+    #[serde(rename_all = "camelCase")]
+    pub struct JobStage {
+        /// Tab label. Two or three words, an action: `Scan`, `Decide what is
+        /// stale`, `Delete`. The panel numbers them, so the name does not.
+        pub name: String,
+        /// One line under the heading: what this stage is, in a sentence.
+        pub lead: String,
+        /// The stage at length — what it reads, what it decides, what it
+        /// refuses, and what it hands to the next one.
+        pub body: String,
+        /// The step names this stage puts on the run record, and what each
+        /// one's detail means.
+        ///
+        /// Optional because not every stage reports: parsing an input and
+        /// returning `skipped` leave nothing in the trace, and a section
+        /// saying "nothing" on half the tabs is worse than no section.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub reports: Option<String>,
+    }
+}
+
+wire! {
     /// Prose for a job's info panel. Deliberately the same shape as a runtime
     /// parameter's, so one `InfoButton` renders both.
     #[serde(rename_all = "camelCase")]
@@ -21,6 +56,12 @@ wire! {
         pub why: String,
         /// What visibly goes wrong when it is misconfigured or never run.
         pub if_wrong: String,
+        /// The job's run, stage by stage. Absent on the shapes that borrow
+        /// this type and have no pipeline — a runtime parameter, a job's
+        /// input field — which is why it is optional rather than an empty
+        /// list every one of them would have to spell.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub stages: Option<Vec<JobStage>>,
     }
 }
 

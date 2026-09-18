@@ -116,6 +116,78 @@ export const notifyAll: Job = {
             "Turning both off is refused rather than treated as success, because a " +
             "notification job that notifies nobody is the kind of thing somebody sets up and " +
             "then relies on.",
+        stages: [
+            {
+                name: "Read the two switches",
+                lead: "Both notifiers are on unless a run says otherwise — and both off is refused.",
+                body:
+                    "Each switch defaults to on, and the check is written so that only an " +
+                    "explicit false turns one off: a run that supplies nothing gets both, " +
+                    "which is what a scheduled or handler-triggered run always does.\n\n" +
+                    "Turning both off fails the run permanently rather than succeeding " +
+                    "quietly. A fan-out with nothing to fan out to is not a no-op, it is a " +
+                    "notification path that will never tell anybody anything — the kind of " +
+                    "thing somebody sets up once and then relies on. Permanent because the " +
+                    "input is the same on the next attempt.",
+            },
+            {
+                name: "Run the desktop notifier",
+                lead: "runJob(desktop-notify) with this run's own cause, and its own record.",
+                body:
+                    "The desktop notifier is invoked through the same runner every job goes " +
+                    "through — not called as a function. So it is tracked in flight, timed, " +
+                    "retried by its own policy, and it writes its own run record with its " +
+                    "own trace.\n\n" +
+                    "It is handed the cause this job was handed, rather than this run. That " +
+                    "is the detail that makes the fan-out invisible in the message: the " +
+                    "notification describes the job that actually changed something, not " +
+                    "notify-all.\n\n" +
+                    "Reimplementing the notifiers here would have meant building the message " +
+                    "twice and a third copy of prose to keep true. Running them means 'why " +
+                    "did the pop-up fail' is answered on the pop-up's own record.\n\n" +
+                    "Sequential rather than parallel, and deliberately: two run records " +
+                    "interleaving in the history is harder to read than two in order, and " +
+                    "the whole thing is over in under a second either way.",
+                reports:
+                    "notified, with via: desktop-notify and whether that run reported a " +
+                    "change. notifier-failed with the error if it threw.",
+            },
+            {
+                name: "Run the webhook notifier",
+                lead: "Attempted whichever way the desktop went.",
+                body:
+                    "Same mechanism, same cause, its own record. The point is the word " +
+                    "'whichever': a failure in the first notifier is caught and does not " +
+                    "skip this one.\n\n" +
+                    "Those two failures are the ones most likely to happen on their own — a " +
+                    "wedged notification daemon, an expired ntfy topic — and coupling them " +
+                    "would turn either one into both. A headless machine with no session bus " +
+                    "should still reach a phone; a dead webhook should still leave a message " +
+                    "on the screen.\n\n" +
+                    "A missing notifyWebhook credential is a refusal by the runner before " +
+                    "that job starts. It arrives here as a caught error, named in the trace, " +
+                    "rather than as a failure that undoes a desktop notification which has " +
+                    "already happened.",
+                reports:
+                    "notified, with via: notify. notifier-failed with the error, truncated " +
+                    "to 200 characters, if it threw.",
+            },
+            {
+                name: "Decide the outcome",
+                lead: "Failing only when every notifier it was asked to use failed.",
+                body:
+                    "Deliveries and failures are counted as they happen. The run throws only " +
+                    "if nothing was delivered and something failed — a notification that " +
+                    "reached you by one route is not an outage, and marking it red would " +
+                    "make red mean nothing.\n\n" +
+                    "When one route worked and the other did not, the run succeeds and the " +
+                    "failure is named in its trace. Somebody reading this record should not " +
+                    "have to open two others to find out which half did not happen.\n\n" +
+                    "changed is true when at least one notifier reported a change. The " +
+                    "summary carries how many were delivered, how many failed, and which job " +
+                    "the notification was about — manual when it was a test.",
+            },
+        ],
     },
 
     async run(ctx: JobContext): Promise<JobResult> {

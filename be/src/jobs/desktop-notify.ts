@@ -309,6 +309,117 @@ export const desktopNotify: Job = {
             "The title and body are built from mail somebody else wrote. They are passed to " +
             "notify-send as arguments through execFile with no shell anywhere in the path, " +
             "so a subject line is text and never a command.",
+        stages: [
+            {
+                name: "Check the inputs",
+                lead: "Urgency, colour, prefix, icon and expiry — settled before anything is drawn.",
+                body:
+                    "Urgency must be low, normal or critical, and anything else fails the " +
+                    "run permanently rather than being retried: the input is the same on " +
+                    "the next attempt, so three tries would be three identical failures and " +
+                    "a minute of waiting for nothing.\n\n" +
+                    "The rest are free-form and each has a defined empty meaning. No colour " +
+                    "means the body goes through as plain text. No prefix means the title " +
+                    "starts with rn:. No icon means the daemon draws its own. An expiry of " +
+                    "0 means the daemon's own timeout rather than an instant dismissal.\n\n" +
+                    "All of it is checked before the session bus is looked at, so a typo is " +
+                    "reported as a typo rather than as a desktop problem.",
+            },
+            {
+                name: "Find a desktop to draw on",
+                lead: "No session bus means no screen — which is a skip, not a failure.",
+                body:
+                    "A notification daemon is reached over the session bus, and its address " +
+                    "arrives in DBUS_SESSION_BUS_ADDRESS. If that variable is empty the run " +
+                    "ends as skipped, naming the reason.\n\n" +
+                    "Skipped rather than failed, deliberately. A machine with nobody logged " +
+                    "in graphically has no screen to draw on, which is an ordinary state " +
+                    "and not a fault; a red run every half hour on a headless box is noise " +
+                    "that teaches people to ignore red runs.\n\n" +
+                    "The variable is also the one widening in the launcher's environment " +
+                    "seal. rn hands its Node child an explicitly constructed environment " +
+                    "rather than inheriting yours, so this has to be passed through on " +
+                    "purpose. If somebody is logged in and this step still skips, that pass- " +
+                    "through is what to look at rather than the desktop.",
+            },
+            {
+                name: "Find notify-send",
+                lead: "Two absolute paths, checked directly — never a name resolved through PATH.",
+                body:
+                    "The program is looked for at /usr/bin/notify-send and /bin/notify-send, " +
+                    "and the first one that exists is used. Nothing is resolved through " +
+                    "PATH.\n\n" +
+                    "That is the same rule the launcher follows with Node, for the same " +
+                    "reason: rn grants its child a minimal PATH precisely so that what gets " +
+                    "executed is not a question the environment answers, and a job that " +
+                    "spawned notify-send by name would hand that decision back to whatever " +
+                    "the environment happens to say.\n\n" +
+                    "Neither path existing is a permanent failure. A missing program is " +
+                    "still missing on the next attempt, so retrying would only delay the " +
+                    "report. The fix is to install libnotify-bin, which is what the error " +
+                    "names.",
+            },
+            {
+                name: "Build the notification",
+                lead: "Title and body from the run that triggered this one — or a test message when there is none.",
+                body:
+                    "This job is normally somebody else's handler, and the run that " +
+                    "triggered it arrives as the cause: its job id, its outcome, its " +
+                    "summary and its steps. The title is rn: <job> — <outcome>; the body is " +
+                    "the summary one line per value, then the steps worth a glance.\n\n" +
+                    "Which steps is a judgement made here: message steps become the sender " +
+                    "and subject, link steps become the URL. Everything else is machinery, " +
+                    "and a notification is not the place to read machinery. The body is cut " +
+                    "at 800 characters — a notification is a glance, and a daemon handed " +
+                    "four kilobytes either truncates it somewhere unhelpful or draws a " +
+                    "panel across the screen.\n\n" +
+                    "With no cause — you pressed Run now — it builds a test notification " +
+                    "that says it is a test. One that arrives looking like real news and is " +
+                    "not teaches you to distrust the next one.\n\n" +
+                    "A colour wraps the body in Pango markup, and the body is escaped " +
+                    "first, because it is mail somebody else composed. On this desktop the " +
+                    "colour is inert — xfce4-notifyd renders bold and drops the foreground " +
+                    "attribute, measured rather than assumed — which is why the title " +
+                    "prefix exists: an emoji is a colour glyph drawn by the font, and no " +
+                    "stylesheet can grey it out.",
+            },
+            {
+                name: "Withhold the notification under DRY_RUN",
+                lead: "The message is built, sized and titled; only the daemon is not called.",
+                body:
+                    "Everything above has already happened by the time dry run matters: the " +
+                    "inputs were checked, the desktop was found, the message was built. " +
+                    "What is withheld is one call to notify-send.\n\n" +
+                    "The would-notify step carries the title and the size, so a disarmed " +
+                    "install can be read to see what would have appeared. The run is " +
+                    "recorded as skipped and changed: false.",
+                reports:
+                    "would-notify — the title, the body length, the urgency, and the colour " +
+                    "if one was set.",
+            },
+            {
+                name: "Draw it",
+                lead: "execFile with an argument array, no shell, and a ceiling on a wedged daemon.",
+                body:
+                    "notify-send is run with its arguments as an array: the app name, the " +
+                    "urgency, an expiry if one was asked for, an icon if one was named, " +
+                    "then a literal -- and finally the title and body as positional " +
+                    "arguments.\n\n" +
+                    "execFile rather than exec, so there is no shell anywhere in the path. " +
+                    "This matters more here than almost anywhere else in rn: the title and " +
+                    "body are built from mail somebody else wrote, and a shell in that path " +
+                    "would make a subject line a command. The -- is what keeps a body " +
+                    "starting with a dash from being read as an option.\n\n" +
+                    "The call is bounded at ten seconds. A wedged notification daemon must " +
+                    "not hold this job in flight, because the job that triggered it is " +
+                    "still registered as running too, and a restart queues behind both.\n\n" +
+                    "A successful call returns changed: true — the one thing this job " +
+                    "changes is what is on your screen.",
+                reports:
+                    "notified — the title, body length, urgency, icon and expiry actually " +
+                    "used.",
+            },
+        ],
     },
 
     async run(ctx: JobContext): Promise<JobResult> {

@@ -458,6 +458,135 @@ export const watchDeliveries: Job = {
             "days long, so if rn does not run for longer than that, failures that aged out are " +
             "gone and the next run cannot know they happened. Under Deno, api.github.com must " +
             "be on the outbound allowlist on Config → Connection.",
+        stages: [
+            {
+                name: "Settle the repository list",
+                lead: "Either the names you gave, or one page of everything the token can see.",
+                body:
+                    "The token is read first, by name, from the credential store. The " +
+                    "runner has already refused to start the job if it is missing, so this " +
+                    "cannot be the thing that fails at 03:00 — the refusal arrives before " +
+                    "the run, with the credential named.\n\n" +
+                    "If repositories were named, each is checked to be owner/name; anything " +
+                    "else is listed as invalid and dropped, and a run where every name was " +
+                    "invalid stops here rather than silently checking nothing.\n\n" +
+                    "If none were named, the job asks GitHub for the repositories this " +
+                    "token can see — one page, a hundred of them, sorted by full name. That " +
+                    "follows the token: grant it another repository and the next run watches " +
+                    "it, with nothing to edit here. A token that sees more than a hundred " +
+                    "gets a truncation step, because the hundred-and-first would otherwise " +
+                    "be unwatched with nothing saying so.",
+                reports:
+                    "repo-invalid for names that are not owner/name; repos-truncated when " +
+                    "the token sees more than one page; repos, with the count and whether " +
+                    "the list came from you or from the token.",
+            },
+            {
+                name: "Load the cursor",
+                lead: "One map of webhook to the newest delivery seen — and no delivery ids in it.",
+                body:
+                    "The memory is a single key holding a map of owner/repo#hookId to the " +
+                    "newest delivered_at timestamp seen on that webhook. One key rather " +
+                    "than one per webhook, so the store cannot grow without bound as " +
+                    "repositories are added.\n\n" +
+                    "The key detail is what is *not* in it. GitHub's delivery ids are " +
+                    "64-bit — 3842091948768772096 on a real one — and past 2^53 a " +
+                    "JavaScript number cannot hold every integer. JSON.parse rounds them " +
+                    "without a word, and four consecutive ids collapse into one value. So " +
+                    "the ids are never read: the cursor is the timestamp, and an individual " +
+                    "delivery is identified by its guid, which is a string. Redelivering " +
+                    "needs the exact id, which is one reason this job reports and does not " +
+                    "redeliver.",
+            },
+            {
+                name: "List each repository's webhooks",
+                lead: "One request per repository, and a refusal is data rather than a failure.",
+                body:
+                    "For each repository the job asks for its webhooks. A non-200 answer is " +
+                    "recorded as no-access and the loop continues: GitHub answers 404 for " +
+                    "'you may not see this repository's webhooks', and a token scoped to " +
+                    "some repositories meeting one it cannot read is the ordinary case, not " +
+                    "a fault.\n\n" +
+                    "Failing the run on it would mean one unreadable repository costs the " +
+                    "report on every other. Instead the count of refusals is carried into " +
+                    "the summary, and a run that could read no webhook at all says which " +
+                    "permission is missing — Webhooks read-only on a fine-grained token, " +
+                    "read:repo_hook on a classic one.",
+                reports:
+                    "no-access, with the repository and the status GitHub answered.",
+            },
+            {
+                name: "Page the delivery log",
+                lead: "Walk back through the log until it reaches what it already knows.",
+                body:
+                    "Each webhook's delivery log is read a page at a time, newest first, " +
+                    "and stops as soon as it reaches a delivery older than the cursor. On " +
+                    "the usual hourly run that is one page; on a first look it is however " +
+                    "many pages GitHub's three days occupy.\n\n" +
+                    "Two guards bound it. Five pages is the ceiling, reported as a step " +
+                    "when it is hit, so a webhook with enormous traffic cannot make a run " +
+                    "walk forever. And pagination that does not move forward — a link " +
+                    "header pointing sideways or backwards — is refused rather than " +
+                    "followed, which is the loop that would otherwise run until the job's " +
+                    "one-minute ceiling killed it.\n\n" +
+                    "A log that cannot be read leaves the webhook's existing cursor in " +
+                    "place. Dropping it would turn regaining access into a first look that " +
+                    "re-reports three days of history.",
+                reports:
+                    "deliveries-truncated when the page ceiling is hit; pagination-refused " +
+                    "when the link header does not advance; no-access when the log itself " +
+                    "cannot be read.",
+            },
+            {
+                name: "Assess what failed",
+                lead: "Fresh, failed, recovered and outstanding — four different questions about the same log.",
+                body:
+                    "Every delivery without a 2xx is a failure. Fresh means delivered after " +
+                    "the cursor, which is what 'since the last run' means. Recovered means " +
+                    "a later delivery with the same guid did succeed — GitHub records a " +
+                    "redelivery under the original's guid, so a failure you already fixed " +
+                    "is marked rather than raised again. Outstanding is the set of failed " +
+                    "guids with no successful attempt anywhere in the log: the ones still " +
+                    "waiting for somebody to press redeliver.\n\n" +
+                    "By default only fresh failures are reported. Turning on 'report every " +
+                    "failure still in the log' reports all of them, which is what you want " +
+                    "when sitting down to work through the list and not what you want " +
+                    "hourly.\n\n" +
+                    "GitHub's status text is scrubbed before it is recorded. It often " +
+                    "quotes the whole request — POST https://host/api/hooks/demo giving up " +
+                    "after 1 attempt(s) — and that URL is a bearer capability: whoever holds " +
+                    "it reaches this machine's listener. The run record is written to disk " +
+                    "and rendered on a page, so every URL in the text is replaced before it " +
+                    "goes anywhere.",
+                reports:
+                    "webhook, once per hook: the repository, hook id, whether it is active, " +
+                    "its events, how many deliveries were examined and how many were since " +
+                    "the last run. failed, once per reported failure: when, the status code, " +
+                    "the scrubbed reason, the event, the guid, whether it was a redelivery, " +
+                    "and whether it has since recovered.",
+            },
+            {
+                name: "Remember, and decide what to raise",
+                lead: "Four quiet endings and one that reaches the desktop.",
+                body:
+                    "Cursors are staged for the webhooks that still exist, and the runner " +
+                    "commits them after the run succeeds — so a run that threw halfway " +
+                    "cannot skip the deliveries it had not looked at yet. Webhooks that " +
+                    "have been deleted simply stop being written, so the map cannot outgrow " +
+                    "the webhooks it describes.\n\n" +
+                    "The endings are deliberately distinct, because 'nothing failed' and " +
+                    "'no new failure' are different states and only one of them is fine. No " +
+                    "webhooks at all names whether that was a permission problem. Nothing " +
+                    "failed is the clean case. No new failure says how many earlier " +
+                    "failures are still sitting in the log unredelivered, without raising " +
+                    "them again. Every failure since redelivered says exactly that.\n\n" +
+                    "Only a run with an open, not-since-recovered failure returns changed, " +
+                    "which is what hands off to desktop-notify. Under DRY_RUN the cursor " +
+                    "still moves — the job declares effectFree, since every request is a " +
+                    "GET — and only the handoff is withheld, so the failure appears on this " +
+                    "page and nothing pops up on the screen.",
+            },
+        ],
     },
 
     async run(ctx: JobContext): Promise<JobResult> {

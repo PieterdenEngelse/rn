@@ -565,12 +565,137 @@ export const watchFeeds: Job = {
             "new and is reported again. Keep feeds x entries-per-feed well under that and it " +
             "never comes up; go over it and the job works correctly for months and then " +
             "repeats itself after an outage. The run says so up front rather than leaving it " +
-            "to be discovered.\n\nWith DRY_RUN on, nothing is remembered, so every run reports " +
-            "the same entries forever — correctly, and forever. That is the switch working, " +
-            "not a bug, and the skip line says as much.\n\nUnder Deno the launcher grants " +
+            "to be discovered.\n\nWith DRY_RUN on the entries are still remembered — this job " +
+            "declares effectFree, since every request it makes is a GET and there is no " +
+            "rehearsal to keep honest — so a disarmed install does not re-report the same " +
+            "front page every hour. What dry run withholds is changed, and with it the handoff " +
+            "to any job named in onChange: the news reaches this page and nothing carries it " +
+            "further. The skip line says as much.\n\nUnder Deno the launcher grants " +
             "outbound access only to rn's own addresses, so every feed is refused until its " +
             "host is on the allowlist on Config → Connection. The run names the hosts to add " +
             "rather than reporting a bare permission error.",
+        stages: [
+            {
+                name: "Screen the feed list",
+                lead: "Split the list, keep http and https, drop duplicates, and name what was thrown out.",
+                body:
+                    "The feeds input is one string, split on whitespace and commas so a " +
+                    "list pasted from anywhere works. Each entry is parsed as a URL and " +
+                    "kept only if its scheme is http or https.\n\n" +
+                    "The scheme check is a boundary rather than tidiness. A file: URL would " +
+                    "turn a feed list into a way to read this machine's disk through a " +
+                    "field on a web page, and nothing here needs another scheme.\n\n" +
+                    "Duplicates are collapsed, because the same feed twice would be polled " +
+                    "twice and the second pass would find every entry already seen — a " +
+                    "wasted request and a confusing count. A rejected entry is named in the " +
+                    "trace, truncated, rather than dropped quietly: a typo'd feed makes a " +
+                    "report with a hole in it that looks complete. If nothing survives, the " +
+                    "run ends as skipped.",
+                reports:
+                    "unusable-feed, listing what was rejected.",
+            },
+            {
+                name: "Check the window arithmetic",
+                lead: "Feeds times entries-per-feed against the size of the memory, before any request is made.",
+                body:
+                    "What this job remembers is a bounded window of entry ids, not a " +
+                    "permanent record: the oldest falls off as newer ones arrive. That is " +
+                    "fine for feeds and it is not free — an id that has aged out reads as " +
+                    "new and gets reported a second time.\n\n" +
+                    "The bound is feeds × entries-per-feed against the window's capacity. " +
+                    "Go over it and a single run can push its own ids out of the window, " +
+                    "which means entries repeat. The job works correctly for months and " +
+                    "then starts repeating itself after an outage, which is the worst way " +
+                    "to find out.\n\n" +
+                    "So the arithmetic is done first and reported as a step, before the " +
+                    "work rather than after the symptom. It is a warning, not a refusal: " +
+                    "the run continues, because a repeated entry is a nuisance and a " +
+                    "refused run is an outage.",
+                reports:
+                    "window-too-small — how many feeds, how many entries each, the product, " +
+                    "the capacity, and what the effect is.",
+            },
+            {
+                name: "Load the per-feed marks",
+                lead: "One map of feed to last-polled time, and a feed missing from it means first look.",
+                body:
+                    "There are two halves to the memory, and this is the smaller one: a map " +
+                    "of feed label to when it was last polled. Its job is to answer 'has " +
+                    "this install ever heard of this feed', which per-entry identity cannot " +
+                    "answer on its own.\n\n" +
+                    "Without it, adding a feed would announce its entire front page as " +
+                    "news — twenty posts, most of them years old, on the run right after " +
+                    "you pasted the URL. With it, a feed nobody has looked at is recorded " +
+                    "silently and only what appears afterwards is reported. Turning on " +
+                    "catch-up is how you ask for the front page deliberately.",
+            },
+            {
+                name: "Fetch and parse each feed",
+                lead: "Four at a time, RSS and Atom both, with one dead feed costing only itself.",
+                body:
+                    "Each feed is fetched and parsed into entries with a title, a link, a " +
+                    "published date and an identity. RSS and Atom are both handled, since " +
+                    "which one a site publishes is not something a reader should have to " +
+                    "know. Four fetches run at once, and the abort signal is passed through " +
+                    "so a run that hits its ceiling actually stops rather than leaving " +
+                    "requests in flight.\n\n" +
+                    "A feed that fails is collected rather than thrown, so one dead host " +
+                    "does not cost the report from the rest. Every feed failing is a " +
+                    "different thing — no network, dead DNS, or a runtime refusing the " +
+                    "request — and that throws, so it retries and lands in the failure list " +
+                    "instead of arriving as 'nothing new'.\n\n" +
+                    "If the error looks like the runtime's own network permission, the " +
+                    "failure is marked permanent and not retried: a grant is fixed when the " +
+                    "process starts and cannot widen while it runs, so the other two " +
+                    "attempts would be told exactly the same thing.",
+                reports:
+                    "feed-failed, once per feed, with the label and the error.",
+            },
+            {
+                name: "Ask about every entry",
+                lead: "Per-item identity, and asking is what records it.",
+                body:
+                    "Each feed's newest entries — at most the per-feed limit — are walked " +
+                    "in order, and each is turned into a key from the feed URL and the " +
+                    "entry's own id, guid or link. The key is scoped to the feed on " +
+                    "purpose, so two sites syndicating the same post are two items rather " +
+                    "than one swallowing the other.\n\n" +
+                    "Asking the store whether an id has been seen is what records it. There " +
+                    "is no second call to forget, which is why the question is asked here, " +
+                    "at the point of handling the entry, and never while filtering a list " +
+                    "for display.\n\n" +
+                    "An entry carrying no id, no guid and no link cannot be identified, so " +
+                    "it is neither reported nor remembered — reporting it would mean " +
+                    "reporting it again on every run forever. Those are counted and named " +
+                    "per feed.\n\n" +
+                    "On a feed's first look the entries are recorded and, unless catch-up " +
+                    "was asked for, not reported.",
+                reports:
+                    "entries-without-identity, per feed, with a count and what the " +
+                    "consequence is.",
+            },
+            {
+                name: "Report, remember, hand on",
+                lead: "One step per new entry, a staged write, and changed only when there is real news.",
+                body:
+                    "Every entry that survives step 5 becomes its own step on the run " +
+                    "record, carrying the feed, the title, the link and the published date. " +
+                    "That is the report: the trace under the run is the thing you read, " +
+                    "rather than a summary that says '3 new'.\n\n" +
+                    "The per-feed marks are staged and committed by the runner after a " +
+                    "successful run. Before that, the size of the value is checked against " +
+                    "half the store's ceiling and reported if it is close — the store " +
+                    "refuses an oversized value by throwing, and a failed run is a poor way " +
+                    "to learn that a feed list got long.\n\n" +
+                    "Three quiet endings and one loud one: a first look, which records and " +
+                    "announces nothing; nothing new; a dry run, which reports the entries " +
+                    "and withholds only the handoff to onChange; and real news, which is " +
+                    "the single case that returns changed: true.",
+                reports:
+                    "new-entry, once per entry, with feed, title, link and published date. " +
+                    "state-size when the remembered value approaches the store's ceiling.",
+            },
+        ],
     },
 
     async run(ctx: JobContext): Promise<JobResult> {

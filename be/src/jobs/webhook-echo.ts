@@ -110,6 +110,119 @@ export const webhookEcho: Job = {
             "delivery with the same x-github-delivery id is refused as a replay. That is " +
             "correct, and it means pressing \"redeliver\" on the provider's side does " +
             "nothing until the id ages out of the log.",
+        stages: [
+            {
+                name: "A delivery reaches the door",
+                lead: "Everything that happens before this job is started at all.",
+                body:
+                    "This step is not in the job's own code, and it is the one most worth " +
+                    "reading: by the time run() begins, four things have already been " +
+                    "decided.\n\n" +
+                    "The request arrived at POST /api/hooks/demo on the hooks listener — a " +
+                    "different port from the API, and the only part of rn a tunnel should " +
+                    "ever point at. The id in that path was looked up in the same catalogue " +
+                    "this page lists; an id that names no job gets a 404, the same 404 an " +
+                    "unregistered one gets, so the endpoint cannot be used to enumerate " +
+                    "what exists.\n\n" +
+                    "The signature was verified over the exact bytes of the body, using the " +
+                    "demoWebhook credential, before anything was parsed. A rejection says " +
+                    "only that the request was refused — an error that explained itself " +
+                    "would help somebody guess the secret — and the reason is in the backend " +
+                    "log instead: hook-signature-rejected, hook-secret-missing, " +
+                    "hook-not-found.\n\n" +
+                    "And the delivery id in x-github-delivery was checked against the ones " +
+                    "recently seen. A signature stays valid forever, which is what a " +
+                    "signature is, so a captured delivery could otherwise be replayed at " +
+                    "will. A second delivery with an id already in the log is refused — " +
+                    "which is also why pressing 'redeliver' on the provider's side does " +
+                    "nothing until that id ages out.",
+            },
+            {
+                name: "Check there is a payload",
+                lead: "Run by hand there is no delivery, and the job says so rather than inventing one.",
+                body:
+                    "A webhook run arrives with the parsed body attached. A run started from " +
+                    "the Run now button on this page does not, and that is a legitimate " +
+                    "thing to do — it is how you check the job is registered without waiting " +
+                    "for somebody else's system to fire.\n\n" +
+                    "So an absent payload ends the run as skipped, saying what this job is " +
+                    "for. Not a failure: nothing went wrong, there was simply nothing " +
+                    "delivered.\n\n" +
+                    "The payload arrives beside the declared inputs rather than as one of " +
+                    "them, and the difference is the point. An input is declared, typed and " +
+                    "checked before the run starts; a provider's body is arbitrary nested " +
+                    "JSON nobody can declare in advance. Routing it through the input check " +
+                    "would mean loosening a check that exists so a typo cannot quietly run a " +
+                    "job on defaults.",
+            },
+            {
+                name: "Report who sent it",
+                lead: "The provider's id and event, plus exactly the headers and query this job declared.",
+                body:
+                    "What the delivery said about itself is recorded separately from what it " +
+                    "carried, because they answer different questions — 'who sent this and " +
+                    "how' against 'what was in it' — and a run whose body turns out to be " +
+                    "unreadable should still be able to say the first.\n\n" +
+                    "The id and event name are the two the listener always reads. Everything " +
+                    "else here is declared by this job and nothing else reaches it: " +
+                    "content-type, because every delivery carries one and none of them is a " +
+                    "secret, and a source query parameter, because a hand-built caller — a " +
+                    "cron on another machine — is the case a query parameter exists for.\n\n" +
+                    "What is not declared is the point of declaring. The signature header is " +
+                    "on every genuine delivery and is not in that list, so it cannot reach " +
+                    "the run record by way of a job that meant well. An unfiltered header " +
+                    "map would be a way to write a stranger's Authorization value onto a " +
+                    "page.\n\n" +
+                    "Every field is optional, because every one of them is the sender's " +
+                    "choice. A provider that identifies nothing leaves an empty object, " +
+                    "which is itself worth reading: it is exactly the case where replay " +
+                    "protection is absent too.",
+                reports:
+                    "delivery — the provider's delivery id and event name, and the declared " +
+                    "header and query values that were present.",
+            },
+            {
+                name: "Measure the body",
+                lead: "A byte count, and a type when the body is legal JSON that is not an object.",
+                body:
+                    "The size is taken from the payload as re-serialised, which is a " +
+                    "description rather than a copy — the number can go on a page, the body " +
+                    "cannot.\n\n" +
+                    "Not every signed body is an object. Some providers send an array, and " +
+                    "null is legal JSON too. Those are reported by type and the run ends " +
+                    "there, successfully: throwing on a body that was correctly signed would " +
+                    "turn somebody else's schema choice into a red run here, and reporting " +
+                    "the type beats reporting nothing.",
+                reports:
+                    "payload-not-an-object, with the type — array(3), null, string — and the " +
+                    "byte count.",
+            },
+            {
+                name: "Describe the shape, never the contents",
+                lead: "Top-level key names and the type of each, and nothing from inside them.",
+                body:
+                    "The top-level keys are listed, and each one's value is reduced to a " +
+                    "type: string, number, boolean, null, array with its length, or object. " +
+                    "That is what lands on the record, and it is the rule this job exists to " +
+                    "demonstrate.\n\n" +
+                    "A job that echoed the body into its summary would write it to " +
+                    "~/.config/rn/job-runs.json and render it on a page. Webhook payloads " +
+                    "carry email addresses, branch names, ticket contents and occasionally " +
+                    "tokens. Redaction scrubs the values rn was told about; it cannot scrub " +
+                    "a customer's address out of a Stripe event.\n\n" +
+                    "null and arrays are described before typeof is consulted, because " +
+                    "typeof gets both wrong — it answers 'object' for each.\n\n" +
+                    "The run always returns changed: false. Nothing was written, nothing was " +
+                    "sent, nothing outside the record moved — which is the whole point of " +
+                    "this job rather than a shortcoming of it, and why it is the safe thing " +
+                    "to point a new provider at first.",
+                reports:
+                    "payload-received, with the number of keys and the byte count, then " +
+                    "payload-shape, one entry per key naming its type. The summary carries " +
+                    "the key names as one line, so the field list is readable without " +
+                    "opening the trace.",
+            },
+        ],
     },
 
     async run(ctx: JobContext): Promise<JobResult> {

@@ -43,6 +43,7 @@ pub use webhooks::*;
 #[cfg(feature = "typescript")]
 pub fn export_all(cfg: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     use ts_rs::TS;
+    JobStage::export_all(cfg)?;
     JobInfo::export_all(cfg)?;
     Schedule::export_all(cfg)?;
     RunningJob::export_all(cfg)?;

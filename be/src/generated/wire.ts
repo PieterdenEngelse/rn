@@ -723,7 +723,14 @@ why: string,
 /**
  * What visibly goes wrong when it is misconfigured or never run.
  */
-ifWrong: string, };
+ifWrong: string, 
+/**
+ * The job's run, stage by stage. Absent on the shapes that borrow
+ * this type and have no pipeline — a runtime parameter, a job's
+ * input field — which is why it is optional rather than an empty
+ * list every one of them would have to spell.
+ */
+stages?: Array<JobStage> | null, };
 
 /**
  * One value a job accepts, for one run.
@@ -919,6 +926,46 @@ export type JobRunResult = { id: string, summary: { [key in string]: JsonValue }
  * GET /api/jobs/:id/source.
  */
 export type JobSource = { id: string, path: string, content: string, };
+
+/**
+ * One stage of a job's run, in the order the job performs it.
+ *
+ * A job's three-paragraph `JobInfo` says what the job is for. It cannot
+ * say what the job *does at 03:00*, in order, and that is the question
+ * somebody reading a run record actually has: the trace shows `scanned`
+ * then `would-delete` and nothing anywhere says which of those is a
+ * decision and which is an action. So a job describes its own pipeline,
+ * one entry per stage, and the panel renders them as tabs.
+ *
+ * Written from the job's own `run()` rather than from its purpose. A
+ * stage that does not exist in the code is worse than no stage at all —
+ * it is a wrong answer given confidently to somebody who cannot check it
+ * without reading TypeScript.
+ */
+export type JobStage = { 
+/**
+ * Tab label. Two or three words, an action: `Scan`, `Decide what is
+ * stale`, `Delete`. The panel numbers them, so the name does not.
+ */
+name: string, 
+/**
+ * One line under the heading: what this stage is, in a sentence.
+ */
+lead: string, 
+/**
+ * The stage at length — what it reads, what it decides, what it
+ * refuses, and what it hands to the next one.
+ */
+body: string, 
+/**
+ * The step names this stage puts on the run record, and what each
+ * one's detail means.
+ *
+ * Optional because not every stage reports: parsing an input and
+ * returning `skipped` leave nothing in the trace, and a section
+ * saying "nothing" on half the tabs is worse than no section.
+ */
+reports?: string | null, };
 
 /**
  * One thing a job did on the way, as `ctx.step()` reported it.
