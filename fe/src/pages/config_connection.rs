@@ -1,5 +1,10 @@
-use crate::api::{fetch_connection, fetch_jobs, ConnectionResponse, JobsResponse};
-use crate::components::param::{PARAM_BOARD_BASE_CLASS, PARAM_BOARD_TITLE_CLASS};
+use crate::api::{
+    fetch_connection, fetch_jobs, fetch_params, save_settings, AppliesAt, Category,
+    ConnectionResponse, JobsResponse, ParamsResponse, RuntimeParam,
+};
+use crate::components::param::{unsaved_ids, PARAM_BOARD_BASE_CLASS, PARAM_BOARD_TITLE_CLASS};
+use crate::pages::config::ParamBlock;
+use std::collections::BTreeMap;
 use crate::app::Route;
 use crate::components::{GlossaryEntry, InfoButton, Panel};
 use dioxus::prelude::*;
@@ -19,6 +24,34 @@ use dioxus_router::Link;
 #[component]
 pub fn ConfigConnection() -> Element {
     let conn = use_resource(fetch_connection);
+    // The registry, for the two boards that have settings of their own. A
+    // separate fetch rather than a copy of the values into /api/connection,
+    // for the reason the jobs payload is fetched separately below: one
+    // definition, read twice, is the arrangement that cannot drift.
+    let mut params_reload = use_signal(|| 0u32);
+    let params = use_resource(move || {
+        let _ = params_reload();
+        fetch_params()
+    });
+    // Seeded from the whole saved file, not from the boards' own settings.
+    // `PUT /api/settings` writes the body as the entire file, so a draft
+    // holding only the nine mail rows would save as a deletion of the other
+    // thirty-eight. Seeded once, for the reason Config → Runtime seeds once:
+    // re-seeding on a poll overwrites what somebody is in the middle of
+    // typing.
+    let mut draft = use_signal(BTreeMap::<String, serde_json::Value>::new);
+    let mut seeded = use_signal(|| false);
+    use_effect(move || {
+        if let Some(Ok(resp)) = &*params.read() {
+            if seeded() {
+                return;
+            }
+            if let Some(map) = resp.settings.as_object() {
+                draft.set(map.iter().map(|(k, v)| (k.clone(), v.clone())).collect());
+            }
+            seeded.set(true);
+        }
+    });
     // The cadence and the failure handlers live on the jobs payload. Fetched
     // separately rather than duplicated into /api/connection: the same numbers
     // in two endpoints is the drift the shared crate exists to remove, one
@@ -37,7 +70,16 @@ pub fn ConfigConnection() -> Element {
                     rsx! {
                         Connection { conn: c.clone() }
                         PushAndPoll { conn: c.clone(), jobs: j.clone() }
-                        Integrations { conn: c.clone() }
+                        Integrations {
+                            conn: c.clone(),
+                            params: match &*params.read_unchecked() {
+                                Some(Ok(p)) => Some(p.clone()),
+                                _ => None,
+                            },
+                            draft,
+                            seeded: seeded(),
+                            on_saved: move |_| params_reload += 1,
+                        }
                         Reaction { jobs: j }
                         Origins { conn: c }
                     }
@@ -227,6 +269,11 @@ fn Board(
     blocked: bool,
     facts: Vec<String>,
     info: Element,
+    /// The settings this shape owns, where it owns any. Absent on the two that
+    /// own none — Webhooks, whose configuration is hooks and credentials on
+    /// Config → Jobs, and OAuth, which has nothing to set but a token.
+    #[props(default = None)]
+    settings: Option<Element>,
     /// Where this shape's behaviour is actually observed.
     ///
     /// The boards above state what an integration *can* be here, and they look
@@ -254,6 +301,9 @@ fn Board(
                     li { key: "{fact}", class: "text-gray-400 text-xs", "{fact}" }
                 }
             }
+            if let Some(settings) = settings.clone() {
+                {settings}
+            }
             // Separated from the facts rather than appended to them: a route
             // is not a fourth fact about the integration, and a reader
             // scanning three boards for "where do I look" should find the same
@@ -265,9 +315,63 @@ fn Board(
     }
 }
 
+/// The settings one integration shape owns, drawn on that shape's board.
+///
+/// A filtered view of the registry, never a second copy of it: the rows are
+/// `ParamBlock`s, the same control Config → Runtime draws, writing to the same
+/// draft. What this adds is placement — nine mail rows are the IMAP
+/// integration's configuration, and a reader who has just been told what IMAP
+/// can be here should not have to find them among forty-seven parameters
+/// filed by category on another page.
+#[component]
+fn BoardSettings(
+    params: Vec<RuntimeParam>,
+    draft: Signal<BTreeMap<String, serde_json::Value>>,
+    effective: serde_json::Value,
+    /// Where else these same rows appear, and anything true of the group that
+    /// no single row says.
+    note: String,
+) -> Element {
+    if params.is_empty() {
+        return rsx! {};
+    }
+    rsx! {
+        div { class: "mt-2 pt-2 border-t border-gray-700",
+            span { class: PARAM_BOARD_TITLE_CLASS, "Settings" }
+            p { class: "text-gray-400 text-xs mt-1 mb-2", "{note}" }
+            div { class: "space-y-2",
+                for p in params.iter() {
+                    ParamBlock {
+                        key: "{p.id}",
+                        param: p.clone(),
+                        draft,
+                        // Every row here applies at restart, and saying so per
+                        // row rather than once for the board is what stops a
+                        // reader assuming the one they just typed took hold.
+                        show_applies: true,
+                        effective: effective.clone(),
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// The four shapes an integration takes, and which of them rn can be.
 #[component]
-fn Integrations(conn: ConnectionResponse) -> Element {
+fn Integrations(
+    conn: ConnectionResponse,
+    /// The registry, absent while the fetch is in flight or has failed. The
+    /// boards draw their prose either way — what an integration can be here
+    /// does not depend on the settings loading.
+    params: Option<ParamsResponse>,
+    draft: Signal<BTreeMap<String, serde_json::Value>>,
+    /// Whether the draft has been filled from the server. Nothing saves while
+    /// this is false: a save writes the body as the whole file, so an empty
+    /// draft is a deletion of every setting.
+    seeded: bool,
+    on_saved: EventHandler<()>,
+) -> Element {
     // Under Node and Bun the outbound list is recorded and enforced by nothing,
     // so "add the host to the allowlist" is advice that does nothing there —
     // and saying it anyway would be inventing a step.
@@ -275,6 +379,92 @@ fn Integrations(conn: ConnectionResponse) -> Element {
         format!("the host must be in the outbound grant — {} enforces it", conn.runtime)
     } else {
         format!("no host restriction applies — {} enforces none", conn.runtime)
+    };
+
+    // Chosen by category rather than by a list of ids, so a mail setting added
+    // to the registry tomorrow appears on the board that owns it without
+    // anybody remembering this file. `netAllowlist` is the one exception and
+    // is named: it is filed under Runtime beside the runtime picker, because
+    // that is where a reader comparing Deno against Node looks for it, and it
+    // is still the outbound grant this board is about.
+    let mail_params: Vec<RuntimeParam> = params
+        .as_ref()
+        .map(|p| {
+            p.params
+                .iter()
+                .filter(|p| matches!(p.category, Category::MailAccount | Category::MailReceiving))
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
+    let net_params: Vec<RuntimeParam> = params
+        .as_ref()
+        .map(|p| {
+            p.params
+                .iter()
+                .filter(|p| p.category == Category::Network || p.id == "netAllowlist")
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let effective = params
+        .as_ref()
+        .map(|p| p.effective.clone())
+        .unwrap_or(serde_json::Value::Null);
+    let saved = params
+        .as_ref()
+        .map(|p| p.settings.clone())
+        .unwrap_or(serde_json::Value::Null);
+
+    // What a save would write, named rather than counted — the same answer
+    // Config → Runtime's Restart button gives, from the same helper.
+    let pending: Vec<String> = if seeded {
+        unsaved_ids(&draft(), &saved)
+    } else {
+        Vec::new()
+    };
+    // Every setting on these two boards applies at restart, but that is a
+    // property of the rows rather than a rule, so it is asked rather than
+    // assumed: a future immediate one must not make this line lie.
+    let needs_restart = params.as_ref().is_some_and(|p| {
+        p.params
+            .iter()
+            .any(|r| pending.contains(&r.id) && r.applies_at == AppliesAt::Restart)
+    });
+
+    let mut saving = use_signal(|| false);
+    let mut status = use_signal(|| Option::<String>::None);
+    let mut error = use_signal(|| Option::<String>::None);
+
+    let save = move |_| {
+        if saving() || !seeded {
+            return;
+        }
+        saving.set(true);
+        status.set(None);
+        error.set(None);
+        let body = serde_json::Value::Object(draft().into_iter().collect());
+        spawn(async move {
+            match save_settings(body).await {
+                Ok(resp) if resp.ok => {
+                    status.set(Some("Saved.".to_string()));
+                    on_saved.call(());
+                }
+                // Named per setting, not as one "invalid" — the backend
+                // answers with the id it rejected so the reader knows which
+                // box to look at.
+                Ok(resp) => error.set(Some(
+                    resp.errors
+                        .iter()
+                        .map(|e| format!("{}: {}", e.id, e.message))
+                        .collect::<Vec<_>>()
+                        .join("; "),
+                )),
+                Err(e) => error.set(Some(e)),
+            }
+            saving.set(false);
+        });
     };
 
     rsx! {
@@ -351,6 +541,17 @@ fn Integrations(conn: ConnectionResponse) -> Element {
                             glossary: vec![ctx_entry()],
                         }
                     },
+                    settings: Some(rsx! {
+                        BoardSettings {
+                            params: mail_params.clone(),
+                            draft,
+                            effective: effective.clone(),
+                            note: "The same rows Config → Runtime files under Mail account and \
+                                   Mail — receiving. The account is shared with sending: read-mail \
+                                   opens IMAP with it and send-mail opens SMTP with it."
+                                .to_string(),
+                        }
+                    }),
                     watched: rsx! {
                         "Watched on "
                         Link {
@@ -387,6 +588,18 @@ fn Integrations(conn: ConnectionResponse) -> Element {
                             glossary: vec![ctx_entry()],
                         }
                     },
+                    settings: Some(rsx! {
+                        BoardSettings {
+                            params: net_params.clone(),
+                            draft,
+                            effective: effective.clone(),
+                            note: "The same rows Config → Runtime files under Network, plus the \
+                                   outbound grant itself, which sits under Runtime there beside \
+                                   the runtime picker. A row struck through is one the running \
+                                   runtime ignores."
+                                .to_string(),
+                        }
+                    }),
                     watched: rsx! {
                         "Watched in two places: "
                         Link {
@@ -440,6 +653,43 @@ fn Integrations(conn: ConnectionResponse) -> Element {
                          with it."
                     },
                 }
+            }
+
+            // One Save for the tile rather than one per board, because there is
+            // one draft: typing in both boards and pressing Save on either
+            // would commit the pair whichever button did it, and two buttons
+            // implying otherwise would be a lie about what is being written.
+            //
+            // Shown only when there is something to write. A permanently
+            // visible Save on a page of readings invites a press that does
+            // nothing, and then the one that does something looks the same.
+            if !pending.is_empty() {
+                div { class: "mt-3 flex flex-wrap items-center gap-3",
+                    button {
+                        class: "text-blue-400 hover:text-blue-300 cursor-pointer bg-transparent border-0 p-0 text-sm",
+                        onclick: save,
+                        if saving() { "Saving…" } else { "Save" }
+                    }
+                    // Named, not counted: "3 unsaved settings" is a number to
+                    // accept, and these are the ids a save is about to write.
+                    span { class: "text-gray-300 text-xs", "unsaved: {pending.join(\", \")}" }
+                    if needs_restart {
+                        span { class: "text-gray-400 text-xs",
+                            "takes effect when the backend restarts — the button for that is on "
+                            Link {
+                                to: Route::Config {},
+                                class: "text-blue-400 hover:text-blue-300",
+                                "Config → Runtime"
+                            }
+                        }
+                    }
+                }
+            }
+            if let Some(s) = status() {
+                p { class: "mt-2 text-xs", style: "color: #86efac;", "{s}" }
+            }
+            if let Some(e) = error() {
+                p { class: "mt-2 text-xs text-amber-400", "{e}" }
             }
         }
     }

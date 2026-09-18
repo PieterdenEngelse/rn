@@ -830,8 +830,20 @@ fn DryRunSwitch(
     }
 }
 
+/// One parameter: its label, its control, and its panel.
+///
+/// `pub(crate)` because Config → Connection renders a handful of these on the
+/// integration board they belong to — the mail account's nine on IMAP, the
+/// outbound four on API. A second implementation there would be a second set
+/// of controls over one registry entry, which is the drift `shared/` exists to
+/// prevent one level down; this is the same control, reading and writing the
+/// same draft, drawn somewhere else.
+///
+/// It writes to `draft` and never saves: what commits the draft is the page's
+/// own Save, which is why the same block works under a page with one Save
+/// button and a page with one per tile.
 #[component]
-fn ParamBlock(
+pub(crate) fn ParamBlock(
     param: RuntimeParam,
     draft: Signal<BTreeMap<String, serde_json::Value>>,
     show_applies: bool,
