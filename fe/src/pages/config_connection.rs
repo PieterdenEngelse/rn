@@ -1,7 +1,9 @@
 use crate::api::{fetch_connection, fetch_jobs, ConnectionResponse, JobsResponse};
 use crate::components::param::{PARAM_BOARD_BASE_CLASS, PARAM_BOARD_TITLE_CLASS};
+use crate::app::Route;
 use crate::components::{GlossaryEntry, InfoButton, Panel};
 use dioxus::prelude::*;
+use dioxus_router::Link;
 
 /// Config → Connection. How this install meets the world.
 ///
@@ -219,7 +221,22 @@ fn PushAndPoll(conn: ConnectionResponse, jobs: Option<JobsResponse>) -> Element 
 /// it. A board rather than a panel because the four are read against each
 /// other — the answer to "which of these can I use" is the row, not any cell.
 #[component]
-fn Board(name: String, verdict: String, blocked: bool, facts: Vec<String>, info: Element) -> Element {
+fn Board(
+    name: String,
+    verdict: String,
+    blocked: bool,
+    facts: Vec<String>,
+    info: Element,
+    /// Where this shape's behaviour is actually observed.
+    ///
+    /// The boards above state what an integration *can* be here, and they look
+    /// exactly like the ones on Monitor → Connection, which state what is
+    /// happening — same component shape, same verdict line, same amber. A
+    /// reader cannot be expected to carry that distinction, so each board now
+    /// carries the route to its own live state, and the one board with no live
+    /// state says that instead of staying silent.
+    watched: Element,
+) -> Element {
     rsx! {
         div { class: "{PARAM_BOARD_BASE_CLASS} flex-1 min-w-64",
             div { class: "flex items-center justify-between gap-2 mb-2",
@@ -236,6 +253,13 @@ fn Board(name: String, verdict: String, blocked: bool, facts: Vec<String>, info:
                 for fact in facts.iter() {
                     li { key: "{fact}", class: "text-gray-400 text-xs", "{fact}" }
                 }
+            }
+            // Separated from the facts rather than appended to them: a route
+            // is not a fourth fact about the integration, and a reader
+            // scanning three boards for "where do I look" should find the same
+            // line in the same place on each.
+            div { class: "mt-2 pt-2 border-t border-gray-700 text-xs text-gray-300",
+                {watched}
             }
         }
     }
@@ -296,6 +320,16 @@ fn Integrations(conn: ConnectionResponse) -> Element {
                             if_wrong: WEBHOOK_IF_WRONG.to_string(),
                         }
                     },
+                    watched: rsx! {
+                        "Watched on "
+                        Link {
+                            to: Route::MonitorConnection {},
+                            class: "text-blue-400 hover:text-blue-300",
+                            "Monitor → Connection"
+                        }
+                        " — its Listeners board counts every delivery accepted, refused and not \
+                         found, and a refusal is the state this board cannot see."
+                    },
                 }
                 Board {
                     name: "IMAP".to_string(),
@@ -316,6 +350,16 @@ fn Integrations(conn: ConnectionResponse) -> Element {
                             if_wrong: IMAP_IF_WRONG.to_string(),
                             glossary: vec![ctx_entry()],
                         }
+                    },
+                    watched: rsx! {
+                        "Watched on "
+                        Link {
+                            to: Route::MonitorMail {},
+                            class: "text-blue-400 hover:text-blue-300",
+                            "Monitor → Mail"
+                        }
+                        " — whether the mailbox answered half an hour ago is read-mail's last \
+                         run, which is a record rather than a property of this install."
                     },
                 }
                 Board {
@@ -343,6 +387,23 @@ fn Integrations(conn: ConnectionResponse) -> Element {
                             glossary: vec![ctx_entry()],
                         }
                     },
+                    watched: rsx! {
+                        "Watched in two places: "
+                        Link {
+                            to: Route::MonitorConnection {},
+                            class: "text-blue-400 hover:text-blue-300",
+                            "Monitor → Connection"
+                        }
+                        "'s Outbound board for what this process may reach, and a job's own \
+                         trace on "
+                        Link {
+                            to: Route::MonitorJobs {},
+                            class: "text-blue-400 hover:text-blue-300",
+                            "Monitor → Jobs"
+                        }
+                        " for the call that failed — a refused lookup is recorded per host, by \
+                         the job that made it."
+                    },
                 }
                 Board {
                     name: "OAuth".to_string(),
@@ -364,6 +425,19 @@ fn Integrations(conn: ConnectionResponse) -> Element {
                             if_wrong: OAUTH_IF_WRONG.to_string(),
                             glossary: vec![ctx_entry()],
                         }
+                    },
+                    // The one board whose pointer is mostly a negative, and it
+                    // says so rather than going quiet — a blank where the other
+                    // three carry a route reads as an oversight.
+                    watched: rsx! {
+                        "No flow to watch, because there is none here. The token is watched: "
+                        Link {
+                            to: Route::MonitorConnection {},
+                            class: "text-blue-400 hover:text-blue-300",
+                            "Monitor → Connection"
+                        }
+                        "'s Tokens board says when a credential stops working and what stops \
+                         with it."
                     },
                 }
             }
