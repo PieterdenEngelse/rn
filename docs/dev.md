@@ -78,6 +78,48 @@ instead is the mistake `CLAUDE.md` explains.
 
 ---
 
+## Photographing something behind a click
+
+`chromium --screenshot` answers most visual questions and cannot answer any
+question behind a click: an info panel exists only while it is open, a tab's
+content only while it is selected, a Save row only once a field has changed.
+`scripts/shot.mjs` drives the page first and then captures it.
+
+```bash
+# The Groups tab of the Webhooks panel on Config → Connection.
+scripts/shot.mjs --out /tmp/p.png --size 1000x760 \
+  http://127.0.0.1:1791/config/connection \
+  --eval '(() => { const b = [...document.querySelectorAll("div")]
+      .find(d => d.querySelector("span")?.textContent === "Webhooks");
+      b.querySelector("button[title=\"What this setting does\"]").click();
+      return "opened"; })()' \
+  --click-text Groups
+```
+
+Steps run in the order written and each prints what it returned. A step that
+matches nothing throws, and then **nothing is written** — a screenshot of the
+page with the step not applied is the most misleading artifact the tool could
+produce, because it looks like a finding rather than a mistake.
+
+No dependency: Node 22 and later have a global `WebSocket`, which is all the
+DevTools protocol needs. That is deliberate rather than clever — `npm install
+puppeteer` in a worktree whose `node_modules` is a symlink would silently
+un-share it, and a tool for *looking* at the page must not change what the page
+is built from.
+
+Two things it fixes by construction. The PNG arrives over the protocol and node
+writes it, so a `/tmp` path works — `chromium --screenshot=/tmp/…` writes
+nothing here, because the browser's `/tmp` is namespaced away from the shell's,
+and it fails silently. And the default capture is the viewport rather than the
+whole page: an info panel is `position: fixed`, so `--full` photographs it
+against the page it covers and the panel looks like it stops half way down.
+
+It starts its own browser in a temporary profile and kills it on the way out,
+including on failure — the orphan rule in `CLAUDE.md` applies to a headless
+browser exactly as it does to a dev server.
+
+---
+
 ## A scratch backend on another runtime
 
 For checking something that only happens under Bun or Deno — a permission
