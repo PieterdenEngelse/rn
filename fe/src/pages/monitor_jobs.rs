@@ -410,6 +410,106 @@ fn DryRunBanner(dry_run: bool, on_changed: EventHandler<()>) -> Element {
     }
 }
 
+/// A door a job can be started through, for the filter above the catalogue.
+///
+/// A set rather than a category, which is the whole reason this is computed
+/// instead of stored. A job can have several — `watch-deliveries` has a
+/// schedule and is a change-source for another job — and every job has Manual,
+/// so a single label per job would have to pick a winner and then defend the
+/// choice. Filtering on membership needs no winner.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Door {
+    /// Everything, and the state the page opens in.
+    Any,
+    Scheduled,
+    Webhook,
+    /// Named by another job's `onFailure` or `onChange`.
+    Handler,
+    /// None of the above: the Run now button is the only way in.
+    OnRequest,
+}
+
+impl Door {
+    fn label(self) -> &'static str {
+        match self {
+            Door::Any => "All",
+            Door::Scheduled => "Scheduled",
+            Door::Webhook => "Webhook",
+            Door::Handler => "Handler",
+            Door::OnRequest => "On request only",
+        }
+    }
+}
+
+/// Whether a job has a given door, answered from the response rather than from
+/// the job file.
+///
+/// Every input here is the *effective* value: `scheduled` carries the schedule
+/// after overrides, and the handler edges are read off whatever each job's
+/// `onFailure` and `onChange` say right now. So a wiring change made on Config
+/// → Jobs moves a job between filters on the next poll, with nothing to keep in
+/// step — which a field on the job could not do, since the wiring is a property
+/// of this install and not of the code.
+///
+/// Handler edges are searched across the *whole* catalogue, not the half this
+/// page shows. `notify-all` is named by `read-mail`, which lives on Monitor →
+/// Mail, and a job whose only door is on another page still has that door.
+fn has_door(job: &CatalogueJob, jobs: &JobsResponse, door: Door) -> bool {
+    let scheduled = jobs.scheduled.iter().any(|s| s.id == job.id);
+    let webhook = job.webhook.is_some();
+    let handler = jobs.catalogue.iter().any(|c| {
+        c.on_failure.as_deref() == Some(job.id.as_str())
+            || c.on_change.as_deref() == Some(job.id.as_str())
+    });
+    match door {
+        Door::Any => true,
+        Door::Scheduled => scheduled,
+        Door::Webhook => webhook,
+        Door::Handler => handler,
+        Door::OnRequest => !scheduled && !webhook && !handler,
+    }
+}
+
+/// The selected filter, and the ones beside it.
+///
+/// Same `#7C2A02` the info button and the panel's own tabs use, so "this is
+/// the one you are on" is one colour across the app rather than a third
+/// convention. Idle chips sit at `text-gray-300`, the floor for a label
+/// somebody has to read on a dark tile.
+const DOOR_CHIP_ON_CLASS: &str =
+    "px-2 py-0.5 rounded text-xs font-medium text-white cursor-pointer border-0";
+const DOOR_CHIP_ON_STYLE: &str = "background-color: #7C2A02;";
+const DOOR_CHIP_OFF_CLASS: &str =
+    "px-2 py-0.5 rounded text-xs text-gray-300 hover:text-white bg-gray-800 cursor-pointer border-0";
+
+const DOOR_WHAT: &str =
+    "Narrows the cards below to the jobs that can be started a particular way. All five counts \
+     are worked out from this response every time the page refreshes, not stored anywhere: the \
+     schedule is the effective one after any override, and Handler means some job in the \
+     catalogue currently names this one in its on-failure or on-change.\n\nA job can be in more \
+     than one at once, because a trigger is a door and a job can have several. Every job also \
+     has Run now, which is why there is no Manual filter — it would select all of them. \"On \
+     request only\" is the useful half of that: the jobs nothing else can start.";
+
+const DOOR_WHY: &str =
+    "The catalogue answers \"what can this install do\", and the first question about any \
+     automation is when it happens. Eight cards in one grid make that a card-by-card read — the \
+     filter turns it into one glance, and the counts alone answer \"is anything running on its \
+     own?\" without pressing anything.\n\nIt is computed rather than declared for a reason worth \
+     knowing: how a job is triggered is a fact about your configuration, not about the code. \
+     notify-all has no schedule, no webhook, and no job file names it — it is a handler solely \
+     because read-mail's on-change was pointed at it on Config → Jobs. A category written into \
+     the job file would call it \"on request only\" while it fires on every arriving message.";
+
+const DOOR_IF_WRONG: &str =
+    "The filter can only see wiring the catalogue knows about, and one path is invisible to it. \
+     notify-all runs desktop-notify and notify itself, in its own code, rather than by naming \
+     them in a field — so notify shows as \"on request only\" here while it does in fact run \
+     whenever notify-all does. A job started from another job's source is a door no table can \
+     list; the job's own panel says so.\n\nA count of zero hides its filter rather than offering \
+     a button that selects nothing, so the row changes shape as wiring changes. If Webhook is \
+     missing from the row, no job in this half of the catalogue declares one.";
+
 /// The catalogue cards, for whichever half of the catalogue the page owns.
 ///
 /// One component and one list, for the reason `PerJob` is: with a filter per
@@ -422,6 +522,10 @@ pub fn Catalogue(
     #[props(default = false)] mail_only: bool,
     on_ran: EventHandler<()>,
 ) -> Element {
+    // Declared before the early returns below: a hook that runs on some
+    // renders and not others is the one mistake Dioxus cannot recover from.
+    let mut door = use_signal(|| Door::Any);
+
     let shown: Vec<CatalogueJob> = jobs
         .catalogue
         .iter()
@@ -454,7 +558,53 @@ pub fn Catalogue(
         };
     }
 
+    // Counted before anything is drawn, because a filter offering a button
+    // that selects nothing is worse than one button fewer.
+    let doors = [Door::Scheduled, Door::Webhook, Door::Handler, Door::OnRequest];
+    let counts: Vec<(Door, usize)> = doors
+        .iter()
+        .map(|&d| (d, shown.iter().filter(|j| has_door(j, &jobs, d)).count()))
+        .filter(|(_, n)| *n > 0)
+        .collect();
+    let visible: Vec<CatalogueJob> = shown
+        .iter()
+        .filter(|j| has_door(j, &jobs, door()))
+        .cloned()
+        .collect();
+
     rsx! {
+        // Only where there is a choice to make. On Monitor → Mail this is two
+        // cards and at most two chips, which is furniture rather than a
+        // control — and the row would be wider than the thing it filters.
+        if shown.len() > 3 && counts.len() > 1 {
+            div { class: "flex flex-wrap items-center gap-2 mb-3",
+                span { class: "text-gray-400 text-xs", "Triggered by" }
+                button {
+                    class: if door() == Door::Any { DOOR_CHIP_ON_CLASS } else { DOOR_CHIP_OFF_CLASS },
+                    style: if door() == Door::Any { DOOR_CHIP_ON_STYLE } else { "" },
+                    onclick: move |_| door.set(Door::Any),
+                    "All {shown.len()}"
+                }
+                for (d, n) in counts.iter().copied() {
+                    button {
+                        class: if door() == d { DOOR_CHIP_ON_CLASS } else { DOOR_CHIP_OFF_CLASS },
+                        style: if door() == d { DOOR_CHIP_ON_STYLE } else { "" },
+                        onclick: move |_| door.set(d),
+                        "{d.label()} {n}"
+                    }
+                }
+                // Beside the control it explains rather than in the info
+                // column — the exception CLAUDE.md names, and the same
+                // placement the card's own inline buttons use.
+                InfoButton {
+                    title: "Triggered by".to_string(),
+                    what: DOOR_WHAT.to_string(),
+                    why: DOOR_WHY.to_string(),
+                    if_wrong: DOOR_IF_WRONG.to_string(),
+                }
+            }
+        }
+
         // Two columns of cards once there is room for two, and the width that
         // decides it is the *panel's*, not the window's. A viewport breakpoint
         // would be wrong here: this panel is two thirds of the page above `xl`
@@ -473,7 +623,7 @@ pub fn Catalogue(
         // carry `whitespace-nowrap`.
         div { class: "@container",
             div { class: "grid grid-cols-1 @5xl:grid-cols-2 gap-3 items-start",
-                for job in shown.iter() {
+                for job in visible.iter() {
                     JobRow {
                         job: job.clone(),
                         running: jobs.running.iter().any(|r| r.name == job.id),
