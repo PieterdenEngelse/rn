@@ -46,6 +46,21 @@ wire! {
         /// changelog.
         #[serde(default)]
         pub ignore: String,
+        /// Watch only the lines containing one of these, instead of the whole
+        /// page. Comma-separated, matched without regard to case.
+        ///
+        /// The selective half of `ignore`, and it buys more than narrowness:
+        /// a selection is small enough to keep, so the job stores the selected
+        /// text and a report can say `Status: operational → Status: degraded`
+        /// rather than `4,812 → 5,140 characters`. Whole pages cannot be kept
+        /// — that is the growth the store's value ceiling refuses — so the
+        /// verbatim report is available exactly where a record has said what
+        /// it cares about.
+        ///
+        /// Empty means the whole page, which is the right default for "tell me
+        /// if anything here moves".
+        #[serde(default)]
+        pub only: String,
         /// Compare what a reader sees rather than the markup.
         ///
         /// On for almost every page — markup differs on nearly every request.

@@ -17,7 +17,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { applyIgnores, pageLabel, visibleText } from "../src/jobs/watch-pages.ts";
+import { applyIgnores, applyOnly, pageLabel, visibleText } from "../src/jobs/watch-pages.ts";
 
 test("script and style contents are removed, not just their tags", () => {
     // The one that matters most: a build hash inside a script tag changes on
@@ -106,4 +106,32 @@ test("a page's label is its host and path, and survives a URL it cannot parse", 
     assert.equal(pageLabel("https://example.com/status/"), "example.com/status");
     assert.equal(pageLabel("https://example.com/"), "example.com");
     assert.equal(pageLabel("not a url"), "not a url");
+});
+
+test("a keep-list narrows to the lines that matter, and nothing else", () => {
+    const text = "Home\nStatus: operational\nContact us\nPrice: 40";
+    assert.equal(applyOnly(text, ["status:"]), "Status: operational");
+    assert.equal(applyOnly(text, ["status:", "price"]), "Status: operational\nPrice: 40");
+});
+
+test("an empty keep-list watches the whole page", () => {
+    // The default, and the one that must not accidentally mean "nothing".
+    const text = "one\ntwo";
+    assert.equal(applyOnly(text, []), text);
+});
+
+test("a keep-list matching nothing selects nothing, rather than everything", () => {
+    // The dangerous direction is the other one: a phrase that matched nothing
+    // falling back to the whole page would report every unrelated change as
+    // though it were the watched line. Empty is correct, and the job reports
+    // it as an empty selection rather than passing over it.
+    assert.equal(applyOnly("one\ntwo", ["absent"]), "");
+});
+
+test("ignore runs before the keep-list, so a record can use both", () => {
+    // "price updated at 14:05" is noise and contains the watched word, so the
+    // order is what makes the pair expressible at all.
+    const text = "Price: 40\nPrice updated at 14:05";
+    const kept = applyOnly(applyIgnores(text, ["updated at"]), ["price"]);
+    assert.equal(kept, "Price: 40");
 });

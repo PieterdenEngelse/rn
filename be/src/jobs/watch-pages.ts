@@ -155,6 +155,38 @@ export function applyIgnores(text: string, ignores: readonly string[]): string {
         .join("\n");
 }
 
+/**
+ * Keep only the lines containing one of these substrings.
+ *
+ * The selective half of `applyIgnores`, applied after it: ignore removes
+ * noise, this narrows to the subject. An empty list means the whole page,
+ * which is the right default for "tell me if anything here moves".
+ *
+ * Exported for the tests, like the other two: what this returns is what the
+ * install means by "the page changed" for a record that names a subject.
+ */
+export function applyOnly(text: string, needles: readonly string[]): string {
+    if (needles.length === 0) return text;
+    const wanted = needles.map((n) => n.toLowerCase());
+    return text
+        .split("\n")
+        .filter((line) => {
+            const lower = line.toLowerCase();
+            return wanted.some((n) => lower.includes(n));
+        })
+        .join("\n");
+}
+
+/**
+ * How much of a selection is kept, so a report can quote it.
+ *
+ * A whole page cannot be kept — that is the growth `MAX_VALUE_BYTES` refuses —
+ * but a record that has said what it cares about produces a line or two, and
+ * four hundred characters of that is worth far more than a byte count. A
+ * selection longer than this is compared as usual and simply not quoted.
+ */
+const MAX_SAMPLE = 400;
+
 /** What one page produced this run. */
 interface Polled {
     record: WatchedPage;
@@ -179,6 +211,12 @@ type Mark = {
     at: number;
     /** When it was last *fetched* — what decides whether it is due. */
     checkedAt: number;
+    /**
+     * The selected text itself, when a record named a subject and the result
+     * was short enough to keep. Absent for a whole-page watch, which is why a
+     * report on one can only give sizes.
+     */
+    sample?: string;
 };
 
 /**
@@ -224,7 +262,14 @@ function marksFrom(held: unknown): Record<string, Mark> {
         // as "never checked", which makes the page due now — the safe
         // direction, since the alternative is a page that waits for a clock
         // that will never be set.
-        out[key] = { hash, chars, at, checkedAt: typeof checkedAt === "number" ? checkedAt : 0 };
+        const { sample } = value as Record<string, unknown>;
+        out[key] = {
+            hash,
+            chars,
+            at,
+            checkedAt: typeof checkedAt === "number" ? checkedAt : 0,
+            ...(typeof sample === "string" ? { sample } : {}),
+        };
     }
     return out;
 }
@@ -458,7 +503,22 @@ export const watchPages: Job = {
                     "decoded, whitespace collapsed, blank lines dropped.\n\n" +
                     "Then the page's own ignore list: any line containing one of its substrings " +
                     "is removed. Per page rather than per install, because the word that is " +
-                    "noise in one site's footer is content on somebody's changelog. " +
+                    "noise in one site's footer is content on somebody's changelog.\n\n" +
+                    "Then, if the record names a subject, the keep-list: only lines containing " +
+                    "one of *those* survive. Ignore removes noise; this narrows to what is " +
+                    "being watched, and a record can use both — drop the line that says " +
+                    "\"price updated at\", keep the one that says \"price\".\n\n" +
+                    "Narrowing buys more than quiet. A selection is a line or two, which is " +
+                    "small enough to keep, so the job stores the selected text alongside the " +
+                    "hash and a report can quote it: \"Status: operational\" became \"Status: " +
+                    "degraded\". A whole page cannot be kept — that is the growth the store's " +
+                    "value ceiling refuses — which is why a whole-page watch can only ever " +
+                    "report sizes. The quote is capped at four hundred characters; past that " +
+                    "the page is compared as usual and simply not quoted.\n\n" +
+                    "A keep-list matching nothing is reported rather than passed over. It means " +
+                    "the line being watched has gone — renamed, moved, or the page redesigned — " +
+                    "and without saying so the comparison would quietly become empty against " +
+                    "empty and never report again. " +
                     "This is where a footer timestamp or a visitor counter stops being news.\n\n" +
                     "What survives is hashed with SHA-256. The hash is what gets remembered — " +
                     "not the text — which is the decision that bounds this job's memory and also " +
@@ -604,8 +664,8 @@ export const watchPages: Job = {
             if (mark !== undefined) next[r.id] = mark;
         }
 
-        const news: { page: string; from: number; to: number }[] = [];
-        const firstLook: { page: string; chars: number }[] = [];
+        const news: { page: string; from: number; to: number; was?: string; now?: string }[] = [];
+        const firstLook: { page: string; chars: number; narrowed: boolean }[] = [];
 
         for (const p of polled) {
             // A page that failed keeps the mark it had, including its clock, so
@@ -617,13 +677,37 @@ export const watchPages: Job = {
                 .split(",")
                 .map((i) => i.trim())
                 .filter(Boolean);
-            const compared = applyIgnores(p.record.text ? visibleText(p.text) : p.text, ignores);
+            const only = p.record.only
+                .split(",")
+                .map((o) => o.trim())
+                .filter(Boolean);
+            const compared = applyOnly(
+                applyIgnores(p.record.text ? visibleText(p.text) : p.text, ignores),
+                only,
+            );
             const hash = createHash("sha256").update(compared).digest("hex");
             const mark = marks[p.record.id];
+            // Kept only where a record has named a subject: a whole page is
+            // too large for the store, and quoting the first four hundred
+            // characters of one would be quoting its navigation.
+            const sample =
+                only.length > 0 && compared.length <= MAX_SAMPLE ? { sample: compared } : {};
+
+            // A selection that matches nothing is worth saying out loud. The
+            // line being watched has gone — renamed, moved, or the page has
+            // been redesigned — and the comparison silently becomes "empty
+            // against empty", which would then never report anything again.
+            if (only.length > 0 && compared === "") {
+                ctx.step("selection-empty", {
+                    page: p.label,
+                    only: p.record.only,
+                    effect: "nothing on the page matched — the line being watched may have moved",
+                });
+            }
 
             if (mark === undefined) {
-                firstLook.push({ page: p.label, chars: compared.length });
-                next[p.record.id] = { hash, chars: compared.length, at: now, checkedAt: now };
+                firstLook.push({ page: p.label, chars: compared.length, narrowed: only.length > 0 });
+                next[p.record.id] = { hash, chars: compared.length, at: now, checkedAt: now, ...sample };
                 continue;
             }
 
@@ -631,20 +715,34 @@ export const watchPages: Job = {
                 // Unchanged: `at` stays where it was, so "how long since this
                 // page last moved" survives every run that found nothing, while
                 // the clock that decides due-ness moves.
-                next[p.record.id] = { ...mark, checkedAt: now };
+                next[p.record.id] = { ...mark, checkedAt: now, ...sample };
                 continue;
             }
 
-            news.push({ page: p.label, from: mark.chars, to: compared.length });
+            news.push({
+                page: p.label,
+                from: mark.chars,
+                to: compared.length,
+                ...(mark.sample !== undefined && sample.sample !== undefined
+                    ? { was: mark.sample, now: sample.sample }
+                    : {}),
+            });
             ctx.step("changed", {
                 page: p.label,
                 url: p.record.url,
+                // The words, where the record named a subject and both sides
+                // were kept. This is what the selection is for: "Status:
+                // operational → Status: degraded" answers the question that
+                // "1,204 → 1,197 characters" only reports the existence of.
+                ...(mark.sample !== undefined && sample.sample !== undefined
+                    ? { was: mark.sample, now: sample.sample }
+                    : {}),
                 from: mark.chars,
                 to: compared.length,
                 delta: compared.length - mark.chars,
                 sinceDays: Number(((now - mark.at) / 86_400_000).toFixed(1)),
             });
-            next[p.record.id] = { hash, chars: compared.length, at: now, checkedAt: now };
+            next[p.record.id] = { hash, chars: compared.length, at: now, checkedAt: now, ...sample };
         }
 
         for (const f of firstLook) {
@@ -654,7 +752,12 @@ export const watchPages: Job = {
                 // The number that exposes a page drawn by JavaScript, said at
                 // the moment somebody is looking at it rather than in a panel
                 // they would have to think to open.
-                ...(f.chars < 400
+                //
+                // Not said where the record named a subject: a selection is
+                // *meant* to be two lines, so the same number there is the
+                // feature working and a warning would be noise on every
+                // narrowed page.
+                ...(f.chars < 400 && !f.narrowed
                     ? { note: "very little text — a page rendered by JavaScript reads like this" }
                     : {}),
             });
@@ -676,9 +779,19 @@ export const watchPages: Job = {
             changed: news.length,
             ...(failed.length === 0 ? {} : { pagesFailed: failed.length }),
             ...(firstLook.length === 0 ? {} : { firstLook: firstLook.length }),
+            // One line a notification can carry, since desktop-notify's body is
+            // this summary. It quotes the words where a record named a subject,
+            // because "Status: operational → Status: degraded" is the sentence
+            // somebody wanted and "19 → 16 characters" is the sentence this job
+            // can manage when nobody has said what to watch.
             ...(news.length === 0
                 ? {}
-                : { latest: `${news[0]!.page} ${news[0]!.from} → ${news[0]!.to} characters` }),
+                : {
+                      latest:
+                          news[0]!.was !== undefined && news[0]!.now !== undefined
+                              ? `${news[0]!.page}: "${news[0]!.was}" → "${news[0]!.now}"`
+                              : `${news[0]!.page} ${news[0]!.from} → ${news[0]!.to} characters`,
+                  }),
         };
 
         if (news.length === 0 && firstLook.length > 0) {

@@ -67,6 +67,7 @@ function sane(raw: unknown): WatchedPage | undefined {
         // `mail/rules.ts` takes, and for the same reason.
         enabled: p["enabled"] !== false,
         ignore: typeof p["ignore"] === "string" ? p["ignore"] : "",
+        only: typeof p["only"] === "string" ? p["only"] : "",
         text: p["text"] !== false,
         everyMinutes: Math.min(MAX_EVERY_MINUTES, Math.max(MIN_EVERY_MINUTES, Math.trunc(every))),
         createdAt: typeof p["createdAt"] === "number" ? p["createdAt"] : Date.now(),
@@ -185,6 +186,7 @@ export function validate(raw: unknown): { errors: string[]; page?: WatchedPage }
             label: typeof p["label"] === "string" ? p["label"].trim() : "",
             enabled: p["enabled"] !== false,
             ignore: typeof p["ignore"] === "string" ? p["ignore"].trim() : "",
+            only: typeof p["only"] === "string" ? p["only"].trim() : "",
             text: p["text"] !== false,
             everyMinutes: every,
             createdAt: typeof p["createdAt"] === "number" ? p["createdAt"] : Date.now(),

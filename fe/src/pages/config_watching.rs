@@ -155,6 +155,7 @@ fn blank() -> WatchedPage {
         label: String::new(),
         enabled: true,
         ignore: String::new(),
+        only: String::new(),
         // On, because markup comparison reports a change on nearly every
         // request and the first thing a new user would conclude is that the
         // feature is broken.
@@ -245,6 +246,9 @@ fn PageRow(page: WatchedPage, wake: Option<u32>, on_changed: EventHandler<()>) -
                     span { class: "text-gray-400 text-xs",
                         if page.text { "comparing text" } else { "comparing markup" }
                     }
+                    if !page.only.is_empty() {
+                        span { class: "text-gray-300 text-xs", "only lines with “{page.only}”" }
+                    }
                     if !page.ignore.is_empty() {
                         span { class: "text-gray-400 text-xs", "ignoring “{page.ignore}”" }
                     }
@@ -317,6 +321,7 @@ fn PageForm(
     let mut url = use_signal(|| page.url.clone());
     let mut label = use_signal(|| page.label.clone());
     let mut ignore = use_signal(|| page.ignore.clone());
+    let mut only = use_signal(|| page.only.clone());
     let mut text = use_signal(|| page.text);
     let mut every = use_signal(|| page.every_minutes.to_string());
     let mut busy = use_signal(|| false);
@@ -341,6 +346,7 @@ fn PageForm(
                 label: label().trim().to_string(),
                 enabled: page.enabled,
                 ignore: ignore().trim().to_string(),
+                only: only().trim().to_string(),
                 text: text(),
                 every_minutes: minutes,
                 created_at: page.created_at,
@@ -352,6 +358,7 @@ fn PageForm(
                             url.set(String::new());
                             label.set(String::new());
                             ignore.set(String::new());
+                            only.set(String::new());
                         }
                         on_changed.call(());
                     }
@@ -426,6 +433,25 @@ fn PageForm(
                     min: "1",
                     value: "{every()}",
                     oninput: move |e| every.set(e.value()),
+                }
+            }
+            Field {
+                label: "Watch only lines containing".to_string(),
+                hint: "optional — narrows to one part of the page, and lets a report quote it.".to_string(),
+                info: rsx! {
+                    InfoButton {
+                        title: "Watch only lines containing".to_string(),
+                        what: ONLY_WHAT.to_string(),
+                        why: ONLY_WHY.to_string(),
+                        if_wrong: ONLY_IF_WRONG.to_string(),
+                    }
+                },
+                input {
+                    r#type: "text",
+                    class: PARAM_TEXT_INPUT_CLASS,
+                    placeholder: "Status:",
+                    value: "{only()}",
+                    oninput: move |e| only.set(e.value()),
                 }
             }
             Field {
@@ -607,6 +633,34 @@ const EVERY_IF_WRONG: &str =
      from the last successful fetch, so a page that has been failing is due again on the next \
      wake rather than waiting out another interval on the strength of a fetch that did not \
      happen.";
+
+const ONLY_WHAT: &str =
+    "Comma-separated substrings. When this is set, only the lines containing one of them are \
+     compared — the rest of the page is not watched at all. Empty watches the whole page, which \
+     is the right default for \"tell me if anything here moves\".\n\nIt is applied after the \
+     ignore list, so a record can use both: drop the line reading \"price updated at 14:05\", \
+     keep the one reading \"price\".";
+
+const ONLY_WHY: &str =
+    "Two reasons, and the second is the one people do not expect.\n\nThe first is precision. A \
+     page you care about one fact on — a status, a version, a price — reports a change whenever \
+     anything else on it moves, and a report you have learned to distrust is one you stop \
+     opening. Naming the line makes the answer mean something.\n\nThe second is that a \
+     selection is small enough to keep. The job stores a hash of what it compared, not the page, \
+     because a page per URL is exactly the growth the store refuses — so a whole-page watch can \
+     only ever tell you the size moved. A line or two can be stored, and then the report quotes \
+     it: \"Status: operational\" became \"Status: degraded\", which is the sentence you actually \
+     wanted. The quote is capped at 400 characters; past that it compares as usual and does not \
+     quote.";
+
+const ONLY_IF_WRONG: &str =
+    "A phrase that matches nothing means nothing is being compared. That is reported as an \
+     empty selection rather than passed over, because otherwise the comparison quietly becomes \
+     empty against empty and never reports again — the page would look permanently unchanged.\n\n\
+     It matches the reduced text, so with the text comparison on you are matching what a reader \
+     sees, not the markup: a word that only appears in a class name or an attribute will not \
+     match. Match on the visible words instead, and prefer a phrase the page shows anyway — the \
+     label beside the value, rather than the value, which is the thing that is about to change.";
 
 const IGNORE_WHAT: &str =
     "Comma-separated substrings, for this page only. Any line containing one of them is dropped \
