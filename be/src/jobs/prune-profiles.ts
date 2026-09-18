@@ -109,7 +109,44 @@ export const pruneProfiles: Job = {
             "so an install that has never been profiled will find nothing here and " +
             "the job will say so rather than fail.\n\n" +
             "They land in the working directory because that is the only place V8 " +
-            "will put them — not a temp directory, and not anywhere configurable.",
+            "will put them — not a temp directory, and not anywhere configurable.\n\n" +
+            "Asking for one is not free, and the costs are worth reading before you " +
+            "add a flag rather than afterwards.\n\n" +
+            "--cpu-prof and --heap-prof buffer in memory and write at exit, so " +
+            "nothing is produced unless the process exits cleanly. rn's stop path " +
+            "sends SIGTERM and waits five seconds; server.ts handles it and exits 0, " +
+            "so an ordinary restart does produce the file. Past that grace period the " +
+            "launcher kills the process, and a crash or an out-of-memory kill leaves " +
+            "nothing either — the whole session's overhead and no artifact. The run " +
+            "you most want a profile of, a job that has wedged and will not let the " +
+            "process go, is exactly the one that hits that.\n\n" +
+            "--cpu-prof also covers startup to exit, and this backend waits on the " +
+            "event loop for nearly all of its life: the 400ms inside a job is a " +
+            "rounding error in a profile spanning six hours. --prof is the same " +
+            "problem in a different shape — it logs every sampling tick and every " +
+            "code-creation event, continuously, so the log stops growing when you " +
+            "stop the app, and reading it back with node --prof-process builds its " +
+            "report from the whole file. A long enough session turns the analysis " +
+            "into the memory problem.\n\n" +
+            "There is also no setting for any of it. rn constructs its Node child's " +
+            "environment explicitly and sets NODE_OPTIONS itself, so a profiling flag " +
+            "has to be added where the launcher builds the command — the copy every " +
+            "install runs, not a local experiment. It is not even one edit: Bun " +
+            "ignores NODE_OPTIONS outright, and Deno needs V8 flags folded into " +
+            "--v8-flags.\n\n" +
+            "And the profiler competes for a heap the user is allowed to cap. " +
+            "maxOldSpaceSize is a first-class setting, the CPU profiler holds its " +
+            "samples in memory for the length of the run, and an install that has " +
+            "lowered the ceiling can be pushed into OOM by the measurement — which " +
+            "then reads as the app failing rather than the profiling, and loses the " +
+            "file with it.\n\n" +
+            "One thing that is not a reason to avoid them: secrets. --heap-prof is a " +
+            "sampling allocation profile — call stacks and sizes, never object " +
+            "contents. A heap snapshot is the one that carries live strings, tokens " +
+            "included, and it is a different flag.\n\n" +
+            "Most of what sends people reaching for a profiler is answerable without " +
+            "one. Monitor → Runtime carries the Node metrics and their history, and " +
+            "every run on this page records its duration and its steps.",
         why:
             "The profiler writes into the working directory and never cleans up, " +
             "and the files are gitignored so they never appear in git status. One " +
