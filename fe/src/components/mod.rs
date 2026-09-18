@@ -23,7 +23,7 @@ pub mod param;
 pub mod runtime_board;
 pub use runtime_board::{runtime_name, RuntimeBoard};
 pub use panel::Panel;
-pub use info::{GlossaryEntry, InfoButton};
+pub use info::{GlossaryEntry, InfoButton, PanelTab};
 pub use header::Header;
 pub mod webhooks;
 pub use webhooks::WebhookTile;

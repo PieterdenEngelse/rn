@@ -7,7 +7,7 @@ use crate::components::webhooks::CredentialsBoard;
 use crate::pages::config::ParamBlock;
 use std::collections::BTreeMap;
 use crate::app::Route;
-use crate::components::{GlossaryEntry, InfoButton, Panel};
+use crate::components::{GlossaryEntry, InfoButton, Panel, PanelTab};
 use dioxus::prelude::*;
 use dioxus_router::Link;
 
@@ -543,6 +543,10 @@ fn Integrations(
                             what: WEBHOOK_WHAT.to_string(),
                             why: WEBHOOK_WHY.to_string(),
                             if_wrong: WEBHOOK_IF_WRONG.to_string(),
+                            tabs: vec![PanelTab {
+                                name: "Groups".to_string(),
+                                body: rsx! { EventGroups {} },
+                            }],
                         }
                     },
                     // No registry parameter belongs to this shape — the hooks
@@ -778,6 +782,96 @@ fn Integrations(
             }
             if let Some(e) = error() {
                 p { class: "mt-2 text-xs text-amber-400", "{e}" }
+            }
+        }
+    }
+}
+
+/// The families a provider's event names fall into, and what each one means.
+///
+/// A tab of its own on the Webhooks panel rather than a paragraph in it: six
+/// categories against their examples is read down a column, and prose is worst
+/// at exactly that.
+///
+/// The table is about providers, not about rn — no provider is obliged to use
+/// these names and several use their own — so it closes with the part that is
+/// about rn: where the event name arrives, and which groups change how a job
+/// should be written.
+#[component]
+fn EventGroups() -> Element {
+    // Category, examples, meaning. A `Type` column stood in the source of this
+    // table, holding each category's name again as a link; it is dropped here
+    // rather than rendered as a column of duplicates.
+    let rows: [(&str, &str, &str); 6] = [
+        (
+            "Create events",
+            "payment.created; order.created; user.registered",
+            "Something new was created",
+        ),
+        (
+            "Update events",
+            "invoice.updated; subscription.changed; order.status.updated",
+            "Something changed",
+        ),
+        ("Delete events", "customer.deleted; file.removed", "Something was removed"),
+        (
+            "Lifecycle events",
+            "payment.succeeded; payment.failed; shipment.delivered",
+            "Resource moved through a stage",
+        ),
+        (
+            "Security events",
+            "login.attempt; password.changed; api.key.revoked",
+            "Security-related action occurred",
+        ),
+        (
+            "System events",
+            "server.alert; quota.exceeded; rate_limit.hit",
+            "System behaviour or internal alert",
+        ),
+    ];
+
+    rsx! {
+        p { class: "text-gray-200 leading-relaxed max-w-3xl",
+            "Providers name their events in families. The names differ — there is no standard \
+             and nobody is obliged to follow this — but the families repeat, and knowing which \
+             one a delivery belongs to is most of knowing what a job should do with it."
+        }
+        table { class: "w-full text-left border-collapse mt-3",
+            thead {
+                tr {
+                    th { class: "text-gray-300 font-semibold text-xs py-1 pr-6 border-b border-gray-700", "Category" }
+                    th { class: "text-gray-300 font-semibold text-xs py-1 pr-6 border-b border-gray-700", "Examples" }
+                    th { class: "text-gray-300 font-semibold text-xs py-1 border-b border-gray-700", "Meaning" }
+                }
+            }
+            tbody {
+                for (category, examples, meaning) in rows.iter() {
+                    tr { key: "{category}",
+                        td { class: "text-gray-200 text-xs py-2 pr-6 align-top whitespace-nowrap", "{category}" }
+                        td { class: "text-gray-300 text-xs py-2 pr-6 align-top font-mono", "{examples}" }
+                        td { class: "text-gray-200 text-xs py-2 align-top", "{meaning}" }
+                    }
+                }
+            }
+        }
+        div { class: "mt-4 max-w-3xl space-y-2",
+            p { class: "text-gray-200 leading-relaxed",
+                "Which one you were sent arrives as a header, not in the body: the listener reads \
+                 the provider's event header — GitHub's by default, and a webhook made on Config \
+                 → Jobs can name another — and puts it on the run record. The demo job reports it \
+                 verbatim, which is the fastest way to learn what a provider actually calls \
+                 things, since their documentation reliably differs."
+            }
+            p { class: "text-gray-200 leading-relaxed",
+                "Three of the six change how a job should be written. Deliveries are retried by \
+                 the sender, so a create or delete event can arrive twice — a job acting on one \
+                 has to be safe to run twice on the same id, because nothing here can tell a \
+                 retry from a second real event. Security events are the ones worth routing to a \
+                 notifier rather than a report nobody opens. And system events are the \
+                 high-volume family: a rate-limit event that fires in a loop is a delivery every \
+                 few seconds, which is the case for filtering at the webhook rather than inside \
+                 the job."
             }
         }
     }

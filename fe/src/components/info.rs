@@ -38,6 +38,17 @@ pub fn InfoIcon() -> Element {
     }
 }
 
+/// One extra tab on a panel, holding markup the three prose sections cannot.
+///
+/// `Element` rather than a string, because what earns a tab of its own is
+/// usually the thing prose is worst at — a table of six categories against
+/// their examples, read down a column rather than along a sentence.
+#[derive(Clone, PartialEq)]
+pub struct PanelTab {
+    pub name: String,
+    pub body: Element,
+}
+
 /// A term that a panel can link to, so an explanation can name a concept
 /// without either assuming it or swallowing a whole tutorial.
 ///
@@ -153,6 +164,15 @@ pub fn InfoButton(
     /// nothing to tab through looks exactly as it did before this existed.
     #[props(default = vec![])]
     stages: Vec<JobStage>,
+    /// Extra tabs, after any stages, whose content is markup rather than prose
+    /// — a table, a diagram, a list of examples.
+    ///
+    /// Unnumbered, unlike a stage: stages are an order and a number says so,
+    /// while this is a second subject the panel also covers. `extra` cannot do
+    /// this job — it sits inside the Overview and would push the three
+    /// sections below a table the reader did not ask for.
+    #[props(default = vec![])]
+    tabs: Vec<PanelTab>,
 ) -> Element {
     let mut open = use_signal(|| false);
     // A trail, not a single term: entries link to each other, and "back"
@@ -200,7 +220,7 @@ pub fn InfoButton(
                     // the job did two things before it got here, which a bare
                     // name does not. It wraps rather than scrolls — a tab a
                     // reader cannot see is one they will not know to press.
-                    if !stages.is_empty() {
+                    if !stages.is_empty() || !tabs.is_empty() {
                         div { class: "flex flex-wrap gap-1 border-b border-gray-700 pb-2",
                             button {
                                 class: if tab() == 0 { TAB_ACTIVE_CLASS } else { TAB_IDLE_CLASS },
@@ -218,6 +238,23 @@ pub fn InfoButton(
                                             style: if tab() == n { TAB_ACTIVE_STYLE } else { "" },
                                             onclick: move |_| tab.set(n),
                                             "{n} · {name}"
+                                        }
+                                    }
+                                }
+                            }
+                            // After the stages, and without a number: a panel
+                            // with both reads "1 · Scan … 6 · Delete, Groups",
+                            // where the last one is plainly not a seventh step.
+                            for (i, t) in tabs.iter().enumerate() {
+                                {
+                                    let n = stages.len() + 1 + i;
+                                    let name = t.name.clone();
+                                    rsx! {
+                                        button {
+                                            class: if tab() == n { TAB_ACTIVE_CLASS } else { TAB_IDLE_CLASS },
+                                            style: if tab() == n { TAB_ACTIVE_STYLE } else { "" },
+                                            onclick: move |_| tab.set(n),
+                                            "{name}"
                                         }
                                     }
                                 }
@@ -323,6 +360,17 @@ pub fn InfoButton(
                                 onclick: move |_| tab.set(0),
                                 "back to overview"
                             }
+                        }
+                    } else if let Some(t) = tabs.get(tab() - 1 - stages.len()).cloned() {
+                        div {
+                            h3 { class: "text-lg font-semibold text-gray-100", "{t.name}" }
+                        }
+                        {t.body}
+                        button {
+                            class: "text-xs cursor-pointer hover:underline bg-transparent border-0 p-0",
+                            style: "color: #22d3ee;",
+                            onclick: move |_| tab.set(0),
+                            "back to overview"
                         }
                     }
                 }

@@ -162,6 +162,17 @@ ones to watch), and write the explanation somewhere outside `@source` — this
 file, or the commit message. Both can say the word plainly, which is why it is
 written out here and nowhere in `links.rs`.
 
+The synonym rule covers *our own prose*, and it stops there. On 2026-09-18 the
+same 1.1KB came back through the Webhooks panel's Groups tab, whose table of
+event families lists `server.alert` as an example of a system event — a
+provider's naming convention quoted verbatim, not a sentence anyone here chose
+the words for. Rewriting that to dodge a scanner would make the table wrong
+about the world in order to keep a stylesheet tidy, so the rules were accepted
+and `output.css` carries them. The test to apply: could the word have been
+something else without the text becoming less true? If yes, change it. If no,
+rebuild, commit, and say in the message where the bytes came from — the diff
+still will not show it.
+
 **Upgrading a package that contributes CSS means restarting the dev server**,
 not just `npm install`. A long-running `css:watch` accumulates and never prunes:
 swap daisyUI underneath it and its next write is the *union* of both versions —
