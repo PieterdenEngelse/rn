@@ -11,28 +11,30 @@
  *
  * ## It runs the other jobs rather than reimplementing them
  *
- * `runJob(desktopNotify, …)` and `runJob(notify, …)`, each handed the same
- * cause this job was handed. That is the whole implementation, and the
+ * `runJob(desktopNotify, …)`, `runJob(notify, …)` and `runJob(notifyMail, …)`,
+ * each handed the same cause this job was handed. That is the whole implementation, and the
  * alternative — building the message twice and posting it twice from here —
  * would be two more copies of prose that already exists in two places, kept in
  * step by hope. It also means each notifier keeps its own run record, its own
  * error classification and its own info panels, so "why did the phone one fail"
  * is answered where it happened.
  *
- * The cost is two extra records per notification. Worth it: a fan-out that
+ * The cost is a run record per notifier. Worth it: a fan-out that
  * swallowed its children's outcomes would report success while a phone got
  * nothing.
  *
- * ## One failing must not silence the other
+ * ## One failing must not silence the others
  *
- * Each is attempted whichever way the other went. A wedged notification daemon
- * is not a reason to skip the phone, and an expired ntfy topic is not a reason
- * to leave the screen blank — those are the two failures most likely to happen
- * on their own, and coupling them would turn either one into both.
+ * Each is attempted whichever way the one before it went. A wedged notification
+ * daemon is not a reason to skip the phone, an expired ntfy topic is not a
+ * reason to leave the screen blank, and a mail server refusing a connection is
+ * no reason for either — those failures happen independently, and coupling them
+ * would turn any one of them into all of them.
  */
 
 import { desktopNotify } from "./desktop-notify.ts";
 import { notify } from "./notify.ts";
+import { notifyMail } from "./notify-mail.ts";
 import { runJob } from "./run.ts";
 import { PermanentFailure } from "./permanent.ts";
 import type { Job, JobContext, JobResult } from "./types.ts";
@@ -88,15 +90,44 @@ export const notifyAll: Job = {
                     "the phone's problem.",
             },
         },
+        {
+            id: "mail",
+            label: "Email",
+            type: "bool",
+            // Off, unlike the other two, and deliberately. This job existed
+            // before the mail notifier did, so defaulting it on would start
+            // sending mail on every install already wired to notify-all —
+            // people who asked for a pop-up and a push and would suddenly be
+            // getting a third thing in their inbox. One click turns it on.
+            default: false,
+            info: {
+                what:
+                    "Run the notify-mail job, which emails the change to the account rn already " +
+                    "sends as — or to whatever address that job is configured with.",
+                why:
+                    "It is the notifier that reaches you where you already look, on every device, " +
+                    "and leaves something you can search six months later. The other two are " +
+                    "immediate and gone.",
+                ifWrong:
+                    "Off by default, because this job is older than the mail notifier and turning " +
+                    "it on for everybody would have installs that asked for a pop-up and a push " +
+                    "quietly starting to send mail as well.\n\nIf the mail credential is missing " +
+                    "the runner refuses to start that job, which this one catches and reports — " +
+                    "the other notifiers have already run by then and are not undone by it.",
+            },
+        },
     ],
 
     info: {
         what:
-            "Runs the desktop notifier and the webhook notifier together, handing both the " +
-            "same run that triggered this one. Name this job in another job's onChange or " +
-            "onFailure and you get the pop-up and the push from one wiring.\n\n" +
-            "It sends nothing itself. Each notifier keeps its own run record, so there are " +
-            "three records per notification: this one, and one for each notifier.",
+            "Runs the notifiers together, handing each the same run that triggered this one. " +
+            "Name this job in another job's onChange or onFailure and you get the pop-up, the " +
+            "push and — once it is switched on — the email, from one wiring.\n\n" +
+            "The desktop and webhook notifiers are on by default and the mail one is not, " +
+            "because this job is older than it: turning mail on for everybody would have " +
+            "installs that asked for a pop-up and a push quietly starting to send mail as " +
+            "well.\n\nIt sends nothing itself. Each notifier keeps its own run record, so a " +
+            "notification is this run plus one per notifier it was asked to use.",
         why:
             "onChange holds a single job id, and a handler's own change starts nothing — the " +
             "runner refuses to chain, which is what stops one event becoming three " +
@@ -113,18 +144,21 @@ export const notifyAll: Job = {
             "The run fails only if every notifier it was asked to use failed. If one worked, " +
             "the run succeeded and the failure is named in the trace: a notification that " +
             "reached you by one route is not an outage.\n\n" +
-            "Turning both off is refused rather than treated as success, because a " +
+            "Turning every notifier off is refused rather than treated as success, because a " +
             "notification job that notifies nobody is the kind of thing somebody sets up and " +
             "then relies on.",
         stages: [
             {
-                name: "Read the two switches",
-                lead: "Both notifiers are on unless a run says otherwise — and both off is refused.",
+                name: "Read the switches",
+                lead: "Two on unless a run says otherwise, mail off unless it says so — and all off is refused.",
                 body:
-                    "Each switch defaults to on, and the check is written so that only an " +
-                    "explicit false turns one off: a run that supplies nothing gets both, " +
-                    "which is what a scheduled or handler-triggered run always does.\n\n" +
-                    "Turning both off fails the run permanently rather than succeeding " +
+                    "The desktop and webhook switches default to on, and the check is written " +
+                    "so that only an explicit false turns one off: a run that supplies nothing " +
+                    "gets both, which is what a handler-triggered run always does. Mail is the " +
+                    "opposite — only an explicit true turns it on — because this job predates " +
+                    "it and a default of on would have started sending mail from installs that " +
+                    "never asked for any.\n\n" +
+                    "Turning every one off fails the run permanently rather than succeeding " +
                     "quietly. A fan-out with nothing to fan out to is not a no-op, it is a " +
                     "notification path that will never tell anybody anything — the kind of " +
                     "thing somebody sets up once and then relies on. Permanent because the " +
@@ -173,6 +207,26 @@ export const notifyAll: Job = {
                     "to 200 characters, if it threw.",
             },
             {
+                name: "Run the mail notifier",
+                lead: "Last, and only when asked — the one that leaves something behind.",
+                body:
+                    "Same mechanism, same cause, its own record. It runs last because it is " +
+                    "the slowest of the three — an SMTP handshake against a distant server, " +
+                    "where the other two are a local socket and one POST — and the two that " +
+                    "reach a screen should not wait behind it.\n\n" +
+                    "It is skipped unless the run explicitly asked for it. That is the one " +
+                    "asymmetry in this job, and it exists because the job is older than the " +
+                    "mail notifier: an install already wired to notify-all asked for a pop-up " +
+                    "and a push, and would not expect an upgrade to start putting mail in its " +
+                    "inbox.\n\n" +
+                    "A missing mail credential is a refusal by the runner before that job " +
+                    "starts, caught here and named in the trace — by which point the desktop " +
+                    "notification has already happened and is not undone by it.",
+                reports:
+                    "notified, with via: notify-mail. notifier-failed with the error if it " +
+                    "threw.",
+            },
+            {
                 name: "Decide the outcome",
                 lead: "Failing only when every notifier it was asked to use failed.",
                 body:
@@ -193,8 +247,10 @@ export const notifyAll: Job = {
     async run(ctx: JobContext): Promise<JobResult> {
         const wantDesktop = ctx.input.desktop !== false;
         const wantWebhook = ctx.input.webhook !== false;
+        // Opt-in rather than opt-out, unlike the other two: see the input.
+        const wantMail = ctx.input.mail === true;
 
-        if (!wantDesktop && !wantWebhook) {
+        if (!wantDesktop && !wantWebhook && !wantMail) {
             throw new PermanentFailure(
                 "notify-all: both notifiers are switched off, so this would notify nobody",
                 "the input is the same on the next attempt",
@@ -210,6 +266,7 @@ export const notifyAll: Job = {
         for (const [wanted, job] of [
             [wantDesktop, desktopNotify],
             [wantWebhook, notify],
+            [wantMail, notifyMail],
         ] as const) {
             if (!wanted) continue;
             try {

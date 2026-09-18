@@ -13,6 +13,7 @@
 
 import { desktopNotify } from "./desktop-notify.ts";
 import { notify } from "./notify.ts";
+import { notifyMail } from "./notify-mail.ts";
 import { notifyAll } from "./notify-all.ts";
 import { pruneProfiles } from "./prune-profiles.ts";
 import { readMail } from "./read-mail.ts";
@@ -32,6 +33,7 @@ export const JOBS: readonly Job[] = [
     watchDeliveries,
     desktopNotify,
     notify,
+    notifyMail,
     notifyAll,
     readMail,
     sendMail,
