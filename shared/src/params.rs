@@ -110,22 +110,6 @@ wire! {
         /// and one of them is the only setting in rn whose mistake cannot be
         /// corrected afterwards.
         Links,
-        /// What the pollers watch — the list itself, rather than how often or
-        /// how hard they poll.
-        ///
-        /// Its own board because a watch list is the one kind of setting that
-        /// is neither tuning nor a credential: it is the subject of the
-        /// automation, and it is what somebody comes to this page to change.
-        /// Filed under Network or Time it would sit among knobs nobody edits
-        /// twice, which is where a list that changes monthly would go to be
-        /// forgotten.
-        ///
-        /// It exists because a job's input cannot hold it. A scheduled run
-        /// supplies no input, so a watch list that lived only in the box on
-        /// Monitor → Jobs would be typed for one run and gone by the next —
-        /// the job would sit on its schedule watching nothing, reporting a
-        /// skip nobody reads as a fault.
-        Watching,
         Diagnostics,
         Output,
         Runtime,

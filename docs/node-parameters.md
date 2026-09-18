@@ -29,8 +29,6 @@ scales with installed RAM, so expect a different number elsewhere.
 | **Links point at** | `RN_TRACKER_BASE_URL` | unset (system default) | — | on restart |
 | **Accept a borrowed hostname** | `RN_TRACKER_ACCEPT_BORROWED_HOSTNAME` | off | — | on restart |
 | **Keep identity for** | `RN_TRACKER_RETENTION_DAYS` | 90 | 1 … 3650 | on restart |
-| **Pages to watch** | `RN_WATCH_PAGES` | unset (system default) | — | on restart |
-| **Ignore lines containing** | `RN_WATCH_PAGES_IGNORE` | unset (system default) | — | on restart |
 | **Address** | `RN_MAIL_USER` | unset (system default) | — | on restart |
 | **IMAP host** | `RN_IMAP_HOST` | imap.gmail.com | — | on restart |
 | **IMAP port** | `RN_IMAP_PORT` | 993 | 1 … 65535 | on restart |
@@ -462,42 +460,6 @@ Default: off · Takes effect: on restart · Settings key: `trackerAcceptBorrowed
 **If it's wrong.** It bounds what rn knows and nothing else. The links themselves are already in mailboxes, so two recipients comparing their copies still learn the mail was individually tracked, however short this is set.
 
 Default: 90 · Takes effect: on restart · Settings key: `trackerRetentionDays`
-
-## watching
-
-### Pages to watch — `RN_WATCH_PAGES`
-
-**What it does.** The URLs watch-pages fetches on its schedule, separated by spaces, newlines or commas. http and https only — anything else is named in the run record and skipped rather than dropped quietly.
-
-This is the installed list, and it is what an hourly run actually watches. The same field appears on the job's card on Monitor → Jobs, where it means something different: there it is one run's list, filled in from this value and thrown away afterwards.
-
-**Why you would change it.** A scheduled run supplies no input, so a watch list typed into the box on Monitor → Jobs covers that run and nothing after it. Without this setting the job would sit on its schedule watching nothing, reporting a skip every hour that reads as a quiet page rather than as an empty list.
-
-Point it at the page whose content you care about rather than at a site's front door: a home page changes when anything on the site changes, which is a notification that means nothing. The status page, the pricing table, the one document.
-
-A handful is the intended size — the store keeps about a hundred bytes per page, so dozens are fine, and this polls a list somebody chose rather than following links.
-
-**If it's wrong.** Empty is the default and means the job skips, saying so. That is the right resting state for a fresh install rather than a fault.
-
-The quiet mistake is a page that renders its content with JavaScript: watch-pages fetches HTML and runs none of it, so such a page reads as a nearly empty document that never changes. Its first-look step reports the character count, and a number like 300 on a page you know is full of text is the tell.
-
-Under Deno every host here also needs to be in the outbound grant, or every fetch is refused.
-
-Default: unset (system default) · Takes effect: on restart · Settings key: `watchPages`
-
-### Ignore lines containing — `RN_WATCH_PAGES_IGNORE`
-
-**What it does.** Comma-separated substrings. Any line containing one of them is dropped from a watched page before it is compared, matched without regard to case. Plain substrings rather than patterns: a regular expression typed into a field is a way to hang the job on the page it was pointed at, and what people mean is nearly always "the line with the word Updated in it".
-
-**Why you would change it.** It is the fix for the one page that keeps reporting when nothing happened. A footer reading "Last updated 14:05", a visitor counter, a copyright year — one entry here turns an hourly false alarm into silence without giving up the rest of the page.
-
-Start empty, wait for a false report, then ignore the line it was about. Guessing in advance mostly removes lines that were never going to move.
-
-**If it's wrong.** Too broad and you lose the change you were watching for: ignoring "price" on a pricing page drops the row that matters along with the noise, and the run then reports nothing rather than reporting less.
-
-It applies to every page in the list rather than to one of them. A word that is noise on one page and content on another wants a second run of the job with a different list, which is what the per-run box on Monitor → Jobs is for.
-
-Default: unset (system default) · Takes effect: on restart · Settings key: `watchPagesIgnore`
 
 ## mail-account
 

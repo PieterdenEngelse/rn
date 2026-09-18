@@ -24,14 +24,19 @@
  * collapsed, blank lines dropped. What survives is roughly the text of the
  * page, and a change in it is roughly a change in what the page says. Markup
  * comparison is still available for the case where the markup *is* the point —
- * a `<link rel=canonical>` moving, a script src changing — and the input says
- * which you are getting.
+ * a `<link rel=canonical>` moving, a script src changing — and each record says
+ * which of the two that page gets.
  *
- * That still leaves the per-request noise that survives into the text, so
- * `ignore` drops any line containing one of a few substrings. Substrings
- * rather than a pattern language: a regular expression from an input field is
- * a way to hang this job on a page it was pointed at, and "the line with the
- * word Updated in it" is what people actually mean.
+ * That still leaves the per-request noise that survives into the text, so each
+ * record carries an ignore list: any line containing one of its substrings is
+ * dropped before the page is compared. Substrings rather than a pattern
+ * language, because a regular expression typed into a field is a way to hang
+ * this job on a page it was pointed at, and "the line with the word Updated in
+ * it" is what people actually mean.
+ *
+ * Per page rather than per install, which is the whole reason the list is a set
+ * of records: "last updated" is noise in one site's footer and the entire point
+ * of a changelog.
  *
  * ## What it cannot tell you, and why
  *
@@ -55,11 +60,12 @@
  */
 
 import { createHash } from "node:crypto";
-import { config } from "../config.ts";
+import * as watchedPages from "../pages.ts";
 import { netPermissionHint } from "./net-permission.ts";
 import { PermanentFailure } from "./permanent.ts";
 import { MAX_VALUE_BYTES } from "./state.ts";
 import type { Job, JobContext, JobResult } from "./types.ts";
+import type { WatchedPage } from "../generated/wire.ts";
 
 /** Named so an operator reading their access log can tell what this is. */
 const USER_AGENT = "rn-watch-pages (https://github.com/PieterdenEngelse)";
@@ -151,7 +157,7 @@ export function applyIgnores(text: string, ignores: readonly string[]): string {
 
 /** What one page produced this run. */
 interface Polled {
-    url: string;
+    record: WatchedPage;
     label: string;
     text?: string;
     error?: string;
@@ -169,8 +175,34 @@ interface Polled {
 type Mark = {
     hash: string;
     chars: number;
+    /** When the page last *changed* — what "unchanged for 12 days" is read from. */
     at: number;
+    /** When it was last *fetched* — what decides whether it is due. */
+    checkedAt: number;
 };
+
+/**
+ * Whether a page is past its own interval.
+ *
+ * A minute of slack, because the job wakes on a schedule and the elapsed time
+ * is never exactly the interval: a page asking for sixty minutes, checked at
+ * 09:00:03 by a job that wakes on the quarter hour, would otherwise wait until
+ * 10:15 rather than 10:00 — and then 11:15, drifting a quarter hour every hour
+ * until it had lost a whole cycle.
+ */
+function isDue(page: WatchedPage, mark: Mark | undefined, now: number): boolean {
+    if (mark === undefined) return true;
+    return now - mark.checkedAt >= page.everyMinutes * 60_000 - 60_000;
+}
+
+/** The host, for the outbound-permission hint. Empty for a URL that will not parse. */
+function hostOf(url: string): string {
+    try {
+        return new URL(url).host;
+    } catch {
+        return "";
+    }
+}
 
 /**
  * What the store held, with anything that is not a mark dropped.
@@ -186,8 +218,13 @@ function marksFrom(held: unknown): Record<string, Mark> {
     for (const [key, value] of Object.entries(held as Record<string, unknown>)) {
         if (value === null || typeof value !== "object" || Array.isArray(value)) continue;
         const { hash, chars, at } = value as Record<string, unknown>;
+        const { checkedAt } = value as Record<string, unknown>;
         if (typeof hash !== "string" || typeof chars !== "number" || typeof at !== "number") continue;
-        out[key] = { hash, chars, at };
+        // A mark written before per-page intervals existed has no clock. Read
+        // as "never checked", which makes the page due now — the safe
+        // direction, since the alternative is a page that waits for a clock
+        // that will never be set.
+        out[key] = { hash, chars, at, checkedAt: typeof checkedAt === "number" ? checkedAt : 0 };
     }
     return out;
 }
@@ -270,10 +307,13 @@ export const watchPages: Job = {
     // a slow site should not cost the report from the others.
     timeoutMs: 2 * 60_000,
 
-    // Hourly. A page nobody watches changed hours ago either way, and asking a
-    // stranger's server more often than this for a document that changes
-    // monthly is rude in a way that gets a user agent blocked.
-    schedule: { kind: "everyMinutes", minutes: 60 },
+    // Every fifteen minutes, and it is a floor rather than a cadence: what the
+    // job does on waking is fetch the pages that are past *their own* interval,
+    // which is usually none of them. It has to wake at least as often as the
+    // most impatient page, or that page's interval is a number the install
+    // cannot honour — and a page asking for fifteen minutes is the finest this
+    // install can offer, whatever its record says.
+    schedule: { kind: "everyMinutes", minutes: 15 },
 
     // A page that fails once is usually a page that is up: a deploy, a 502, a
     // laptop whose wifi has not woken. Three attempts thirty seconds apart
@@ -282,115 +322,50 @@ export const watchPages: Job = {
 
     inputs: [
         {
-            id: "pages",
-            label: "Pages to watch",
-            type: "text",
-            // The installed list, filled in by the runner when nobody supplies
-            // one — which is every scheduled run. See RN_WATCH_PAGES.
-            default: config.watchPages,
-            placeholder: "empty — nothing is watched, and the run says so",
-            info: {
-                what:
-                    "The URLs to fetch for this run only, separated by spaces, newlines or " +
-                    "commas. http and https only: a file: URL would turn this field into a way " +
-                    "to read this machine's disk, and nothing here needs another scheme.\n\n" +
-                    "Nothing is saved here. The box arrives holding the installed list — " +
-                    "RN_WATCH_PAGES, on Config → Runtime under Watching — which is what the " +
-                    "hourly run uses; editing it here covers this run and is gone by the next, " +
-                    "which is what you want for \"just check these two for a moment\".\n\n" +
-                    "Each page is remembered " +
-                    "under its host and path, so the same page written two ways — a trailing " +
-                    "slash, a different query string — is two different pages as far as this job " +
-                    "is concerned.",
-                why:
-                    "This is the whole subject of the job. Point it at the page whose *content* " +
-                    "you care about rather than at a site's front door: a home page changes when " +
-                    "anything on the site changes, which is a notification that means nothing. " +
-                    "The status page, the pricing table, the one document.\n\nA handful of pages " +
-                    "is the intended size. The store keeps about a hundred bytes per page, so " +
-                    "dozens are fine and a crawl is not — this polls a list somebody chose, and " +
-                    "has no way to follow links.",
-                ifWrong:
-                    "A URL that is not http or https is named in the trace and skipped, and a run " +
-                    "with nothing usable left ends as skipped rather than as a failure.\n\n" +
-                    "An empty box on a scheduled job is the mistake this field cannot warn you " +
-                    "about from here: a schedule supplies no input, so what runs at the top of " +
-                    "the hour is the installed list and never what was typed on this card. If " +
-                    "the hourly run keeps skipping, the list on Config → Runtime is the one to " +
-                    "fill in.\n\nThe " +
-                    "quiet mistake is a page that renders its content with JavaScript. This " +
-                    "fetches HTML and runs nothing, so such a page reads as a nearly empty " +
-                    "document that never changes — the first look reports its character count, " +
-                    "and a number like 300 on a page you know is full of text is the tell.",
-            },
-        },
-        {
-            id: "text",
-            label: "Compare the visible text",
+            id: "force",
+            label: "Check every page now",
             type: "bool",
-            default: true,
+            default: false,
             info: {
                 what:
-                    "On, the page is reduced to roughly what a reader sees before it is compared: " +
-                    "script and style blocks removed, comments removed, tags removed, entities " +
-                    "decoded, whitespace collapsed. Off, the raw markup is compared exactly as " +
-                    "it arrived.",
+                    "Fetch every enabled page, whether or not it is due. Off — which is every " +
+                    "scheduled run — a page is fetched only once its own interval has elapsed " +
+                    "since it was last read.\n\nThis is the only thing a run can decide. What " +
+                    "is watched, what noise to ignore on each page, and how often each one is " +
+                    "checked are records on Config → Watching, because those belong to the page " +
+                    "rather than to one run of the job.",
                 why:
-                    "On is what you want almost always, because almost every page changes on " +
-                    "every request in ways nobody means: a CSRF token, a build id in an asset " +
-                    "URL, an ad slot, a rendered timestamp. Comparing the markup reports all of " +
-                    "it, hourly, and a watcher that reports a change every run is one you stop " +
-                    "reading.\n\nOff is for when the markup is the point — a canonical link " +
-                    "moving, a script source changing, a meta tag appearing. Those are invisible " +
-                    "in the text and are sometimes exactly what you are watching for.",
+                    "You have just added a page, or just fixed its ignore list, and you want to " +
+                    "see the result now rather than in fifty minutes. It is also how you take " +
+                    "the first look at a newly added page deliberately, instead of finding out " +
+                    "at the top of the hour whether the URL was right.\n\nIt costs one fetch " +
+                    "per page. On a list of a dozen that is a second or two, and it is polite " +
+                    "enough as an occasional thing and rude as a habit — which is what the " +
+                    "per-page interval is for.",
                 ifWrong:
-                    "Left on where you needed markup, a change you cared about never reports and " +
-                    "nothing says so — the run looks like a page that did not move.\n\nTurned " +
-                    "off on an ordinary page, expect a change reported on most runs, and the " +
-                    "ignore list is then the only thing standing between you and hourly noise.",
-            },
-        },
-        {
-            id: "ignore",
-            label: "Ignore lines containing",
-            type: "text",
-            default: config.watchPagesIgnore,
-            placeholder: "nothing dropped — every line counts",
-            info: {
-                what:
-                    "Comma-separated substrings, for this run only — the box arrives holding " +
-                    "the installed list, RN_WATCH_PAGES_IGNORE on Config → Runtime. Any line " +
-                    "containing one of them is dropped " +
-                    "before the page is compared, matched without regard to case. Plain " +
-                    "substrings rather than patterns: a regular expression typed into a field is " +
-                    "a way to hang this job on the page it was pointed at, and what people mean " +
-                    "is nearly always \"the line with the word Updated in it\".",
-                why:
-                    "It is the fix for the one page that keeps reporting when nothing happened. " +
-                    "A footer reading \"Last updated 14:05\", a visitor counter, a copyright year " +
-                    "— one entry here turns an hourly false alarm into silence, without giving " +
-                    "up the rest of the page.\n\nStart empty, wait for a false report, then " +
-                    "ignore the line it was about. Guessing in advance mostly removes lines that " +
-                    "were never going to move.",
-                ifWrong:
-                    "Too broad and you lose the change you were watching for: ignoring \"price\" " +
-                    "on a pricing page drops the row that matters along with the noise, and the " +
-                    "run reports nothing rather than reporting less.\n\nIt applies to every page " +
-                    "in the list, not to one of them. A word that is noise on one page and " +
-                    "content on another wants two runs of this job with different lists — which " +
-                    "is what the input being per-run rather than a setting is for.",
+                    "It cannot report a change that has not happened: a forced run on an " +
+                    "unchanged page reads the same as a due one and reports nothing. What it " +
+                    "does do is move every page's clock, so the next scheduled run finds fewer " +
+                    "pages due than it otherwise would.\n\nIt does not fetch a page that is " +
+                    "switched off. Off means paused, and a run that quietly overrode that would " +
+                    "make the switch a suggestion.",
             },
         },
     ],
 
     info: {
         what:
-            "Fetches each page on the list, reduces it to what a reader would see, and compares " +
-            "that against what it saw last time. It reports the pages whose content moved, with " +
-            "the direction and size of the move, and remembers the new state so the next run " +
-            "compares against this one rather than against the beginning of time.\n\nEvery " +
+            "Fetches the watched pages that are due, reduces each to what a reader would see, " +
+            "and compares that against what it saw last time. It reports the pages whose " +
+            "content moved, with the direction and size of the move, and remembers the new " +
+            "state so the next run compares against this one rather than against the beginning " +
+            "of time.\n\nWhat is watched lives on Config → Watching, as one record per page: " +
+            "the URL, whether it is on, what noise to ignore on that page, and how often to " +
+            "check it. This job holds no list of its own — it wakes every fifteen minutes and " +
+            "fetches whichever records are past their own interval, which is usually none of " +
+            "them.\n\nEvery " +
             "request is a GET. Nothing is written to any site, no form is submitted, and no link " +
-            "is followed — it asks for exactly the URLs in the list and nothing else.\n\nWhat it " +
+            "is followed — it asks for exactly the URLs on the list and nothing else.\n\nWhat it " +
             "keeps per page is a hash, a character count and a time. That is about a hundred " +
             "bytes, which is why dozens of pages are fine and why it cannot tell you what " +
             "changed — only that it did, and by roughly how much.",
@@ -400,8 +375,11 @@ export const watchPages: Job = {
             "notice: they change by somebody editing a page, and telling nobody is the normal " +
             "case rather than the rude one.\n\nThe alternative is remembering to look, which " +
             "works for a week. This is the job that turns \"I should check that occasionally\" " +
-            "into something that checks hourly and stays quiet until there is something to " +
-            "say.\n\nWire it to a notifier with on-change and the news reaches you rather than " +
+            "into something that checks on a cadence and stays quiet until there is something " +
+            "to say.\n\nThe cadence is per page because pages differ: a status page is worth " +
+            "fifteen minutes and a terms document is worth a week, and one interval for both " +
+            "means either hammering somebody\'s server or hearing about the outage tomorrow.\n\n" +
+            "Wire it to a notifier with on-change and the news reaches you rather than " +
             "waiting on a page you would also have to remember to open.",
         ifWrong:
             "The failure that matters is a page that renders with JavaScript. This fetches HTML " +
@@ -417,27 +395,32 @@ export const watchPages: Job = {
             "rather than reporting a bare permission error.",
         stages: [
             {
-                name: "Screen the list",
-                lead: "Split the URLs, keep http and https, drop duplicates, name what was thrown out.",
+                name: "Decide what is due",
+                lead: "Read the records, drop the ones switched off, keep the ones past their own interval.",
                 body:
-                    "The input is one string, split on whitespace and commas so a list pasted " +
-                    "from anywhere works. Each entry is parsed as a URL and kept only if its " +
-                    "scheme is http or https — a file: URL would make this field a way to read " +
-                    "the disk of the machine rn runs on.\n\n" +
-                    "Duplicates collapse, because the same page fetched twice is a wasted " +
-                    "request and a confusing count. A rejected entry is named in the trace " +
-                    "rather than dropped in silence: a typo'd URL makes a report with a hole in " +
-                    "it that looks complete, which is worse than an empty one.\n\n" +
-                    "If nothing survives, the run ends as skipped rather than as a failure. An " +
-                    "empty list is a job nobody has configured yet, not a job that broke.\n\n" +
-                    "Where the list comes from is worth knowing, because the two sources look " +
-                    "identical from inside run(). The runner fills a missing input from the " +
-                    "job's declared default, and that default is the installed setting — so a " +
-                    "scheduled run at the top of the hour gets RN_WATCH_PAGES, a run somebody " +
-                    "starts by hand gets whatever is in the box, and this code cannot tell " +
-                    "them apart. What was used is recorded on the run, which is where the two " +
-                    "become distinguishable again.",
-                reports: "unusable-page, listing what was rejected.",
+                    "The list is not this job's. It comes from the records on Config → " +
+                    "Watching, which are validated when they are saved — a URL that is not http " +
+                    "or https is refused there, while somebody is looking at it, rather than " +
+                    "becoming a step in a run nobody reads.\n\n" +
+                    "A page switched off is skipped and counted, never silently dropped: it " +
+                    "appears in the summary as `off`, because a setting that hides a page from " +
+                    "you without saying so is how a page goes unwatched for a year. Switching " +
+                    "one off is a pause rather than a removal — what the job remembers about it " +
+                    "survives, so switching it back on reports everything that changed in " +
+                    "between as one change.\n\n" +
+                    "Then the clock. Each record carries its own interval, and a page is due " +
+                    "when that long has passed since it was last *fetched* — a different " +
+                    "question from when it last *changed*, and both are remembered. A minute of " +
+                    "slack is allowed, because a page asking for sixty minutes and last read at " +
+                    "09:00:03 would otherwise wait for the 10:15 wake rather than the 10:00 " +
+                    "one, and then 11:15, drifting a quarter hour every hour.\n\n" +
+                    "The job waking every fifteen minutes is the floor on all of this: a record " +
+                    "asking to be checked more often than the job runs is asking for something " +
+                    "no schedule here can deliver, and gets the job's own cadence instead. " +
+                    "Ticking \"check every page now\" on a run ignores the clock entirely, but " +
+                    "not the switch.\n\n" +
+                    "A run with nothing due ends as skipped, and says which of the two reasons " +
+                    "it was: everything off, or nothing ready yet.",
             },
             {
                 name: "Fetch each page",
@@ -473,7 +456,9 @@ export const watchPages: Job = {
                     "comments, then tags, with block endings becoming line breaks so that two " +
                     "paragraphs do not hash the same as one run-together one. Entities are " +
                     "decoded, whitespace collapsed, blank lines dropped.\n\n" +
-                    "Then the ignore list: any line containing one of its substrings is removed. " +
+                    "Then the page's own ignore list: any line containing one of its substrings " +
+                    "is removed. Per page rather than per install, because the word that is " +
+                    "noise in one site's footer is content on somebody's changelog. " +
                     "This is where a footer timestamp or a visitor counter stops being news.\n\n" +
                     "What survives is hashed with SHA-256. The hash is what gets remembered — " +
                     "not the text — which is the decision that bounds this job's memory and also " +
@@ -483,10 +468,17 @@ export const watchPages: Job = {
                 name: "Compare against what it remembers",
                 lead: "One map of page to its last hash, and a page absent from it is a first look.",
                 body:
-                    "The memory is a single key holding a map of page label to a hash, a " +
-                    "character count and a time. One key rather than one per page, for the " +
-                    "reason watch-upstreams gives: a key built from the data grows without bound " +
-                    "and the store caps the number of keys a job may hold.\n\n" +
+                    "The memory is a single key holding a map of record id to a hash, two " +
+                    "character counts worth of bookkeeping and two times — when the page last " +
+                    "changed, and when it was last fetched. One key rather than one per page, " +
+                    "for the reason watch-upstreams gives: a key built from the data grows " +
+                    "without bound and the store caps the number of keys a job may hold.\n\n" +
+                    "Keyed by the record's id rather than by its URL, because a URL is editable. " +
+                    "Fixing a typo in an address would otherwise read as deleting one page and " +
+                    "adding another, and the corrected page would take a first look instead of " +
+                    "carrying on. A mark whose record has been deleted is pruned on the next " +
+                    "run, which is what keeps the value bounded by the list rather than by its " +
+                    "history.\n\n" +
                     "A page the map has never seen is a first look. It is recorded and not " +
                     "reported — announcing every page in the list as news the first time it runs " +
                     "would be a notification about nothing, and it would bury the first real " +
@@ -525,54 +517,54 @@ export const watchPages: Job = {
     },
 
     async run(ctx: JobContext): Promise<JobResult> {
-        const urls = String(ctx.input.pages ?? "")
-            .split(/[\s,]+/)
-            .map((u) => u.trim())
-            .filter(Boolean);
-        const asText = ctx.input.text !== false;
-        const ignores = String(ctx.input.ignore ?? "")
-            .split(",")
-            .map((i) => i.trim())
-            .filter(Boolean);
+        const force = ctx.input.force === true;
+        const records = watchedPages.list();
 
-        const usable: string[] = [];
-        const rejected: string[] = [];
-        for (const u of urls) {
-            let parsed: URL | undefined;
-            try {
-                parsed = new URL(u);
-            } catch {
-                parsed = undefined;
-            }
-            if (parsed === undefined || (parsed.protocol !== "http:" && parsed.protocol !== "https:")) {
-                rejected.push(u.slice(0, 120));
-                continue;
-            }
-            if (!usable.includes(u)) usable.push(u);
-        }
-        if (rejected.length > 0) {
-            ctx.step("unusable-page", { entries: rejected });
-        }
-
-        if (usable.length === 0) {
+        if (records.length === 0) {
             return {
-                summary: { pages: 0 },
+                summary: { watched: 0 },
                 changed: false,
                 skipped:
-                    "No page to watch — the list is empty or names nothing that is an http or " +
-                    "https URL.",
+                    "No page is being watched. Add one on Config → Watching — a URL, and how " +
+                    "often to check it.",
             };
         }
 
-        const known = marksFrom(ctx.state.get("pages"));
+        const marks = marksFrom(ctx.state.get("pages"));
+        const now = Date.now();
 
-        const polled: Polled[] = await pool(usable, async (url): Promise<Polled> => {
-            const label = pageLabel(url);
+        const off = records.filter((r) => !r.enabled);
+        const enabled = records.filter((r) => r.enabled);
+        // Due is a property of the record and the clock, so it is decided once,
+        // here, rather than per fetch — a run that took ninety seconds would
+        // otherwise judge its last page against a later "now" than its first.
+        const due = enabled.filter((r) => force || isDue(r, marks[r.id], now));
+
+        if (due.length === 0) {
+            return {
+                summary: {
+                    watched: records.length,
+                    enabled: enabled.length,
+                    ...(off.length === 0 ? {} : { off: off.length }),
+                    due: 0,
+                },
+                changed: false,
+                skipped:
+                    off.length === records.length
+                        ? `Every page is switched off (${off.length}). They keep what they were ` +
+                          `last seen as, so switching one back on reports what changed meanwhile.`
+                        : `Nothing due: ${enabled.length} page(s) watched, none of them past ` +
+                          `their own interval yet. Tick "check every page now" to look anyway.`,
+            };
+        }
+
+        const polled: Polled[] = await pool([...due], async (record): Promise<Polled> => {
+            const label = record.label === "" ? pageLabel(record.url) : record.label;
             try {
-                return { url, label, text: await getPage(url, ctx.signal) };
+                return { record, label, text: await getPage(record.url, ctx.signal) };
             } catch (err) {
                 return {
-                    url,
+                    record,
                     label,
                     error: err instanceof Error ? err.message : String(err),
                     thrown: err,
@@ -586,7 +578,7 @@ export const watchPages: Job = {
             // same branch in watch-feeds.ts for why this throws rather than
             // reporting a quiet run.
             const first = failed[0]!.error ?? "unknown";
-            const hosts = [...new Set(usable.map((u) => new URL(u).host))];
+            const hosts = [...new Set(due.map((r) => hostOf(r.url)).filter(Boolean))];
             const hint = netPermissionHint(failed[0]!.thrown ?? first, hosts);
             const message =
                 `every page failed (${polled.length}) — first: ${first}` +
@@ -603,43 +595,56 @@ export const watchPages: Job = {
             ctx.step("page-failed", { page: f.label, error: f.error ?? "" });
         }
 
-        const now = Date.now();
-        const next: Record<string, Mark> = { ...known };
+        // Start from what is remembered, then drop anything whose record has
+        // gone: a mark for a deleted page would sit in the store forever, which
+        // is the unbounded growth the key limit exists to prevent.
+        const next: Record<string, Mark> = {};
+        for (const r of records) {
+            const mark = marks[r.id];
+            if (mark !== undefined) next[r.id] = mark;
+        }
+
         const news: { page: string; from: number; to: number }[] = [];
         const firstLook: { page: string; chars: number }[] = [];
 
         for (const p of polled) {
-            // A page that failed keeps whatever mark it had: see the panel's
-            // fourth step for why clearing it would swallow a change.
+            // A page that failed keeps the mark it had, including its clock, so
+            // it is due again on the next run rather than waiting out another
+            // interval on the strength of a fetch that did not happen.
             if (p.text === undefined) continue;
 
-            const compared = applyIgnores(asText ? visibleText(p.text) : p.text, ignores);
+            const ignores = p.record.ignore
+                .split(",")
+                .map((i) => i.trim())
+                .filter(Boolean);
+            const compared = applyIgnores(p.record.text ? visibleText(p.text) : p.text, ignores);
             const hash = createHash("sha256").update(compared).digest("hex");
-            const mark = known[p.label];
+            const mark = marks[p.record.id];
 
             if (mark === undefined) {
                 firstLook.push({ page: p.label, chars: compared.length });
-                next[p.label] = { hash, chars: compared.length, at: now };
+                next[p.record.id] = { hash, chars: compared.length, at: now, checkedAt: now };
                 continue;
             }
 
             if (mark.hash === hash) {
-                // Unchanged: the mark stays as it was, including its `at`, so
-                // "how long since this page last moved" survives every run that
-                // found nothing.
-                next[p.label] = mark;
+                // Unchanged: `at` stays where it was, so "how long since this
+                // page last moved" survives every run that found nothing, while
+                // the clock that decides due-ness moves.
+                next[p.record.id] = { ...mark, checkedAt: now };
                 continue;
             }
 
             news.push({ page: p.label, from: mark.chars, to: compared.length });
             ctx.step("changed", {
                 page: p.label,
+                url: p.record.url,
                 from: mark.chars,
                 to: compared.length,
                 delta: compared.length - mark.chars,
                 sinceDays: Number(((now - mark.at) / 86_400_000).toFixed(1)),
             });
-            next[p.label] = { hash, chars: compared.length, at: now };
+            next[p.record.id] = { hash, chars: compared.length, at: now, checkedAt: now };
         }
 
         for (const f of firstLook) {
@@ -649,7 +654,9 @@ export const watchPages: Job = {
                 // The number that exposes a page drawn by JavaScript, said at
                 // the moment somebody is looking at it rather than in a panel
                 // they would have to think to open.
-                ...(f.chars < 400 ? { note: "very little text — a page rendered by JavaScript reads like this" } : {}),
+                ...(f.chars < 400
+                    ? { note: "very little text — a page rendered by JavaScript reads like this" }
+                    : {}),
             });
         }
 
@@ -662,14 +669,16 @@ export const watchPages: Job = {
         ctx.state.changed("pages", next);
 
         const summary = {
-            pages: usable.length,
-            polled: polled.length - failed.length,
-            compared: asText ? "text" : "markup",
+            watched: records.length,
+            ...(off.length === 0 ? {} : { off: off.length }),
+            due: due.length,
+            read: polled.length - failed.length,
             changed: news.length,
-            ...(ignores.length === 0 ? {} : { ignoring: ignores.length }),
             ...(failed.length === 0 ? {} : { pagesFailed: failed.length }),
             ...(firstLook.length === 0 ? {} : { firstLook: firstLook.length }),
-            ...(news.length === 0 ? {} : { latest: `${news[0]!.page} ${news[0]!.from} → ${news[0]!.to} characters` }),
+            ...(news.length === 0
+                ? {}
+                : { latest: `${news[0]!.page} ${news[0]!.from} → ${news[0]!.to} characters` }),
         };
 
         if (news.length === 0 && firstLook.length > 0) {
@@ -687,9 +696,7 @@ export const watchPages: Job = {
             return {
                 summary,
                 changed: false,
-                skipped:
-                    `Nothing changed: ${polled.length - failed.length} page(s) read the same as ` +
-                    `last time.`,
+                skipped: `Nothing changed: ${polled.length - failed.length} page(s) read the same as last time.`,
             };
         }
 

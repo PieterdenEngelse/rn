@@ -1,7 +1,8 @@
 use crate::components::header::Header;
 use crate::components::SubNav;
 use crate::pages::{
-    Config, ConfigConnection, ConfigJobs, ConfigMail, Home, MonitorConnection, MonitorJobs, MonitorLinks,
+    Config, ConfigConnection, ConfigJobs, ConfigMail, ConfigWatching, Home, MonitorConnection,
+    MonitorJobs, MonitorLinks,
     MonitorLinksSend, MonitorMail, MonitorRuntime, PageNotFound,
 };
 use dioxus::prelude::*;
@@ -63,6 +64,13 @@ pub enum Route {
         // of editable settings would imply it is one.
         #[route("/config/jobs")]
         ConfigJobs {},
+        // The pages watch-pages fetches. Its own page rather than rows on
+        // Config → Runtime, because a watched page is a record — a URL with
+        // its own ignore list and its own cadence — and settings.json holds
+        // scalars. It began as two comma-separated settings that could not say
+        // "ignore the footer clock on this one page".
+        #[route("/config/watching")]
+        ConfigWatching {},
         #[route("/:..segments")]
         PageNotFound { segments: Vec<String> },
 }

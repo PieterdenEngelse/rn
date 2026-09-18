@@ -397,17 +397,18 @@ export const config = {
     mailWatchMailbox: process.env.RN_MAIL_WATCH_MAILBOX ?? "INBOX",
 
     /**
-     * The pages watch-pages fetches on its schedule.
+     * The pages watch-pages fetches, as records somebody typed.
      *
-     * Here rather than only in the job's input because a scheduled run
-     * supplies no input: the job fills its input default from this, so the
-     * hourly run and a run somebody starts by hand take the same path through
-     * `run()` and differ only in what they were handed.
+     * Its own file rather than a setting, and it began as one: two
+     * comma-separated strings that could name the pages and the noise to
+     * ignore, but only as one answer for every page at once. An ignore list
+     * belongs to a page, and so does a cadence — see `pages.ts`.
+     *
+     * Per worktree, like every other store here: a page added while testing
+     * must not start being fetched by the install somebody actually uses.
      */
-    watchPages: process.env.RN_WATCH_PAGES ?? "",
-
-    /** Lines containing one of these are dropped before a page is compared. */
-    watchPagesIgnore: process.env.RN_WATCH_PAGES_IGNORE ?? "",
+    watchPagesPath:
+        process.env.RN_WATCH_PAGES_PATH ?? `${process.env.HOME ?? "."}/.config/rn/watch-pages.json`,
 
     /** IMAP host the read-mail job connects to. */
     imapHost: process.env.RN_IMAP_HOST ?? "imap.gmail.com",

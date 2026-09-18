@@ -186,7 +186,7 @@ overridden: JobOverride, };
  * every variant but the mail ones is a single word — and lets the three
  * that are not spell themselves `mail-account` rather than `mailaccount`.
  */
-export type Category = "memory" | "concurrency" | "time" | "network" | "mail-account" | "mail-receiving" | "mail-sending" | "links" | "watching" | "diagnostics" | "output" | "runtime" | "security";
+export type Category = "memory" | "concurrency" | "time" | "network" | "mail-account" | "mail-receiving" | "mail-sending" | "links" | "diagnostics" | "output" | "runtime" | "security";
 
 /**
  * One entry in a command webhook's routing table: this action runs this
@@ -1498,6 +1498,30 @@ runqueueWaitMsPerSec: number, };
 export type Outcome = "changed" | "unchanged" | "skipped" | "failed";
 
 /**
+ * The answer to a save or a delete.
+ *
+ * Errors are a list of sentences rather than one string, because a record
+ * can be wrong in several ways at once and fixing them one refusal at a
+ * time is a poor way to spend an afternoon.
+ */
+export type PageSaveResponse = { ok: boolean, errors: Array<string>, 
+/**
+ * The record as stored, with its id and defaults filled in — so the
+ * page can replace what it sent with what was kept.
+ */
+page?: WatchedPage | null, };
+
+/**
+ * `GET /api/pages`: what is watched, and where the file is.
+ */
+export type PagesResponse = { pages: Array<WatchedPage>, 
+/**
+ * Display path of the file these live in, so the page can say where
+ * its own data is rather than implying it lives in the browser.
+ */
+path: string, };
+
+/**
  * The three lines of an info panel, for a runtime parameter.
  *
  * The same shape a job's `JobInfo` carries, and rendered by the same
@@ -2175,6 +2199,69 @@ error: string | null,
  * Runs this mailbox has started since the process began.
  */
 triggered: number, };
+
+/**
+ * One page being watched, as the person who typed it described it.
+ */
+export type WatchedPage = { 
+/**
+ * Stable id, minted by `be`. The URL is editable, so it cannot be the
+ * identity — renaming a page would otherwise read as deleting one and
+ * adding another, losing what the job remembers about it.
+ */
+id: string, 
+/**
+ * The page to fetch. http or https; anything else is refused on save
+ * rather than at 04:00.
+ */
+url: string, 
+/**
+ * What to call it on a page and in a report. Empty falls back to the
+ * host and path, which is what the job's own steps use.
+ */
+label: string, 
+/**
+ * Whether this page is fetched at all.
+ *
+ * Off is a *pause*, not a removal, and the difference is the whole
+ * reason the flag exists rather than leaving people to delete and
+ * re-add: what the job remembers about the page survives being
+ * switched off, so switching it back on reports everything that
+ * changed in between as one change. Deleting the record is how you
+ * say "stop, and forget where this stood".
+ */
+enabled: boolean, 
+/**
+ * Lines containing one of these are dropped before the page is
+ * compared. Comma-separated, matched without regard to case.
+ *
+ * Per page, which is the thing the old install-wide setting could not
+ * do: "last updated" is noise in one site's footer and content on a
+ * changelog.
+ */
+ignore: string, 
+/**
+ * Compare what a reader sees rather than the markup.
+ *
+ * On for almost every page — markup differs on nearly every request.
+ * Off where the markup *is* the point: a canonical link moving, a
+ * script source changing.
+ */
+text: boolean, 
+/**
+ * How often this page should be fetched, in minutes.
+ *
+ * A floor rather than a promise, and the distinction matters: the job
+ * only looks when it runs, so a page asking for less than the job's
+ * own interval is fetched on that interval instead. The page that
+ * edits this says what the job's interval currently is rather than
+ * leaving the arithmetic to the reader.
+ */
+everyMinutes: number, 
+/**
+ * Epoch ms, when the record was made. Display only.
+ */
+createdAt: number, };
 
 /**
  * One webhook as the page sees it: its definition, plus what only the

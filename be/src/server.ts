@@ -41,6 +41,8 @@ import type {
     TransientRefusals,
     RunsDeleteResponse,
     MailRuleSaveResponse,
+    PagesResponse,
+    PageSaveResponse,
     MailRulesResponse,
     WebhookDef,
     WebhookSaveResponse,
@@ -69,6 +71,7 @@ import { createHookApp, hooksHealth, startHooks } from "./hooks/server.ts";
 import { createTrackerApp, startTracker, trackerHealth } from "./tracker/server.ts";
 import { mailWatchHealth, startMailWatch } from "./mail/watcher.ts";
 import * as mailRules from "./mail/rules.ts";
+import * as watchedPages from "./pages.ts";
 import * as mailTest from "./mail/test-record.ts";
 import * as trackerStore from "./tracker/store.ts";
 import * as sent from "./tracker/sent.ts";
@@ -771,6 +774,39 @@ export function createApp() {
                 return done(404);
             }
             send(res, 200, { ok: true, errors: [] } satisfies MailRuleSaveResponse);
+            return done(200);
+        }
+
+        // The watched pages: records a person typed, edited on Config →
+        // Watching. Three routes and the same shape as the mail rules above,
+        // because it is the same kind of thing — a list somebody maintains,
+        // not a setting with a sensible default.
+        if (url.pathname === "/api/pages" && req.method === "GET") {
+            send(res, 200, {
+                pages: [...watchedPages.list()],
+                path: displayPath(watchedPages.storePath()),
+            } satisfies PagesResponse);
+            return done(200);
+        }
+
+        if (url.pathname === "/api/pages" && req.method === "PUT") {
+            const body = await readJson(req);
+            const result = watchedPages.put(body);
+            if (result.page === undefined) {
+                send(res, 422, { ok: false, errors: result.errors } satisfies PageSaveResponse);
+                return done(422);
+            }
+            send(res, 200, { ok: true, errors: [], page: result.page } satisfies PageSaveResponse);
+            return done(200);
+        }
+
+        if (url.pathname.startsWith("/api/pages/") && req.method === "DELETE") {
+            const id = decodeURIComponent(url.pathname.slice("/api/pages/".length));
+            if (!watchedPages.remove(id)) {
+                send(res, 404, { ok: false, errors: [`no page ${id}`] } satisfies PageSaveResponse);
+                return done(404);
+            }
+            send(res, 200, { ok: true, errors: [] } satisfies PageSaveResponse);
             return done(200);
         }
 

@@ -37,6 +37,12 @@ pub use shared::links::*;
 // holds scalars and has no shape for a list of these.
 pub use shared::mail::*;
 
+// The pages an install watches. Its own module in `shared/` for the reason
+// `mail` is: a watched page is a record somebody typed, and `settings.json`
+// holds scalars — which is exactly what the two settings this replaced could
+// not be, since an ignore list belongs to one page rather than to all of them.
+pub use shared::pages::*;
+
 pub use shared::monitor::*;
 
 // When a credential stops working, and what stops with it. Its own module in

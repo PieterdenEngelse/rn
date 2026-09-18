@@ -154,7 +154,6 @@ fn category_title(cat: Category) -> &'static str {
         Category::MailReceiving => "Mail — receiving (IMAP)",
         Category::MailSending => "Mail — sending (SMTP)",
         Category::Links => "Links",
-        Category::Watching => "Watching",
         Category::Diagnostics => "Diagnostics",
         Category::Output => "Output",
         Category::Runtime => "Runtime",

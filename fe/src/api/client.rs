@@ -7,6 +7,7 @@
 use super::wire::{
     ConnectionResponse, EnvResponse, HealthResponse, JobConfigResponse, JobErrors, JobOverride,
     JobRunResult, JobSource, JobsResponse, LinksResponse, MailHealthResponse, MailRule,
+    PageSaveResponse, PagesResponse, WatchedPage,
     MailRuleSaveResponse, MailRulesResponse, MailTestResponse, MailTestResult, NodeHistory,
     NodeMetrics, RunsDeleteResponse, SendDetail,
     ParamsResponse, RestartOutcome, RunsResponse, SaveResponse, StateResetResponse, StatusResponse,
@@ -786,6 +787,42 @@ pub async fn fetch_mail_health() -> Result<MailHealthResponse, String> {
 /// beside whether its mailbox has a connection — and fetching those separately
 /// would let them disagree on screen for a moment, which on this page reads as
 /// a rule being broken.
+/// The pages this install watches, and where the file is.
+pub async fn fetch_pages() -> Result<PagesResponse, String> {
+    let resp = gloo_net::http::Request::get(&format!("{API_BASE}/api/pages"))
+        .send()
+        .await
+        .map_err(|e| format!("{e}"))?;
+    resp.json::<PagesResponse>().await.map_err(|e| format!("{e}"))
+}
+
+/// Add or replace one watched page. The id in the body decides which; an empty
+/// one is minted by the backend, so the page never invents an identity.
+pub async fn save_page(page: &WatchedPage) -> Result<PageSaveResponse, String> {
+    let body = serde_json::to_string(page).map_err(|e| format!("{e}"))?;
+    let resp = gloo_net::http::Request::put(&format!("{API_BASE}/api/pages"))
+        .header("content-type", "application/json")
+        .body(body)
+        .map_err(|e| format!("{e}"))?
+        .send()
+        .await
+        .map_err(|e| format!("{e}"))?;
+    resp.json::<PageSaveResponse>()
+        .await
+        .map_err(|_| format!("the save failed ({})", resp.status()))
+}
+
+/// Stop watching a page, and forget where it stood.
+pub async fn delete_page(id: &str) -> Result<PageSaveResponse, String> {
+    let resp = gloo_net::http::Request::delete(&format!("{API_BASE}/api/pages/{id}"))
+        .send()
+        .await
+        .map_err(|e| format!("{e}"))?;
+    resp.json::<PageSaveResponse>()
+        .await
+        .map_err(|_| format!("the delete failed ({})", resp.status()))
+}
+
 pub async fn fetch_mail_rules() -> Result<MailRulesResponse, String> {
     let resp = gloo_net::http::Request::get(&format!("{API_BASE}/api/mail-rules"))
         .send()
