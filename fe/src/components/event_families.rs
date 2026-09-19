@@ -97,8 +97,25 @@ pub static FAMILIES: [EventFamily; 6] = [
         examples: "invoice.updated; subscription.changed; order.status.updated",
         meaning: "Something changed",
         words: &[
-            "updated", "update", "changed", "change", "edited", "modified", "renamed", "moved",
-            "replaced", "synchronize",
+            // the content itself
+            "updated", "update", "changed", "change", "edited", "edit", "modified", "revised",
+            "amended", "patched", "adjusted", "corrected",
+            // where it sits or what it is called
+            "renamed", "moved", "move", "transferred", "reordered", "relocated",
+            // swapped for something else
+            "replaced", "overwritten", "upgraded", "downgraded", "migrated", "swapped",
+            // two records made one — HubSpot's `contact.merge`. A pull request is
+            // "merged", which is a stage and stays under Lifecycle.
+            "merge",
+            // what it is attached to
+            "attached", "detached", "linked", "unlinked", "connect", "connected", "disconnect",
+            "disconnected", "associated", "tagged", "untagged", "labeled", "unlabeled",
+            "labelled", "unlabelled",
+            // brought back in line with somewhere else
+            "synchronize", "synchronized", "synchronised", "synced", "refreshed", "reconciled",
+            // settings and amounts
+            "configured", "reconfigured", "toggled", "increased", "decreased", "incremented",
+            "decremented",
         ],
         by_subject: false,
         asks: "act on the current state — two edits can arrive in either order",
@@ -108,7 +125,9 @@ pub static FAMILIES: [EventFamily; 6] = [
         what: "Something that already existed changed: an invoice's amount, a subscription's \
                plan, an order's status. Usually `<noun>.updated` or `<noun>.changed`; some \
                providers name the field as well, as in `order.status.updated`, which is why the \
-               last verb in the name decides rather than the first word.",
+               last verb in the name decides rather than the first word. HubSpot and Trello \
+               run the words together — `contact.propertyChange`, `moveCardToBoard` — and the \
+               sorter splits them at each capital, so those read as change and move.",
         why: "Updates come in bursts, and two edits a second apart can be delivered in either \
               order — retries make that worse, not better. A job that writes what the delivery \
               says can end on the older value. That is the case for the Notification kind on \
@@ -309,13 +328,35 @@ pub struct Sorted {
 }
 
 /// The words of an event name, lowercased: `rate_limit.hit` is
-/// `["rate", "limit", "hit"]`.
+/// `["rate", "limit", "hit"]`, and `contact.propertyChange` is
+/// `["contact", "property", "change"]`.
+///
+/// A capital following a lowercase letter or digit starts a word, for the
+/// providers that write names in camelCase. A capital following a capital does
+/// not, so PayPal's `PAYMENT.CAPTURE.DENIED` stays three words and not nineteen.
 fn words(event: &str) -> Vec<String> {
-    event
-        .split(|c: char| !c.is_ascii_alphanumeric())
-        .filter(|w| !w.is_empty())
-        .map(|w| w.to_ascii_lowercase())
-        .collect()
+    let mut out = Vec::new();
+    let mut word = String::new();
+    let mut prev: Option<char> = None;
+    for c in event.chars() {
+        if !c.is_ascii_alphanumeric() {
+            if !word.is_empty() {
+                out.push(std::mem::take(&mut word));
+            }
+        } else {
+            let camel_hump = c.is_ascii_uppercase()
+                && prev.is_some_and(|p| p.is_ascii_lowercase() || p.is_ascii_digit());
+            if camel_hump && !word.is_empty() {
+                out.push(std::mem::take(&mut word));
+            }
+            word.push(c.to_ascii_lowercase());
+        }
+        prev = Some(c);
+    }
+    if !word.is_empty() {
+        out.push(word);
+    }
+    out
 }
 
 /// Sort one event name.
@@ -495,6 +536,44 @@ mod tests {
         assert_eq!(sorted_into("webhook_endpoint.disabled"), Some(SYSTEM));
         assert_eq!(sorted_into("customer.subscription.pending_update_applied"), Some(UPDATE));
         assert_eq!(sorted_into("order.status.updated"), Some(UPDATE));
+    }
+
+    /// Real provider names that sorted as Unsorted before the update list
+    /// covered attachments, moves and merges, and before the sorter split
+    /// camelCase.
+    #[test]
+    fn provider_update_names() {
+        for event in [
+            "payment_method.attached",      // Stripe
+            "payment_method.detached",      // Stripe
+            "inventory_levels/connect",     // Shopify
+            "inventory_levels/disconnect",  // Shopify
+            "contact.propertyChange",       // HubSpot
+            "contact.associationChange",    // HubSpot
+            "contact.merge",                // HubSpot
+            "updateCard",                   // Trello
+            "moveCardToBoard",              // Trello
+        ] {
+            assert_eq!(sorted_into(event), Some(UPDATE), "{event}");
+        }
+    }
+
+    /// A later verb from another family still wins, and a pull request that is
+    /// merged is a stage rather than an edit.
+    #[test]
+    fn near_misses_stay_out_of_update() {
+        assert_eq!(sorted_into("removeLabelFromCard"), Some(DELETE)); // Trello
+        assert_eq!(sorted_into("pull_request.merged"), Some(LIFECYCLE));
+        assert_eq!(sorted_into("oauth.token.refreshed"), Some(SECURITY));
+        assert_eq!(sorted_into("sync.completed"), Some(LIFECYCLE));
+    }
+
+    #[test]
+    fn camel_case_splits_at_a_capital_after_lowercase_only() {
+        assert_eq!(words("contact.propertyChange"), ["contact", "property", "change"]);
+        assert_eq!(words("PAYMENT.CAPTURE.DENIED"), ["payment", "capture", "denied"]);
+        assert_eq!(words("oauth2Token"), ["oauth2", "token"]);
+        assert_eq!(words("rate_limit.hit"), ["rate", "limit", "hit"]);
     }
 
     #[test]
