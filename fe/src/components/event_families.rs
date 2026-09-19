@@ -174,7 +174,7 @@ pub static FAMILIES: [EventFamily; 6] = [
         kind_why: "a lookup would get a 404 for a deleted record, and the delivery would be dropped",
         job: None,
         what: "A record is gone at the provider: `customer.deleted`, `file.removed`. The body \
-               often carries only the id, since there is nothing left to describe. Two are \
+               often carries only the id, since there is nothing left to describe. Three are \
                owed rather than merely reported: Shopify's `customers/redact` and `shop/redact`, \
                and HubSpot's `contact.privacyDeletion`, are a person's data-protection request to \
                be erased. A job receiving one has to erase what it holds, not just note it.",
