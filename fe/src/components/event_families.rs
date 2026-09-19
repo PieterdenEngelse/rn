@@ -147,10 +147,28 @@ pub static FAMILIES: [EventFamily; 6] = [
         examples: "payment.succeeded; payment.failed; shipment.delivered",
         meaning: "Resource moved through a stage",
         words: &[
-            "succeeded", "success", "failed", "failure", "completed", "complete", "started",
-            "finished", "delivered", "shipped", "paid", "cancelled", "canceled", "expired",
-            "refunded", "approved", "rejected", "activated", "deactivated", "closed", "reopened",
-            "resolved", "published", "fulfilled", "captured", "confirmed", "status",
+            // under way, or waiting on someone
+            "started", "start", "queued", "pending", "processing", "requested", "submitted",
+            "initiated", "scheduled", "requires", "required",
+            // how it ended
+            "succeeded", "success", "failed", "failure", "completed", "complete", "finished",
+            "done", "ended", "end", "cancelled", "canceled", "status",
+            // money moving
+            "paid", "captured", "refunded", "authorized", "authorised", "funded", "settled",
+            "available", "finalized", "voided", "uncollectible", "reversed", "denied",
+            "declined",
+            // goods and messages moving
+            "shipped", "dispatched", "delivered", "returned", "fulfilled", "sent",
+            // somebody decided
+            "approved", "rejected", "accepted", "confirmed", "signed", "verified", "reviewed",
+            "escalated", "assigned", "unassigned", "resolved",
+            // switched on, off, or put away
+            "activated", "deactivated", "enabled", "disabled", "paused", "resumed", "suspended",
+            "closed", "reopened", "archived", "unarchived", "restored",
+            // made public
+            "published", "unpublished", "released", "deployed", "merged",
+            // the calendar
+            "expired", "expiring", "renewed", "due", "overdue", "upcoming",
         ],
         by_subject: false,
         asks: "one transition can arrive as two events — pick one to act on",
@@ -179,19 +197,21 @@ pub static FAMILIES: [EventFamily; 6] = [
         // they belong are left out on purpose, because they appear in other
         // families' names too: "suspended" (a subscription can be suspended
         // for billing), "authorization" (a card payment is authorised),
-        // "block" (Notion's content blocks), and "team" and "organization"
-        // (GitHub sends both when a name or description is edited).
+        // "block" (Notion's content blocks), "team" and "organization"
+        // (GitHub sends both when a name or description is edited),
+        // "session" (Stripe's `checkout.session.completed` is a payment) and
+        // "member" (Ghost's and Discord's members are subscribers).
         words: &[
-            // signing in, and the sessions that result
-            "login", "logout", "signin", "session", "sessions", "authentication",
+            // signing in
+            "login", "logout", "signin", "authentication",
             // the secrets a person holds
             "password", "passwd", "mfa", "2fa", "otp", "totp", "webauthn", "passkey",
             // the secrets software holds
             "token", "tokens", "key", "keys", "secret", "credential", "credentials", "auth",
             "oauth",
             // who may do what
-            "permission", "permissions", "role", "roles", "sso", "member", "members",
-            "membership", "invite", "invited", "invitation",
+            "permission", "permissions", "role", "roles", "sso", "invite", "invited",
+            "invitation",
             // an account locked or banned
             "lockout", "locked", "lock", "unlock", "unlocked", "ban", "banned",
             // the provider suspects something
@@ -371,17 +391,13 @@ mod tests {
     }
 
     /// Real provider names that sorted as Unsorted, or as System on the strength
-    /// of their last word, before the security list covered
-    /// sessions, membership, locking and vulnerability reports.
+    /// of their last word, before the security list covered passwords by
+    /// field name, locking and vulnerability reports.
     #[test]
     fn provider_security_names() {
         for event in [
-            "user.session.start",                // Okta
-            "session.created",                   // Clerk
             "user.account.update_password",      // Okta
             "user.account.lock",                 // Okta
-            "member",                            // GitHub
-            "membership",                        // GitHub
             "deploy_key",                        // GitHub
             "secret_scanning_alert",             // GitHub
             "dependabot_alert",                  // GitHub
@@ -403,6 +419,9 @@ mod tests {
         assert_eq!(sorted_into("team.renamed"), Some(UPDATE));
         assert_eq!(sorted_into("block.updated"), Some(UPDATE));
         assert_eq!(sorted_into("issuing_authorization.created"), Some(CREATE));
+        assert_eq!(sorted_into("checkout.session.completed"), Some(LIFECYCLE));
+        assert_eq!(sorted_into("member.added"), Some(CREATE));
+        assert_eq!(sorted_into("user.session.start"), Some(LIFECYCLE));
     }
 
     /// Real provider names that sorted as Unsorted before the system list
@@ -432,6 +451,50 @@ mod tests {
         assert_eq!(sorted_into("inventory_item.unavailable"), None);
         assert_eq!(sorted_into("spending_limit.updated"), Some(UPDATE));
         assert_eq!(sorted_into("tokens_revoked"), Some(SECURITY));
+    }
+
+    /// Real provider names that sorted as Unsorted before the lifecycle list
+    /// covered stages in progress, money settling, decisions and the calendar.
+    #[test]
+    fn provider_lifecycle_names() {
+        for event in [
+            "payment_intent.processing",              // Stripe
+            "payment_intent.requires_action",         // Stripe
+            "invoice.payment_action_required",        // Stripe
+            "subscription_schedule.released",         // Stripe
+            "payment_intent.partially_funded",        // Stripe
+            "balance.available",                      // Stripe
+            "invoice.finalized",                      // Stripe
+            "invoice.voided",                         // Stripe
+            "invoice.marked_uncollectible",           // Stripe
+            "invoice.sent",                           // Stripe
+            "invoice.upcoming",                       // Stripe
+            "invoice.overdue",                        // Stripe
+            "invoice.will_be_due",                    // Stripe
+            "transfer.reversed",                      // Stripe
+            "customer.subscription.paused",           // Stripe
+            "customer.subscription.resumed",          // Stripe
+            "customer.subscription.trial_will_end",   // Stripe
+            "customer.source.expiring",               // Stripe
+            "identity.verification_session.verified", // Stripe
+            "PAYMENT.CAPTURE.PENDING",                // PayPal
+            "PAYMENT.CAPTURE.DENIED",                 // PayPal
+            "BILLING.SUBSCRIPTION.SUSPENDED",         // PayPal
+            "envelope-declined",                      // DocuSign
+            "envelope-voided",                        // DocuSign
+        ] {
+            assert_eq!(sorted_into(event), Some(LIFECYCLE), "{event}");
+        }
+    }
+
+    /// A stage word loses to a subject word, and to a create, update or delete
+    /// verb nearer the end of the name.
+    #[test]
+    fn near_misses_stay_out_of_lifecycle() {
+        assert_eq!(sorted_into("mfa.disabled"), Some(SECURITY));
+        assert_eq!(sorted_into("webhook_endpoint.disabled"), Some(SYSTEM));
+        assert_eq!(sorted_into("customer.subscription.pending_update_applied"), Some(UPDATE));
+        assert_eq!(sorted_into("order.status.updated"), Some(UPDATE));
     }
 
     #[test]
