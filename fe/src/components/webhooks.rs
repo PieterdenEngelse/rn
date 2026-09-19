@@ -22,8 +22,9 @@
 use crate::api::{
     delete_credential, delete_webhook, fetch_credentials, fetch_jobs, fetch_webhooks,
     save_credential, save_webhook, CatalogueJob, CommandRoute, CredentialEntry, CredentialRef,
-    JobInput, Lookup, Webhook, WebhookDef, WebhookKind, WebhooksResponse,
+    JobInput, Lookup, Webhook, WebhookDef, WebhookFamily, WebhookKind, WebhooksResponse,
 };
+use crate::components::event_families::{family as family_row, EventFamily, FAMILIES};
 use crate::components::param::PARAM_INPUT_ROW_CLASS;
 use crate::components::{GlossaryEntry, InfoButton, Panel};
 use dioxus::prelude::*;
@@ -47,7 +48,7 @@ const HINT: &str = "text-gray-400 text-xs";
 /// [`Draft::to_def`] state that difference once, in one place, instead of at
 /// every field.
 #[derive(Clone, PartialEq)]
-struct Draft {
+pub(crate) struct Draft {
     /// The id this replaces. `None` for a new webhook — which is also what
     /// decides whether saving is a create or an edit, since the id itself may
     /// be what is being changed.
@@ -55,6 +56,10 @@ struct Draft {
     id: String,
     label: String,
     kind: WebhookKind,
+    /// Which board it was made on, if any. Carried through an edit on either
+    /// page, so editing a hook on Config → Jobs does not quietly take it off
+    /// its board on Config → Webhooks.
+    family: Option<WebhookFamily>,
     credential: String,
     job: String,
     id_field: String,
@@ -81,6 +86,7 @@ fn blank(kind: WebhookKind, jobs: &[String]) -> Draft {
         id: String::new(),
         label: String::new(),
         kind,
+        family: None,
         credential: String::new(),
         // Pre-selected rather than left blank: a select whose first entry is
         // "— choose —" is a field people miss, and every valid webhook names a
@@ -99,8 +105,17 @@ fn blank(kind: WebhookKind, jobs: &[String]) -> Draft {
     }
 }
 
+/// A new draft made on one family's board: that family, and the kind the
+/// board recommends for it. Everything else starts as blank as anywhere else.
+pub(crate) fn blank_for(family: &EventFamily, jobs: &[String]) -> Draft {
+    Draft {
+        family: Some(family.id.clone()),
+        ..blank(family.kind.clone(), jobs)
+    }
+}
+
 /// Fill a draft from a stored webhook, so editing starts from what is live.
-fn from_webhook(w: &Webhook, jobs: &[String]) -> Draft {
+pub(crate) fn from_webhook(w: &Webhook, jobs: &[String]) -> Draft {
     let d = &w.def;
     let fallback = jobs.first().cloned().unwrap_or_default();
     Draft {
@@ -108,6 +123,7 @@ fn from_webhook(w: &Webhook, jobs: &[String]) -> Draft {
         id: d.id.clone(),
         label: d.label.clone(),
         kind: d.kind.clone(),
+        family: d.family.clone(),
         credential: d.credential.clone(),
         job: d.job.clone().unwrap_or_else(|| fallback.clone()),
         id_field: d.lookup.as_ref().map(|l| l.id_field.clone()).unwrap_or_default(),
@@ -151,11 +167,17 @@ impl Draft {
     /// Left off rather than sent empty: the backend replaces a definition
     /// wholesale, so a `lookup` carried along by a webhook that is no longer a
     /// notification would be configuration nothing reads and nobody can see.
-    fn to_def(&self) -> WebhookDef {
+    /// The id this draft replaces, when it is an edit rather than a new hook.
+    pub(crate) fn replacing(&self) -> Option<String> {
+        self.replacing.clone()
+    }
+
+    pub(crate) fn to_def(&self) -> WebhookDef {
         WebhookDef {
             id: self.id.trim().to_lowercase(),
             label: self.label.trim().to_string(),
             kind: self.kind.clone(),
+            family: self.family.clone(),
             credential: self.credential.trim().to_string(),
             header: some_if_filled(&self.header),
             prefix: if self.bare_prefix {
@@ -201,7 +223,7 @@ impl Draft {
 }
 
 /// The name of a kind, as a person says it.
-fn kind_label(k: &WebhookKind) -> &'static str {
+pub(crate) fn kind_label(k: &WebhookKind) -> &'static str {
     match k {
         WebhookKind::Notification => "Notification",
         WebhookKind::DataPayload => "Data payload",
@@ -727,6 +749,9 @@ fn WebhookCard(
                         "{kind_label(&d.kind)}"
                     }
                     span { class: HINT, "{kind_summary(&d.kind)}" }
+                    if let Some(f) = d.family.as_ref() {
+                        span { class: HINT, "· {family_row(f).name}" }
+                    }
                 }
                 div { class: "flex items-center gap-2",
                     button {
@@ -894,7 +919,7 @@ fn Field(label: String, hint: Option<String>, info: Option<Element>, children: E
 /// switching the kind can rewrite which fields exist without any of them
 /// carrying a stale value from the kind before.
 #[component]
-fn Form(
+pub(crate) fn Form(
     state: Signal<Option<Draft>>,
     jobs: Vec<String>,
     busy: bool,
@@ -952,6 +977,9 @@ fn Form(
             div { class: "flex items-baseline gap-3",
                 h4 { class: "text-sm font-semibold text-gray-200",
                     if editing { "Edit webhook" } else { "New webhook" }
+                    if let Some(f) = draft.family.as_ref() {
+                        " — {family_row(f).name}"
+                    }
                 }
                 span { class: HINT, "live as soon as it is saved — no restart" }
             }
@@ -1045,6 +1073,45 @@ fn Form(
                         let v = evt.value();
                         edit(&move |d| d.label = v.clone());
                     },
+                }
+            }
+
+            Field {
+                label: "event family".to_string(),
+                hint: Some(match draft.family.as_ref() {
+                    Some(f) => format!(
+                        "listed on the {} board on Config → Webhooks — changes nothing about what the hook accepts",
+                        family_row(f).name
+                    ),
+                    None => "not on any board on Config → Webhooks — changes nothing about what the hook accepts".to_string(),
+                }),
+                info: Some(rsx! {
+                    InfoButton {
+                        title: "The event family".to_string(),
+                        what: FAMILY_WHAT.to_string(),
+                        why: FAMILY_WHY.to_string(),
+                        if_wrong: FAMILY_IF_WRONG.to_string(),
+                    }
+                }),
+                select {
+                    class: SELECT_INPUT,
+                    onchange: move |evt| {
+                        let v = evt.value();
+                        let f = FAMILIES
+                            .iter()
+                            .find(|f| f.name == v)
+                            .map(|f| f.id.clone());
+                        edit(&move |d| d.family = f.clone());
+                    },
+                    option { value: "", selected: draft.family.is_none(), "— none —" }
+                    for f in FAMILIES.iter() {
+                        option {
+                            key: "{f.name}",
+                            value: "{f.name}",
+                            selected: draft.family.as_ref() == Some(&f.id),
+                            "{f.name}"
+                        }
+                    }
                 }
             }
 
@@ -1480,6 +1547,18 @@ const TILE_BODY: &str =
      below may declare webhooks of their own in code; those are not shown here, because there is \
      nothing on this page that could change them.\n\nEvery delivery must carry a valid signature \
      or it is refused before anything runs. That is not a setting.";
+
+const FAMILY_WHAT: &str = "Which of the six families of provider event this hook was made \
+    for — create, update, delete, lifecycle, security or system. It decides which board on Config \
+    → Webhooks lists the hook, and nothing else.";
+const FAMILY_WHY: &str = "A hook is made before its first delivery, so the family is a statement \
+    of intent rather than something rn could work out: the event name only arrives with each \
+    delivery. Recording it keeps a hook beside the explanation of what its job has to be careful \
+    of — a create hook next to the reminder that a retry is the same order again.";
+const FAMILY_IF_WRONG: &str = "Nothing breaks. The listener never reads the family, so a hook \
+    filed under the wrong board accepts and runs exactly as before; it is only listed in the \
+    wrong place. Monitor → Webhooks sorts the deliveries by their actual event names, which is \
+    where a hook that says Security but receives payment.created shows up.";
 
 const TILE_WHAT: &str =
     "Makes an endpoint at POST /api/hooks/<id> on the hooks listener — a separate port from the \

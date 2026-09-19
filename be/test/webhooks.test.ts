@@ -45,7 +45,7 @@ const STORE = join(tmpdir(), `rn-webhooks-test-${process.pid}.json`);
 const webhooks = await import("../src/webhooks.ts");
 const { handle } = await import("../src/hooks/server.ts");
 const { makeDeliveryLog } = await import("../src/hooks/verify.ts");
-import type { WebhookDef } from "../src/generated/wire.ts";
+import type { WebhookDef, WebhookFamily } from "../src/generated/wire.ts";
 
 after(async () => {
     await rm(STORE, { force: true });
@@ -114,6 +114,23 @@ test("a webhook of each kind round-trips through the file", () => {
     const ids = webhooks.list().map((w) => w.id);
     assert.deepEqual(ids.sort(), ["hub", "typeform", "zendesk"]);
     assert.equal(webhooks.byId("hub")?.routes[0]?.action, "turn_on_lights");
+});
+
+test("the family a webhook was made for survives a restart, and only the six are accepted", () => {
+    assert.deepEqual(webhooks.put(dataPayload({ family: "security" })).errors, []);
+    webhooks.reset();
+    assert.equal(webhooks.byId("typeform")?.family, "security");
+
+    // Refused rather than dropped: a spelling the store kept but no board
+    // knows would be a hook that belongs nowhere on the page it was made on.
+    const errors = webhooks.put(
+        dataPayload({ id: "other", family: "billing" as unknown as WebhookFamily }),
+    ).errors;
+    assert.match(errors.join(" "), /family must be one of/);
+
+    // Absent is the ordinary case — every hook made before the boards.
+    assert.deepEqual(webhooks.put(notification()).errors, []);
+    assert.equal(webhooks.byId("zendesk")?.family, undefined);
 });
 
 test("the signing credential is required, for every kind", () => {

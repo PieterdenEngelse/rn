@@ -44,6 +44,7 @@ import type {
     Webhook,
     WebhookDef,
     WebhookDefaults,
+    WebhookFamily,
     WebhookKind,
     WebhookStats,
 } from "./generated/wire.ts";
@@ -79,6 +80,21 @@ export const DEFAULTS: WebhookDefaults = {
  * job file rather than a thirty-third form.
  */
 export const MAX_WEBHOOKS = 32;
+
+/**
+ * The event families a webhook can be made for — the boards on Config →
+ * Webhooks. Spelled as `WebhookFamily` in shared/src/webhooks.rs, whose test
+ * pins them; typed against it so a variant added there and missed here is a
+ * type error rather than a family the store refuses.
+ */
+const FAMILIES: readonly WebhookFamily[] = [
+    "create",
+    "update",
+    "delete",
+    "lifecycle",
+    "security",
+    "system",
+];
 
 /** Entries in one command webhook's routing table. */
 export const MAX_ROUTES = 32;
@@ -218,6 +234,9 @@ function normalise(raw: WebhookDef): WebhookDef {
         credential: String(raw.credential ?? "").trim(),
         routes: [],
     };
+    // Kept only when it is one of the six; `validate` has already refused
+    // anything else, so this only drops an explicit null.
+    if (typeof raw.family === "string" && FAMILIES.includes(raw.family)) def.family = raw.family;
     const header = lower(raw.header);
     if (header !== undefined) def.header = header;
     // `""` is a meaningful prefix — a bare hex digest — and is not the same as
@@ -306,6 +325,14 @@ export function validate(
     const kind = raw?.kind;
     if (kind !== "notification" && kind !== "dataPayload" && kind !== "command") {
         errors.push("kind must be notification, dataPayload or command");
+    }
+
+    // Optional, and it changes nothing at the listener — but a spelling the
+    // store does not know would be kept and then belong to no board, so it is
+    // refused rather than quietly dropped.
+    const family = raw?.family;
+    if (family !== undefined && family !== null && !FAMILIES.includes(family as WebhookFamily)) {
+        errors.push(`family must be one of ${FAMILIES.join(", ")}`);
     }
 
     const credential = typeof raw?.credential === "string" ? raw.credential.trim() : "";

@@ -14,14 +14,20 @@
 //! sorted into six families say what a provider is actually sending, and
 //! forty event names in a list do not.
 //!
-//! Not in `shared/`: nothing crosses a process boundary. The backend records
-//! the provider's name verbatim, and which family it belongs to is a question
-//! the page asks of it.
+//! The table and the sorter are not in `shared/`, because neither crosses a
+//! process boundary: the backend records the provider's name verbatim, and
+//! which family it belongs to is a question the page asks of it. What does
+//! cross is `WebhookFamily` — the family a webhook was *made for* on one of the
+//! boards, stored with its definition — and that one is shared.
+
+use crate::api::{WebhookFamily, WebhookKind};
 
 /// One family: what it means, what it asks of a job, and the words that put a
 /// name in it.
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct EventFamily {
+    /// The stored spelling, for a webhook made on this family's board.
+    pub id: WebhookFamily,
     pub name: &'static str,
     /// As they appear in the table the families come from, `;`-separated.
     pub examples: &'static str,
@@ -33,6 +39,10 @@ pub struct EventFamily {
     pub by_subject: bool,
     /// One line: what a job receiving these has to be careful of.
     pub asks: &'static str,
+    /// The kind a webhook for this family starts as when made on its board,
+    /// and why. A starting point — the form still offers all three.
+    pub kind: WebhookKind,
+    pub kind_why: &'static str,
     pub what: &'static str,
     pub why: &'static str,
     pub if_wrong: &'static str,
@@ -45,14 +55,19 @@ pub const LIFECYCLE: usize = 3;
 pub const SECURITY: usize = 4;
 pub const SYSTEM: usize = 5;
 
-pub const FAMILIES: [EventFamily; 6] = [
+/// A `static` rather than a `const`, so [`family`] can hand out a reference
+/// that lives as long as the program instead of one to a temporary copy.
+pub static FAMILIES: [EventFamily; 6] = [
     EventFamily {
+        id: WebhookFamily::Create,
         name: "Create events",
         examples: "payment.created; order.created; user.registered",
         meaning: "Something new was created",
         words: &["created", "create", "registered", "added", "add", "new", "opened", "inserted"],
         by_subject: false,
         asks: "safe to run twice — a retried delivery is the same order again",
+        kind: WebhookKind::DataPayload,
+        kind_why: "the new record is in the body — there is nothing to go back for",
         what: "A provider telling you a record now exists that did not before — a payment, an \
                order, an account. The verb is usually the last word of the name: \
                `payment.created`, `user.registered`. GitHub is the exception worth knowing: its \
@@ -71,6 +86,7 @@ pub const FAMILIES: [EventFamily; 6] = [
                    ids means the provider really did send two.",
     },
     EventFamily {
+        id: WebhookFamily::Update,
         name: "Update events",
         examples: "invoice.updated; subscription.changed; order.status.updated",
         meaning: "Something changed",
@@ -80,6 +96,8 @@ pub const FAMILIES: [EventFamily; 6] = [
         ],
         by_subject: false,
         asks: "act on the current state — two edits can arrive in either order",
+        kind: WebhookKind::Notification,
+        kind_why: "rn fetches the record when the delivery lands, so an older edit arriving late cannot win",
         what: "Something that already existed changed: an invoice's amount, a subscription's \
                plan, an order's status. Usually `<noun>.updated` or `<noun>.changed`; some \
                providers name the field as well, as in `order.status.updated`, which is why the \
@@ -94,12 +112,15 @@ pub const FAMILIES: [EventFamily; 6] = [
                    provider; if they differ, the hook wants to fetch first.",
     },
     EventFamily {
+        id: WebhookFamily::Delete,
         name: "Delete events",
         examples: "customer.deleted; file.removed",
         meaning: "Something was removed",
         words: &["deleted", "delete", "removed", "remove", "destroyed", "destroy", "purged", "erased"],
         by_subject: false,
         asks: "deleting what is already gone is a success, not an error",
+        kind: WebhookKind::DataPayload,
+        kind_why: "a lookup would get a 404 for a deleted record, and the delivery would be dropped",
         what: "A record is gone at the provider: `customer.deleted`, `file.removed`. The body \
                often carries only the id, since there is nothing left to describe.",
         why: "The one family where fetching first fails by design. A Notification hook looks the \
@@ -113,6 +134,7 @@ pub const FAMILIES: [EventFamily; 6] = [
                    what it removes was removed by the first delivery.",
     },
     EventFamily {
+        id: WebhookFamily::Lifecycle,
         name: "Lifecycle events",
         examples: "payment.succeeded; payment.failed; shipment.delivered",
         meaning: "Resource moved through a stage",
@@ -124,6 +146,8 @@ pub const FAMILIES: [EventFamily; 6] = [
         ],
         by_subject: false,
         asks: "one transition can arrive as two events — pick one to act on",
+        kind: WebhookKind::DataPayload,
+        kind_why: "the stage is in the name and the resource in the body",
         what: "A resource moved to a new stage: a payment succeeded or failed, a shipment was \
                delivered, a trial expired. The noun stays the same across a whole family of \
                events and the verb names the stage — which is why this family has the longest \
@@ -138,6 +162,7 @@ pub const FAMILIES: [EventFamily; 6] = [
                    are what actually arrived; read them there.",
     },
     EventFamily {
+        id: WebhookFamily::Security,
         name: "Security events",
         examples: "login.attempt; password.changed; api.key.revoked",
         meaning: "Security-related action occurred",
@@ -148,6 +173,8 @@ pub const FAMILIES: [EventFamily; 6] = [
         ],
         by_subject: true,
         asks: "worth a person seeing now — route it to a notifier",
+        kind: WebhookKind::DataPayload,
+        kind_why: "act on what arrived at once — a lookup is a second call that can fail at the worst moment",
         what: "Something happened to access itself: a login attempt, a password change, an API \
                key revoked. Recognised by the subject rather than the verb, and checked before \
                any verb, so `password.changed` is here rather than under Update and \
@@ -161,6 +188,7 @@ pub const FAMILIES: [EventFamily; 6] = [
                    Monitor → Webhooks means its name uses a word this list does not have.",
     },
     EventFamily {
+        id: WebhookFamily::System,
         name: "System events",
         examples: "server.alert; quota.exceeded; rate_limit.hit",
         meaning: "System behaviour or internal alert",
@@ -170,6 +198,8 @@ pub const FAMILIES: [EventFamily; 6] = [
         ],
         by_subject: true,
         asks: "high volume — filter at the provider, not inside the job",
+        kind: WebhookKind::DataPayload,
+        kind_why: "high volume — a lookup per delivery doubles the cost of every burst",
         what: "The provider talking about itself or about your account's limits: a server \
                raising an alarm, a quota exceeded, a rate limit hit. Recognised by words like \
                server, quota and rate anywhere in the name. GitHub's `ping`, sent once when a \
@@ -184,6 +214,14 @@ pub const FAMILIES: [EventFamily; 6] = [
                    evicts.",
     },
 ];
+
+/// The row for a stored family.
+pub fn family(id: &WebhookFamily) -> &'static EventFamily {
+    FAMILIES
+        .iter()
+        .find(|f| &f.id == id)
+        .expect("every WebhookFamily has a row — the test below says so")
+}
 
 /// Which family a name fell into, and the word that put it there.
 #[derive(Clone, PartialEq, Debug)]
@@ -235,7 +273,7 @@ pub fn sort(event: &str) -> Option<Sorted> {
 mod tests {
     use super::*;
 
-    fn family(event: &str) -> Option<usize> {
+    fn sorted_into(event: &str) -> Option<usize> {
         sort(event).map(|s| s.family)
     }
 
@@ -245,36 +283,54 @@ mod tests {
     fn every_example_sorts_into_its_own_family() {
         for (i, f) in FAMILIES.iter().enumerate() {
             for example in f.examples.split(';').map(str::trim) {
-                assert_eq!(family(example), Some(i), "{example} should be {}", f.name);
+                assert_eq!(sorted_into(example), Some(i), "{example} should be {}", f.name);
             }
+        }
+    }
+
+    /// Index order is what `sort` returns, and the stored id is what a
+    /// webhook carries; the two must name the same row.
+    #[test]
+    fn every_family_has_its_own_row_in_order() {
+        let ids = [
+            WebhookFamily::Create,
+            WebhookFamily::Update,
+            WebhookFamily::Delete,
+            WebhookFamily::Lifecycle,
+            WebhookFamily::Security,
+            WebhookFamily::System,
+        ];
+        for (i, id) in ids.iter().enumerate() {
+            assert_eq!(&FAMILIES[i].id, id);
+            assert_eq!(family(id).name, FAMILIES[i].name);
         }
     }
 
     #[test]
     fn subject_outranks_verb() {
-        assert_eq!(family("api.key.created"), Some(SECURITY));
-        assert_eq!(family("password.changed"), Some(SECURITY));
+        assert_eq!(sorted_into("api.key.created"), Some(SECURITY));
+        assert_eq!(sorted_into("password.changed"), Some(SECURITY));
     }
 
     #[test]
     fn the_last_verb_decides() {
-        assert_eq!(family("order.status.updated"), Some(UPDATE));
-        assert_eq!(family("deployment_status"), Some(LIFECYCLE));
+        assert_eq!(sorted_into("order.status.updated"), Some(UPDATE));
+        assert_eq!(sorted_into("deployment_status"), Some(LIFECYCLE));
     }
 
     #[test]
     fn github_header_names() {
-        assert_eq!(family("create"), Some(CREATE));
-        assert_eq!(family("delete"), Some(DELETE));
-        assert_eq!(family("ping"), Some(SYSTEM));
-        assert_eq!(family("push"), None);
-        assert_eq!(family("pull_request"), None);
+        assert_eq!(sorted_into("create"), Some(CREATE));
+        assert_eq!(sorted_into("delete"), Some(DELETE));
+        assert_eq!(sorted_into("ping"), Some(SYSTEM));
+        assert_eq!(sorted_into("push"), None);
+        assert_eq!(sorted_into("pull_request"), None);
     }
 
     #[test]
     fn case_and_separators_do_not_matter() {
-        assert_eq!(family("Customer.Subscription.DELETED"), Some(DELETE));
-        assert_eq!(family("invoice:payment-failed"), Some(LIFECYCLE));
+        assert_eq!(sorted_into("Customer.Subscription.DELETED"), Some(DELETE));
+        assert_eq!(sorted_into("invoice:payment-failed"), Some(LIFECYCLE));
         assert_eq!(sort("rate_limit.hit").map(|s| s.word), Some("rate".to_string()));
     }
 }

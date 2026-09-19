@@ -2339,6 +2339,12 @@ id: string,
  */
 label: string, kind: WebhookKind, 
 /**
+ * The event family it was made for, when it was made on one of the
+ * family boards. Absent for a hook made without one, which is every
+ * hook made before the boards existed.
+ */
+family?: WebhookFamily | null, 
+/**
  * Credential the HMAC signature is verified against. **Required, for
  * every kind.** There is no unsigned mode: the listener is the one
  * part of rn a stranger can reach, and its URL is a bearer capability.
@@ -2395,6 +2401,20 @@ routes: Array<CommandRoute>, };
  * The defaults a webhook inherits, resolved by the backend.
  */
 export type WebhookDefaults = { header: string, prefix: string, eventHeader: string, actionField: string, };
+
+/**
+ * Which family of provider event a webhook was made for — the six boards
+ * on Config → Webhooks.
+ *
+ * Stored, not inferred, because nothing can infer it: the event name
+ * arrives with each delivery, and a webhook is made before the first one.
+ * What it buys is a place — a hook made on the Security board is listed on
+ * that board afterwards — and a record of intent that Monitor → Webhooks
+ * can hold the actual deliveries against. It changes nothing at the
+ * listener: a delivery reaches its job whatever family either side
+ * thinks it is.
+ */
+export type WebhookFamily = "create" | "update" | "delete" | "lifecycle" | "security" | "system";
 
 /**
  * A job's webhook, described without describing how to call it.

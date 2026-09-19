@@ -150,6 +150,7 @@ pub fn export_all(cfg: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     StatusResponse::export_all(cfg)?;
 
     WebhookKind::export_all(cfg)?;
+    WebhookFamily::export_all(cfg)?;
     Lookup::export_all(cfg)?;
     CommandRoute::export_all(cfg)?;
     WebhookDef::export_all(cfg)?;

@@ -103,6 +103,28 @@ wire! {
 }
 
 wire! {
+    /// Which family of provider event a webhook was made for — the six boards
+    /// on Config → Webhooks.
+    ///
+    /// Stored, not inferred, because nothing can infer it: the event name
+    /// arrives with each delivery, and a webhook is made before the first one.
+    /// What it buys is a place — a hook made on the Security board is listed on
+    /// that board afterwards — and a record of intent that Monitor → Webhooks
+    /// can hold the actual deliveries against. It changes nothing at the
+    /// listener: a delivery reaches its job whatever family either side
+    /// thinks it is.
+    #[serde(rename_all = "lowercase")]
+    pub enum WebhookFamily {
+        Create,
+        Update,
+        Delete,
+        Lifecycle,
+        Security,
+        System,
+    }
+}
+
+wire! {
     /// A webhook as it is stored and as `PUT /api/webhooks/:id` accepts it.
     ///
     /// Deliberately one struct with per-kind fields rather than three, because
@@ -121,6 +143,11 @@ wire! {
         /// run record; never part of the URL.
         pub label: String,
         pub kind: WebhookKind,
+        /// The event family it was made for, when it was made on one of the
+        /// family boards. Absent for a hook made without one, which is every
+        /// hook made before the boards existed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub family: Option<WebhookFamily>,
         /// Credential the HMAC signature is verified against. **Required, for
         /// every kind.** There is no unsigned mode: the listener is the one
         /// part of rn a stranger can reach, and its URL is a bearer capability.
@@ -284,5 +311,32 @@ wire! {
         /// so the page cannot render a definition that was not kept.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub webhook: Option<Webhook>,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The backend validates against these spellings and the store keeps
+    /// them, so renaming a variant without a `#[serde(rename)]` would orphan
+    /// every stored family rather than fail a build.
+    #[test]
+    fn families_spell_themselves_as_the_store_does() {
+        let spelled: Vec<String> = [
+            WebhookFamily::Create,
+            WebhookFamily::Update,
+            WebhookFamily::Delete,
+            WebhookFamily::Lifecycle,
+            WebhookFamily::Security,
+            WebhookFamily::System,
+        ]
+        .iter()
+        .map(|f| serde_json::to_string(f).expect("a fieldless enum serialises"))
+        .collect();
+        assert_eq!(
+            spelled,
+            ["\"create\"", "\"update\"", "\"delete\"", "\"lifecycle\"", "\"security\"", "\"system\""]
+        );
     }
 }

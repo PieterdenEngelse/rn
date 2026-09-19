@@ -15,7 +15,7 @@
 
 use crate::api::{fetch_runs, fetch_webhooks, JobRun, RunsResponse, Trigger, Webhook, WebhooksResponse};
 use crate::app::Route;
-use crate::components::event_families::{sort, EventFamily, FAMILIES};
+use crate::components::event_families::{family as family_row, sort, EventFamily, FAMILIES};
 use crate::components::param::{PARAM_BOARD_BASE_CLASS, PARAM_BOARD_TITLE_CLASS};
 use crate::components::{InfoButton, Panel};
 use dioxus::prelude::*;
@@ -56,8 +56,11 @@ const UNSORTED_WHY: &str = "The sorter is a word list, and providers invent verb
 const UNSORTED_IF_WRONG: &str = "Nothing is lost — these runs ran. A name that plainly belongs to \
     a family is a word missing from that family's list in fe/src/components/event_families.rs.";
 
-const HOOKS_WHAT: &str = "Each webhook made on Config → Jobs, with the last delivery it saw: \
-    when, what happened to it, and its event name.";
+const HOOKS_WHAT: &str = "Each webhook made on Config → Jobs or on a board on Config → \
+    Webhooks, with the last delivery it saw: when, what happened to it, and its event name. Made \
+    for is the family it was created under; Sorted as is the family its last event name actually \
+    falls in. The two disagreeing is worth a look — a Security hook receiving payment.created is \
+    pointed at the wrong events at the provider.";
 const HOOKS_WHY: &str = "The only record of a delivery that started no run. A signature refused, \
     an action with no route, a lookup that failed — none of those reach the run history, so the \
     boards above cannot see them. Only the last one is kept, as three counters and a name, \
@@ -217,7 +220,7 @@ fn Families(resp: RunsResponse, on_refresh: EventHandler<()>) -> Element {
                     title: family.name.to_string(),
                     note: family.meaning.to_string(),
                     names: tally(&by_family[i]),
-                    info: rsx! { FamilyInfo { family: *family } },
+                    info: rsx! { FamilyInfo { family: family.clone() } },
                 }
             }
             Tally {
@@ -310,7 +313,7 @@ fn Hooks(hooks: Vec<Webhook>) -> Element {
     rsx! {
         Panel {
             title: "Last delivery per hook".to_string(),
-            subtitle: Some("webhooks made on Config → Jobs, including deliveries that started no run".to_string()),
+            subtitle: Some("webhooks made on the page, including deliveries that started no run".to_string()),
             info: Some(rsx! {
                 InfoButton {
                     title: "Last delivery per hook".to_string(),
@@ -329,7 +332,7 @@ fn Hooks(hooks: Vec<Webhook>) -> Element {
                 table { class: "w-full max-w-5xl text-left border-collapse",
                     thead {
                         tr {
-                            for h in ["Hook", "Accepted", "Refused", "Dropped", "Last", "Outcome", "Event", "Family"] {
+                            for h in ["Hook", "Made for", "Accepted", "Refused", "Dropped", "Last", "Outcome", "Event", "Sorted as"] {
                                 th { key: "{h}", class: "text-gray-300 font-semibold text-xs py-1 pr-6 border-b border-gray-700", "{h}" }
                             }
                         }
@@ -349,6 +352,9 @@ fn Hooks(hooks: Vec<Webhook>) -> Element {
                                 rsx! {
                                     tr { key: "{w.def.id}",
                                         td { class: "text-gray-200 text-xs py-1 pr-6 font-mono", "{w.def.id}" }
+                                        td { class: "text-gray-300 text-xs py-1 pr-6",
+                                            {w.def.family.as_ref().map(|f| family_row(f).name.to_string()).unwrap_or_else(|| "—".to_string())}
+                                        }
                                         td { class: "text-gray-200 text-xs py-1 pr-6 font-mono", "{s.accepted as u64}" }
                                         td { class: "text-gray-200 text-xs py-1 pr-6 font-mono", "{s.refused as u64}" }
                                         td {
