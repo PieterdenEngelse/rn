@@ -232,9 +232,25 @@ pub static FAMILIES: [EventFamily; 6] = [
         name: "System events",
         examples: "server.alert; quota.exceeded; rate_limit.hit",
         meaning: "System behaviour or internal alert",
+        // Grouped like the security list. Left out on purpose, because other
+        // families use them: "status" (the lifecycle verb in
+        // `deployment_status`), "limit" (spending and credit limits are
+        // billing), "unavailable" (a product out of stock), "recovery" (account
+        // recovery is a security event), "test" and "app" (Slack's
+        // `app_mention` is a message, not the app reporting on itself).
         words: &[
-            "server", "system", "quota", "rate", "ratelimit", "throttled", "exceeded", "incident",
-            "outage", "maintenance", "degraded", "health", "ping", "alert",
+            // the provider's own machinery
+            "server", "system", "health", "healthcheck", "heartbeat", "ping", "uptime",
+            // limits on your account
+            "quota", "rate", "ratelimit", "throttle", "throttled", "throttling", "exceeded",
+            "capacity",
+            // the provider having a bad day
+            "incident", "outage", "downtime", "disruption", "maintenance", "degraded",
+            // errors and the monitoring that reports them
+            "error", "errors", "exception", "crash", "crashed", "metric", "metrics", "monitor",
+            "anomaly", "threshold", "latency", "alert",
+            // the webhook and the integration themselves
+            "webhook", "endpoint", "meta", "installation", "uninstalled",
         ],
         by_subject: true,
         asks: "high volume — filter at the provider, not inside the job",
@@ -244,7 +260,8 @@ pub static FAMILIES: [EventFamily; 6] = [
         what: "The provider talking about itself or about your account's limits: a server \
                raising an alarm, a quota exceeded, a rate limit hit. Recognised by words like \
                server, quota and rate anywhere in the name. GitHub's `ping`, sent once when a \
-               hook is made, lands here too.",
+               hook is made, lands here too, and so does its `meta`, sent when the hook itself \
+               is deleted — the one delivery that says no more will follow.",
         why: "The high-volume family. A rate-limit event can fire every few seconds for as long \
               as the condition lasts, and each delivery is a run and a record in a history that \
               keeps a fixed number of runs across every job — so a burst of these pushes other \
@@ -386,6 +403,35 @@ mod tests {
         assert_eq!(sorted_into("team.renamed"), Some(UPDATE));
         assert_eq!(sorted_into("block.updated"), Some(UPDATE));
         assert_eq!(sorted_into("issuing_authorization.created"), Some(CREATE));
+    }
+
+    /// Real provider names that sorted as Unsorted before the system list
+    /// covered errors, the webhook itself and the integration installing it.
+    #[test]
+    fn provider_system_names() {
+        for event in [
+            "meta",                              // GitHub: this hook was deleted
+            "installation",                      // GitHub, Sentry
+            "installation_repositories",         // GitHub
+            "app/uninstalled",                   // Shopify
+            "app_uninstalled",                   // Slack
+            "endpoint.url_validation",           // Zoom
+            "error",                             // Sentry
+            "metric_alert",                      // Sentry
+        ] {
+            assert_eq!(sorted_into(event), Some(SYSTEM), "{event}");
+        }
+    }
+
+    /// The words left out of the system list on purpose stay where their verb
+    /// puts them, and a security word still outranks a system one.
+    #[test]
+    fn near_misses_stay_out_of_system() {
+        assert_eq!(sorted_into("deployment_status"), Some(LIFECYCLE));
+        assert_eq!(sorted_into("app_mention"), None);
+        assert_eq!(sorted_into("inventory_item.unavailable"), None);
+        assert_eq!(sorted_into("spending_limit.updated"), Some(UPDATE));
+        assert_eq!(sorted_into("tokens_revoked"), Some(SECURITY));
     }
 
     #[test]
