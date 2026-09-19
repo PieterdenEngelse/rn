@@ -293,6 +293,7 @@ pub fn ConfigWebhooks() -> Element {
                     defaults_prefix: r.defaults.prefix.clone(),
                     defaults_event: r.defaults.event_header.clone(),
                     defaults_action: r.defaults.action_field.clone(),
+                    seen: draft().map(|d| d.seen_in(&r.webhooks)).unwrap_or_default(),
                     on_cancel: move |_| {
                         draft.set(None);
                         errors.write().clear();
@@ -339,6 +340,19 @@ pub fn ConfigWebhooks() -> Element {
                 }
             }
         }
+    }
+}
+
+/// The three busiest values a hook has been sent, for a board row.
+fn brief_seen(seen: &[crate::api::SeenAction]) -> String {
+    let mut v = seen.to_vec();
+    v.sort_by(|a, b| b.count.total_cmp(&a.count));
+    let head: Vec<String> =
+        v.iter().take(3).map(|a| format!("{}={} ×{}", a.path, a.value, a.count as u64)).collect();
+    if v.len() > 3 {
+        format!("{}, +{} more", head.join(", "), v.len() - 3)
+    } else {
+        head.join(", ")
     }
 }
 
@@ -421,6 +435,15 @@ fn FamilyBoard(
                             }
                         }
                         div { class: "font-mono text-gray-300", "{w.route}" }
+                        // What the provider has actually sent, in brief — the
+                        // hook's card on Config → Jobs and its edit form have
+                        // every value, the form with a route button beside each.
+                        if !w.stats.actions.is_empty() {
+                            div { class: "text-gray-400",
+                                "sent "
+                                span { class: "font-mono text-gray-300", "{brief_seen(&w.stats.actions)}" }
+                            }
+                        }
                         if !w.secret_set {
                             div { class: "text-red-400", "secret {w.def.credential} not set — every delivery is refused" }
                         }

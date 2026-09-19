@@ -142,7 +142,35 @@ const createdAt = new Map<string, number>();
 let loaded = false;
 
 function emptyStats(): WebhookStats {
-    return { accepted: 0, refused: 0, dropped: 0 };
+    return { accepted: 0, refused: 0, dropped: 0, actions: [], actionsUnkept: 0 };
+}
+
+/**
+ * Where a hook's deliveries are looked into for an action value.
+ *
+ * A command hook reads its own action field, because that is the value its
+ * routing table is matched against. The other two kinds have no action field,
+ * so they read the two places providers put the name of what happened —
+ * GitHub's verb in `action`, Stripe's event name in `type` — which is what
+ * someone deciding whether to make the hook a command one needs to see.
+ */
+const SEEN_PATHS = ["action", "type"] as const;
+
+/**
+ * What a kept value may look like: an identifier, not a sentence.
+ *
+ * The path points into a body that is the provider's data. `created` and
+ * `invoice.paid` are vocabulary; a field that turns out to hold an address or a
+ * customer's name is not something to keep in memory and render on a page, and
+ * this shape refuses both — no `@`, no spaces.
+ */
+const ACTION_SHAPE = /^[A-Za-z0-9_.:\/-]{1,64}$/;
+
+/** Distinct values kept per hook. Past this, a value is counted and not kept. */
+export const MAX_SEEN_ACTIONS = 32;
+
+export function actionPaths(def: WebhookDef): string[] {
+    return def.kind === "command" ? [def.actionField ?? DEFAULTS.actionField] : [...SEEN_PATHS];
 }
 
 /**
@@ -530,6 +558,37 @@ export function record(
     s.lastOutcome = outcome;
     if (event !== undefined) s.lastEvent = event;
     stats.set(id, s);
+}
+
+/**
+ * Note the action values one verified delivery carried.
+ *
+ * Called by the listener for every delivery that passed its signature check,
+ * whatever happened next — an unrouted action is the value most worth seeing.
+ * In memory with the other counters, for the reason they are: a definitions
+ * file rewritten on every delivery is a definition put at risk for a tally.
+ */
+export function recordActions(def: WebhookDef, payload: unknown): void {
+    const s = stats.get(def.id) ?? emptyStats();
+    const now = Date.now();
+    for (const path of actionPaths(def)) {
+        const value = readPath(payload, path);
+        if (value === undefined || value === null) continue;
+        if (typeof value !== "string" || !ACTION_SHAPE.test(value)) {
+            s.actionsUnkept += 1;
+            continue;
+        }
+        const seen = s.actions.find((a) => a.path === path && a.value === value);
+        if (seen !== undefined) {
+            seen.count += 1;
+            seen.lastAt = now;
+        } else if (s.actions.length < MAX_SEEN_ACTIONS) {
+            s.actions.push({ path, value, count: 1, lastAt: now });
+        } else {
+            s.actionsUnkept += 1;
+        }
+    }
+    stats.set(def.id, s);
 }
 
 /** Test seam: forget the store and the counters, and reload on next use. */

@@ -22,8 +22,10 @@
 use crate::api::{
     delete_credential, delete_webhook, fetch_credentials, fetch_jobs, fetch_webhooks,
     save_credential, save_webhook, CatalogueJob, CommandRoute, CredentialEntry, CredentialRef,
-    JobInput, Lookup, Webhook, WebhookDef, WebhookFamily, WebhookKind, WebhooksResponse,
+    JobInput, Lookup, SeenAction, Webhook, WebhookDef, WebhookFamily, WebhookKind,
+    WebhookStats, WebhooksResponse,
 };
+use crate::pages::monitor_jobs::relative;
 use crate::components::event_families::{family as family_row, EventFamily, FAMILIES};
 use crate::components::param::PARAM_INPUT_ROW_CLASS;
 use crate::app::Route;
@@ -175,6 +177,15 @@ impl Draft {
     /// Left off rather than sent empty: the backend replaces a definition
     /// wholesale, so a `lookup` carried along by a webhook that is no longer a
     /// notification would be configuration nothing reads and nobody can see.
+    /// What the hook this draft edits has been sent — nothing for a new one.
+    pub(crate) fn seen_in(&self, hooks: &[Webhook]) -> Vec<SeenAction> {
+        self.replacing
+            .as_ref()
+            .and_then(|id| hooks.iter().find(|w| &w.def.id == id))
+            .map(|w| w.stats.actions.clone())
+            .unwrap_or_default()
+    }
+
     /// The id this draft replaces, when it is an edit rather than a new hook.
     pub(crate) fn replacing(&self) -> Option<String> {
         self.replacing.clone()
@@ -654,6 +665,7 @@ pub fn WebhookTile() -> Element {
                                     defaults_prefix: r.defaults.prefix.clone(),
                                     defaults_event: r.defaults.event_header.clone(),
                                     defaults_action: r.defaults.action_field.clone(),
+                                    seen: draft().map(|d| d.seen_in(&r.webhooks)).unwrap_or_default(),
                                     on_cancel: move |_| {
                                         draft.set(None);
                                         errors.write().clear();
@@ -716,6 +728,131 @@ pub fn WebhookTile() -> Element {
                     p { class: "text-gray-400 mt-2", "This tile reads GET /api/webhooks." }
                 },
                 None => rsx! { p { class: "text-gray-400", "Loading…" } },
+            }
+        }
+    }
+}
+
+/// The values a hook has been sent at its action paths, busiest first.
+fn busiest(seen: &[SeenAction]) -> Vec<SeenAction> {
+    let mut v = seen.to_vec();
+    v.sort_by(|a, b| b.count.total_cmp(&a.count).then(b.last_at.total_cmp(&a.last_at)));
+    v
+}
+
+/// The card's "Seen in the body" row.
+#[component]
+fn SeenList(stats: WebhookStats, def: WebhookDef) -> Element {
+    let seen = busiest(&stats.actions);
+    let paths = if def.kind == WebhookKind::Command {
+        def.action_field.clone().unwrap_or_else(|| "action".to_string())
+    } else {
+        "action and type".to_string()
+    };
+    rsx! {
+        if seen.is_empty() {
+            span { class: "text-gray-400", "nothing at {paths} yet" }
+        }
+        div { class: "flex flex-wrap gap-x-4 gap-y-1",
+            for a in seen.iter() {
+                span { key: "{a.path}={a.value}",
+                    span { class: "text-gray-400 font-mono", "{a.path}=" }
+                    span { class: "font-mono text-gray-200", "{a.value}" }
+                    " ×{a.count as u64} · {relative(a.last_at)}"
+                    if def.kind == WebhookKind::Command {
+                        match def.routes.iter().find(|r| r.action == a.value) {
+                            Some(r) => rsx! { span { class: "text-gray-400", " → {r.job}" } },
+                            None => rsx! { span { class: "text-amber-400", " — no route" } },
+                        }
+                    }
+                }
+            }
+        }
+        if stats.actions_unkept > 0.0 {
+            div { class: HINT,
+                "{stats.actions_unkept as u64} value(s) not kept — not shaped like an action name, or past the limit of distinct values"
+            }
+        }
+    }
+}
+
+/// Above the routing table: what this hook has actually been sent at the path
+/// being routed on, each with a way to make it a route.
+///
+/// The provider's documentation says what it sends; this says what it sent.
+/// The two disagree more often than anyone would like, and a route one letter
+/// off matches nothing while the provider sees success.
+#[component]
+fn SeenForRoutes(
+    seen: Vec<SeenAction>,
+    path: String,
+    routed: Vec<String>,
+    editing: bool,
+    on_add: EventHandler<String>,
+    on_use_path: EventHandler<String>,
+) -> Element {
+    let here: Vec<SeenAction> = busiest(&seen).into_iter().filter(|a| a.path == path).collect();
+    let mut elsewhere: Vec<String> =
+        seen.iter().filter(|a| a.path != path).map(|a| a.path.clone()).collect();
+    elsewhere.sort();
+    elsewhere.dedup();
+    rsx! {
+        div { class: "{PARAM_INPUT_ROW_CLASS} items-start",
+            div { class: "flex flex-col gap-1 grow",
+                span { class: FIELD_LABEL, "Values this hook has been sent at {path}" }
+                if !editing {
+                    span { class: HINT,
+                        "A new hook has been sent nothing. Save it, point the provider at it, and \
+                         the values it sends appear here — edit the hook then to route them."
+                    }
+                } else if here.is_empty() {
+                    span { class: HINT, "None since this backend started." }
+                }
+                div { class: "flex flex-wrap gap-2",
+                    for a in here.iter() {
+                        div { key: "{a.value}", class: "flex items-center gap-2 rounded border border-gray-700 px-2 py-0.5",
+                            span { class: "font-mono text-gray-200 text-xs", "{a.value}" }
+                            span { class: HINT, "×{a.count as u64} · {relative(a.last_at)}" }
+                            if routed.contains(&a.value) {
+                                span { class: HINT, "routed" }
+                            } else {
+                                button {
+                                    class: "text-xs cursor-pointer hover:underline bg-transparent border-0 p-0",
+                                    style: "color: #22d3ee;",
+                                    onclick: {
+                                        let v = a.value.clone();
+                                        move |_| on_add.call(v.clone())
+                                    },
+                                    "+ route"
+                                }
+                            }
+                        }
+                    }
+                }
+                for p in elsewhere.iter() {
+                    div { key: "{p}", class: "flex items-center gap-2",
+                        span { class: HINT,
+                            "Also seen at {p}: "
+                            {seen.iter().filter(|a| &a.path == p).map(|a| a.value.clone()).collect::<Vec<_>>().join(", ")}
+                        }
+                        button {
+                            class: "text-xs cursor-pointer hover:underline bg-transparent border-0 p-0",
+                            style: "color: #22d3ee;",
+                            onclick: {
+                                let p = p.clone();
+                                move |_| on_use_path.call(p.clone())
+                            },
+                            "route on {p}"
+                        }
+                    }
+                }
+            }
+            InfoButton {
+                title: "Values seen in the body".to_string(),
+                what: SEEN_WHAT.to_string(),
+                why: SEEN_WHY.to_string(),
+                if_wrong: SEEN_IF_WRONG.to_string(),
+                glossary: glossary(),
             }
         }
     }
@@ -904,6 +1041,20 @@ fn WebhookCard(
                     }
                 }
 
+                dt { class: "text-gray-400", "Seen in the body" }
+                dd { class: "text-gray-300 flex items-start gap-2",
+                    div { class: "grow",
+                        SeenList { stats: s.clone(), def: d.clone() }
+                    }
+                    InfoButton {
+                        title: "Values seen in the body".to_string(),
+                        what: SEEN_WHAT.to_string(),
+                        why: SEEN_WHY.to_string(),
+                        if_wrong: SEEN_IF_WRONG.to_string(),
+                        glossary: glossary(),
+                    }
+                }
+
                 if !webhook.missing_jobs.is_empty() {
                     dt { class: "text-red-400", "Broken" }
                     dd { class: "text-red-400",
@@ -953,6 +1104,10 @@ pub(crate) fn Form(
     defaults_action: String,
     on_cancel: EventHandler<()>,
     on_save: EventHandler<Draft>,
+    /// What the hook being edited has actually been sent, for the routing
+    /// table. Empty for a new hook, which has been sent nothing.
+    #[props(default = vec![])]
+    seen: Vec<SeenAction>,
 ) -> Element {
     // Every field edits through this. It captures only the signal, which is
     // `Copy`, so the closure is `Copy` too and each of the form's several dozen
@@ -1342,6 +1497,34 @@ pub(crate) fn Form(
                         }
                     }
 
+                    SeenForRoutes {
+                        seen: seen.clone(),
+                        path: if draft.action_field.trim().is_empty() {
+                            defaults_action.clone()
+                        } else {
+                            draft.action_field.trim().to_string()
+                        },
+                        routed: draft.routes.iter().map(|(a, _)| a.trim().to_string()).collect::<Vec<_>>(),
+                        editing: editing,
+                        on_add: {
+                            let first = jobs.first().cloned().unwrap_or_default();
+                            move |value: String| {
+                                let first = first.clone();
+                                edit(&move |d| {
+                                    // Fill the one empty row a new table starts
+                                    // with, rather than leaving it above the
+                                    // route just added as a blank to trip on.
+                                    if let Some(r) = d.routes.iter_mut().find(|r| r.0.trim().is_empty()) {
+                                        r.0 = value.clone();
+                                    } else {
+                                        d.routes.push((value.clone(), first.clone()));
+                                    }
+                                });
+                            }
+                        },
+                        on_use_path: move |path: String| edit(&move |d| d.action_field = path.clone()),
+                    }
+
                     for (i, (action, job)) in draft.routes.iter().enumerate() {
                         div { key: "{i}", class: "flex items-end gap-2 flex-wrap",
                             div { class: "flex flex-col gap-1",
@@ -1571,6 +1754,27 @@ const TILE_BODY: &str =
      below may declare webhooks of their own in code; those are not shown here, because there is \
      nothing on this page that could change them.\n\nEvery delivery must carry a valid signature \
      or it is refused before anything runs. That is not a setting.";
+
+const SEEN_WHAT: &str = "The values this hook's deliveries actually carried in the body, and \
+    how often. A command hook is read at its own action field — the value its routing table is \
+    matched against. A notification or data-payload hook is read at action and type, the two \
+    places providers put the name of what happened: GitHub's verb (created, resolved) in action, \
+    Stripe's event name (invoice.paid) in type.\n\nOnly deliveries that passed the signature \
+    check are read. A refused one's body came from whoever found the URL and is never looked \
+    into.";
+const SEEN_WHY: &str = "A routing table is a guess at the provider's vocabulary, and the \
+    provider's documentation is a guess at what it sends. This is what it sent. A route one \
+    letter off matches nothing while the provider sees success, so building the table from these \
+    values — the + route beside each one — is the reliable way to write it. On a data-payload \
+    hook it answers a different question: whether the deliveries vary enough to be worth \
+    turning into a command hook with a route per value.";
+const SEEN_IF_WRONG: &str = "Kept in memory with the delivery counters, so a backend restart \
+    empties it — the hook itself is untouched. Only identifier-shaped values are kept, up to 32 \
+    distinct ones per hook: a field that holds an address, a number or a sentence is counted as \
+    not kept, because the body is the provider's data and a value like that is not vocabulary. \
+    Nothing here means no verified delivery has carried either field — for a provider that \
+    names the action elsewhere, make it a command hook and set the action field to that path. \
+    Hooks declared in a job file are not tallied: they have no counters of their own.";
 
 const FAMILY_WHAT: &str = "Which of the six families of provider event this hook was made \
     for — create, update, delete, lifecycle, security or system. It decides which board on Config \

@@ -228,6 +228,41 @@ wire! {
         /// The provider's event name on that delivery, if it sends one.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub last_event: Option<String>,
+        /// The values found in the body at the action paths, and how often.
+        ///
+        /// The answer to "what does this provider actually send in `action`",
+        /// which its documentation answers less reliably than its deliveries
+        /// do. A command hook's routing table is only as good as its guess at
+        /// these strings, and a guess that is one letter off routes nothing
+        /// while the provider sees success.
+        #[serde(default)]
+        pub actions: Vec<SeenAction>,
+        /// Values found at those paths and not kept: not shaped like an action
+        /// name — a number, an object, free text, an address — or past the
+        /// cap on distinct values. Counted so an empty list above is not read
+        /// as "the field is never there".
+        #[serde(default)]
+        pub actions_unkept: f64,
+    }
+}
+
+wire! {
+    /// One value seen at one path in a hook's deliveries.
+    ///
+    /// Only values shaped like an identifier are kept — `created`,
+    /// `invoice.paid`, `turn_on_lights` — because the path points into a body
+    /// that is the provider's data, and a field that turned out to hold an
+    /// email address or a sentence is not something to keep and put on a page.
+    /// Verified deliveries only: a refused one never reaches the read.
+    #[serde(rename_all = "camelCase")]
+    pub struct SeenAction {
+        /// The dotted path it was read from — the hook's action field for a
+        /// command hook, `action` or `type` for the other two kinds.
+        pub path: String,
+        pub value: String,
+        pub count: f64,
+        /// Epoch ms of the last delivery that carried it.
+        pub last_at: f64,
     }
 }
 

@@ -210,6 +210,10 @@ async function dispatch(
     // absent argument everywhere below.
     const event = delivery.event ?? undefined;
 
+    // Before any branch, so an action that routes nowhere is counted too — it
+    // is the one a person adding routes most needs to see.
+    webhooks.recordActions(def, payload);
+
     if (def.kind === "command") {
         const field = def.actionField ?? webhooks.DEFAULTS.actionField;
         const action = webhooks.readPath(payload, field);

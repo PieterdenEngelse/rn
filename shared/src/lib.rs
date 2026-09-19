@@ -155,6 +155,7 @@ pub fn export_all(cfg: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     CommandRoute::export_all(cfg)?;
     WebhookDef::export_all(cfg)?;
     WebhookStats::export_all(cfg)?;
+    SeenAction::export_all(cfg)?;
     Webhook::export_all(cfg)?;
     WebhookDefaults::export_all(cfg)?;
     WebhooksResponse::export_all(cfg)?;

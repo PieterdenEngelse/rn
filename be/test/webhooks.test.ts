@@ -133,6 +133,51 @@ test("the family a webhook was made for survives a restart, and only the six are
     assert.equal(webhooks.byId("zendesk")?.family, undefined);
 });
 
+test("a command hook tallies the values at its own action field", () => {
+    const def = command({ actionField: "event.kind" });
+    webhooks.put(def);
+    for (const kind of ["turn_on_lights", "turn_on_lights", "dim"]) {
+        webhooks.recordActions(def, { event: { kind }, action: "ignored" });
+    }
+    const seen = webhooks.describe(webhooks.byId("hub")!).stats.actions;
+    assert.deepEqual(
+        seen.map((a) => [a.path, a.value, a.count]),
+        [["event.kind", "turn_on_lights", 2], ["event.kind", "dim", 1]],
+    );
+});
+
+test("the other kinds look in action and type, where providers put the name", () => {
+    const def = dataPayload();
+    webhooks.put(def);
+    webhooks.recordActions(def, { action: "created", type: "invoice.paid" });
+    const seen = webhooks.describe(webhooks.byId("typeform")!).stats.actions;
+    assert.deepEqual(seen.map((a) => `${a.path}=${a.value}`), ["action=created", "type=invoice.paid"]);
+});
+
+test("a value not shaped like an action name is counted and never kept", () => {
+    // The path points into somebody else's data. An address or a sentence at
+    // it is not vocabulary, and is not put on a page.
+    const def = dataPayload();
+    webhooks.put(def);
+    for (const action of ["someone@example.com", "a whole sentence", 42, { nested: true }]) {
+        webhooks.recordActions(def, { action });
+    }
+    const stats = webhooks.describe(webhooks.byId("typeform")!).stats;
+    assert.deepEqual(stats.actions, []);
+    assert.equal(stats.actionsUnkept, 4);
+});
+
+test("distinct values are capped, and the overflow is counted", () => {
+    const def = dataPayload();
+    webhooks.put(def);
+    for (let i = 0; i < webhooks.MAX_SEEN_ACTIONS + 5; i += 1) {
+        webhooks.recordActions(def, { action: `a${i}` });
+    }
+    const stats = webhooks.describe(webhooks.byId("typeform")!).stats;
+    assert.equal(stats.actions.length, webhooks.MAX_SEEN_ACTIONS);
+    assert.equal(stats.actionsUnkept, 5);
+});
+
 test("the signing credential is required, for every kind", () => {
     // There is no unsigned mode. The listener is the one part of rn a stranger
     // can reach and its URL is a bearer capability, so this is the property the
@@ -385,6 +430,27 @@ test("refusals are counted on the webhook, because nothing else records them", a
         assert.equal(stats.refused, 1);
         assert.equal(stats.accepted, 0);
         assert.equal(stats.lastOutcome, "refused");
+    } finally {
+        restore();
+    }
+});
+
+test("an unrouted action is tallied, and a refused delivery's never is", async () => {
+    const restore = withSecret("HUB_HOOK", SECRET);
+    try {
+        webhooks.put(command());
+        // Refused: its body came from whoever found the URL, so nothing in it
+        // is read, let alone kept.
+        const forged = '{"action":"forged_by_a_stranger"}';
+        await deliver("hub", forged, { "x-hub-signature-256": sign(forged, "wrong") });
+        // Accepted and routed nowhere: exactly the value someone adding a
+        // route needs to see.
+        const body = '{"action":"open_garage"}';
+        assert.equal((await deliver("hub", body, { "x-hub-signature-256": sign(body) })).code, 202);
+        await new Promise((r) => setTimeout(r, 50));
+        const stats = webhooks.describe(webhooks.byId("hub")!).stats;
+        assert.deepEqual(stats.actions.map((a) => a.value), ["open_garage"]);
+        assert.equal(stats.lastOutcome, "unrouted");
     } finally {
         restore();
     }

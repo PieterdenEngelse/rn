@@ -13,7 +13,10 @@
 //! reading of a name the backend stores verbatim, and the rule is shared with
 //! Config → Webhooks through `components/event_families.rs`.
 
-use crate::api::{fetch_runs, fetch_webhooks, JobRun, RunsResponse, Trigger, Webhook, WebhooksResponse};
+use crate::api::{
+    fetch_runs, fetch_webhooks, JobRun, RunsResponse, Trigger, Webhook, WebhookStats,
+    WebhooksResponse,
+};
 use crate::app::Route;
 use crate::components::event_families::{family as family_row, sort, EventFamily, FAMILIES};
 use crate::components::param::{PARAM_BOARD_BASE_CLASS, PARAM_BOARD_TITLE_CLASS};
@@ -60,7 +63,10 @@ const HOOKS_WHAT: &str = "Each webhook made on Config → Jobs or on a board on 
     Webhooks, with the last delivery it saw: when, what happened to it, and its event name. Made \
     for is the family it was created under; Sorted as is the family its last event name actually \
     falls in. The two disagreeing is worth a look — a Security hook receiving payment.created is \
-    pointed at the wrong events at the provider.";
+    pointed at the wrong events at the provider. Values in the body is what the deliveries \
+    carried at action and type — or at a command hook's own action field — which is the \
+    vocabulary a routing table has to match; the hook's card on Config → Jobs has all of them, \
+    and its edit form offers each as a route.";
 const HOOKS_WHY: &str = "The only record of a delivery that started no run. A signature refused, \
     an action with no route, a lookup that failed — none of those reach the run history, so the \
     boards above cannot see them. Only the last one is kept, as three counters and a name, \
@@ -102,6 +108,22 @@ fn tally(runs: &[&JobRun]) -> Vec<NameTally> {
     let mut out: Vec<NameTally> = by_name.into_values().collect();
     out.sort_by(|a, b| b.runs.cmp(&a.runs).then(b.last_at.total_cmp(&a.last_at)));
     out
+}
+
+/// The busiest few values a hook's deliveries carried, as one cell.
+fn values_seen(s: &WebhookStats) -> String {
+    let mut v = s.actions.clone();
+    v.sort_by(|a, b| b.count.total_cmp(&a.count));
+    let shown: Vec<String> = v
+        .iter()
+        .take(4)
+        .map(|a| format!("{}={} ×{}", a.path, a.value, a.count as u64))
+        .collect();
+    match (shown.is_empty(), v.len() > 4) {
+        (true, _) => "—".to_string(),
+        (false, true) => format!("{}, +{} more", shown.join(", "), v.len() - 4),
+        (false, false) => shown.join(", "),
+    }
 }
 
 /// "4m ago", from an epoch-millisecond instant in the past.
@@ -332,7 +354,7 @@ fn Hooks(hooks: Vec<Webhook>) -> Element {
                 table { class: "w-full max-w-5xl text-left border-collapse",
                     thead {
                         tr {
-                            for h in ["Hook", "Made for", "Accepted", "Refused", "Dropped", "Last", "Outcome", "Event", "Sorted as"] {
+                            for h in ["Hook", "Made for", "Accepted", "Refused", "Dropped", "Last", "Outcome", "Event", "Sorted as", "Values in the body"] {
                                 th { key: "{h}", class: "text-gray-300 font-semibold text-xs py-1 pr-6 border-b border-gray-700", "{h}" }
                             }
                         }
@@ -370,7 +392,10 @@ fn Hooks(hooks: Vec<Webhook>) -> Element {
                                         td { class: "text-gray-200 text-xs py-1 pr-6 font-mono",
                                             if event.is_empty() { "—" } else { "{event}" }
                                         }
-                                        td { class: "text-gray-300 text-xs py-1", "{family}" }
+                                        td { class: "text-gray-300 text-xs py-1 pr-6", "{family}" }
+                                        td { class: "text-gray-300 text-xs py-1 font-mono",
+                                            {values_seen(s)}
+                                        }
                                     }
                                 }
                             }
