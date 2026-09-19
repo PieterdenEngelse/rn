@@ -209,6 +209,10 @@ export function build(opts: {
     /// read here so a test needs no file and the one place rn reads another
     /// tool's config stays visible in the caller.
     rcloneConf?: string | undefined;
+    /// The expiry an OAuth sign-in wrote down for a credential, when one owns
+    /// it — see oauth.expiryOf. Consulted only when the value is not a JWT:
+    /// the token's own claim outranks a file's belief about it.
+    recordedExpiry?: (name: string) => { atMs: number } | { unknown: string } | undefined;
 }): TokensResponse {
     const windowDays = opts.windowDays ?? WINDOW_DAYS;
     const since = opts.nowMs - windowDays * 24 * 60 * 60 * 1000;
@@ -242,14 +246,21 @@ export function build(opts: {
         } else {
             const value = opts.valueOf(c.name);
             const read = value === undefined ? { unknown: "set, but not readable here" } : jwtExpiry(value);
+            const recorded = "atMs" in read ? undefined : opts.recordedExpiry?.(c.name);
             if ("atMs" in read) {
                 entry.expiry = {
                     atMs: read.atMs,
                     inSeconds: (read.atMs - opts.nowMs) / 1000,
                     source: "jwt",
                 };
+            } else if (recorded !== undefined && "atMs" in recorded) {
+                entry.expiry = {
+                    atMs: recorded.atMs,
+                    inSeconds: (recorded.atMs - opts.nowMs) / 1000,
+                    source: "oauth",
+                };
             } else {
-                entry.expiryUnknown = read.unknown;
+                entry.expiryUnknown = recorded?.unknown ?? read.unknown;
             }
         }
         return entry;

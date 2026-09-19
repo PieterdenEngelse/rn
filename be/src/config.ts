@@ -149,6 +149,18 @@ export const config = {
         `${process.env.HOME ?? "."}/.config/rn/credentials`,
 
     /**
+     * What an OAuth sign-in left behind besides the token — who it signed in
+     * as, the scopes granted, and when the token dies. See be/src/oauth.ts.
+     *
+     * Beside the credentials file and not inside it, because none of this is
+     * secret and the credentials file holds nothing else: an expiry written
+     * there would be a line the launcher hands the backend as though it were
+     * a credential, and redaction would start scrubbing a timestamp.
+     */
+    oauthPath:
+        process.env.RN_OAUTH_PATH ?? `${process.env.HOME ?? "."}/.config/rn/oauth.json`,
+
+    /**
      * Minted tracking links and the clicks that came back — see
      * be/src/tracker/store.ts.
      *

@@ -24,10 +24,9 @@ use crate::wire;
 wire! {
     /// How an expiry was learned.
     ///
-    /// One variant today, and an enum rather than a bare timestamp because the
-    /// next source — a stored `expires_at` written beside a refresh token —
-    /// answers a different question about trust: the token says when it dies,
-    /// whereas a file says when something last believed it would.
+    /// An enum rather than a bare timestamp because the sources answer
+    /// different questions about trust: the token says when it dies, whereas
+    /// a file says when something last believed it would.
     #[derive(Copy, Eq)]
     #[serde(rename_all = "kebab-case")]
     pub enum ExpirySource {
@@ -38,6 +37,10 @@ wire! {
         /// separating: the token says when it dies, a file says when something
         /// last believed it would.
         Rclone,
+        /// rn signed in with OAuth and wrote down the provider's `expires_in`
+        /// beside the token. Second-hand in the way rclone's is, and first-hand
+        /// in that rn wrote it: the refresh that renews it is rn's too.
+        Oauth,
     }
 }
 

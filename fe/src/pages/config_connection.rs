@@ -8,7 +8,7 @@ use crate::pages::config::ParamBlock;
 use std::collections::BTreeMap;
 use crate::app::Route;
 use crate::components::event_families::FAMILIES;
-use crate::components::{GlossaryEntry, InfoButton, Panel, PanelTab};
+use crate::components::{GlossaryEntry, InfoButton, OAuthPanel, Panel, PanelTab};
 use dioxus::prelude::*;
 use dioxus_router::Link;
 
@@ -21,8 +21,10 @@ use dioxus_router::Link;
 /// That is a real design position with real costs, and a user who does not know
 /// it will keep looking for the webhook page.
 ///
-/// Readings, not inputs. The one editable value behind them is the browser
-/// origin list, read once at startup from `RN_CORS_ORIGIN`.
+/// Readings, mostly. The OAuth panel is an exception — a sign-in is started
+/// from here, and its client credentials set here — beside the integration
+/// settings and the browser origin list, read once at startup from
+/// `RN_CORS_ORIGIN`.
 #[component]
 pub fn ConfigConnection() -> Element {
     let conn = use_resource(fetch_connection);
@@ -91,6 +93,10 @@ pub fn ConfigConnection() -> Element {
                             seeded: seeded(),
                             on_saved: move |_| params_reload += 1,
                         }
+                        // Directly under the board that says OAuth works, so
+                        // the claim and the thing that makes it true are one
+                        // scroll apart.
+                        OAuthPanel {}
                         Reaction { jobs: j }
                         Origins { conn: c }
                     }
@@ -689,15 +695,15 @@ fn Integrations(
                 }
                 Board {
                     name: "OAuth".to_string(),
-                    verdict: "partly — token yes, flow no".to_string(),
+                    verdict: "works — a loopback sign-in, GitHub first".to_string(),
                     blocked: false,
                     facts: vec![
-                        "a long-lived token obtained elsewhere works like any other credential"
+                        "the redirect comes back to the browser on this machine, on the API \
+                         listener at 127.0.0.1 — no tunnel, and not the hooks port".to_string(),
+                        "state and PKCE stand in for the signature the hooks listener demands"
                             .to_string(),
-                        "the authorization-code flow ends in an unsigned inbound GET, which \
-                         the hooks listener deliberately does not serve".to_string(),
-                        "a refreshed token has nowhere to be written back: the credentials \
-                         file is read-only from here".to_string(),
+                        "the token lands in the credential a job already reads, and is renewed \
+                         before a run when it can expire".to_string(),
                     ],
                     info: rsx! {
                         InfoButton {
@@ -708,41 +714,36 @@ fn Integrations(
                             glossary: vec![ctx_entry()],
                         }
                     },
-                    // No filtered list of its own, and the reason is the
-                    // interesting part rather than an omission: nothing marks a
-                    // credential as an OAuth one. A token that came out of an
-                    // authorization-code flow and a token pasted from a
-                    // settings page are the same string under the same name,
-                    // and a board claiming to show "the OAuth credentials"
-                    // would be inventing a distinction the store does not hold.
+                    // The settings are a panel of their own, directly below
+                    // this tile: a provider's client ID and secret, the
+                    // callback to register, scopes and the sign-in button are
+                    // more than a board's footer can carry legibly.
                     settings: Some(rsx! {
                         div { class: "mt-2 pt-2 border-t border-gray-700",
                             span { class: PARAM_BOARD_TITLE_CLASS, "Settings" }
                             p { class: "text-gray-400 text-xs mt-1",
-                                "One setting, and it is not distinguishable from any other: the \
-                                 token. Nothing records that a credential came from an OAuth flow \
-                                 rather than from a settings page, so it is set beside every other \
+                                "In the OAuth panel below this tile: the app's client ID and \
+                                 secret, the callback to register, scopes, and the sign-in \
+                                 itself. A token pasted by hand still goes beside every other \
                                  credential on "
                                 Link {
                                     to: Route::ConfigJobs {},
                                     class: "text-blue-400 hover:text-blue-300",
                                     "Config → Jobs"
                                 }
-                                ". There is no flow to configure — that is this board's whole point."
+                                ", and the two are the same credential to any job."
                             }
                         }
                     }),
-                    // The one board whose pointer is mostly a negative, and it
-                    // says so rather than going quiet — a blank where the other
-                    // three carry a route reads as an oversight.
                     watched: rsx! {
-                        "No flow to watch, because there is none here. The token is watched: "
+                        "Each sign-in is watched in the OAuth panel below, hop by hop. The token \
+                         is watched on "
                         Link {
                             to: Route::MonitorConnection {},
                             class: "text-blue-400 hover:text-blue-300",
                             "Monitor → Connection"
                         }
-                        "'s Tokens board says when a credential stops working and what stops \
+                        "'s Tokens board, which shows a signed-in token's expiry and what stops \
                          with it."
                     },
                 }
@@ -1159,15 +1160,18 @@ const REACT_IF_WRONG: &str =
 const INT_WHAT: &str =
     "The four shapes an integration with an outside service takes, and whether this install can \
      be each one.\n\nDirection is what separates them. Webhooks and the OAuth authorization \
-     flow are inbound: the other side has to reach you. IMAP and an ordinary API call are \
+     flow look inbound: the other side has to reach you — though for OAuth the other side \
+     turns out to be your own browser. IMAP and an ordinary API call are \
      outbound: you reach it, and outbound was never the difficulty.\n\nInbound used to be the \
      whole answer — there was no address to give anyone. There is one now, for exactly one \
      route: a tunnel client opens an outbound connection from this machine and a provider's \
      push arrives back down it, into a listener serving POST /api/hooks/:id and nothing else. \
-     So webhooks work, and the API port is still exposed to nobody.\n\nThat leaves the OAuth \
-     redirect as the one inbound shape still out of reach, and no longer for want of an \
-     address: it is an unsigned GET, and a listener that accepted one would have given up the \
-     property that made publishing the first route survivable.\n\nThe boards read against each \
+     So webhooks work, and the API port is still exposed to nobody.\n\nThe OAuth redirect \
+     looked like the one inbound shape still out of reach, and was not. It is inbound to the \
+     browser rather than to rn: the provider sends the browser to a URI you registered, and \
+     with a loopback URI that browser is on this machine already. So it lands on the API \
+     listener at 127.0.0.1 without anything being exposed, and the hooks listener never sees \
+     an unsigned GET.\n\nThe boards read against each \
      other on purpose. \"Can I integrate with X\" is nearly always answered by which of these \
      four X uses, not by anything about X.";
 
@@ -1295,33 +1299,32 @@ const API_IF_WRONG: &str =
      because there is no such check.";
 
 const OAUTH_WHAT: &str =
-    "Two different things wear this name, and rn can do one of them.\n\nA token you already \
-     hold — a personal access token, a long-lived app token, a service account — is just a \
-     credential: put it in ~/.config/rn/credentials and read it with [[ctx]].secret, exactly like \
-     any other.\n\nThe authorization-code flow is the other thing: the provider redirects a \
-     browser back to a URI you registered, with a code in it. That redirect is an inbound \
-     request — and it is not the wall a webhook used to hit, since a tunnel could carry it \
-     here as easily as a push. It is what the listener on the other end is: one route, one \
-     method, and a signature required on every call. An OAuth redirect is an unsigned GET to \
-     a different path, and serving it would mean a route that verifies nothing, on the \
-     listener whose whole safety is that it verifies everything.";
+    "Two different things go by this name, and rn now does both.\n\nA token you already hold, \
+     such as a personal access token or a service account key, is just a credential. Put it on \
+     the credentials board and read it with [[ctx]].secret, like any other.\n\nThe \
+     authorization-code flow is a sign-in: the provider sends a browser back to a URI you \
+     registered, with a code in it. That looks like an inbound request, and this board used to \
+     rule it out for that reason. But what receives it is the browser, and the browser is on \
+     this machine. With a loopback URI (RFC 8252) the code arrives at the API listener on \
+     127.0.0.1, where this page already talks. The provider never connects to rn, and the \
+     hooks listener is untouched.";
 
 const OAUTH_WHY: &str =
-    "The distinction is worth drawing because \"does it support OAuth\" has two answers and \
-     the useful one depends on which half you mean. Most providers offering OAuth also offer a \
-     long-lived token for exactly this situation — scripts, CI, machines with no browser — and \
-     that path works here today.\n\nThere is a second constraint behind the first. Refresh \
-     tokens are meant to be rotated and written back, and nothing here writes to the \
-     credentials file: the launcher reads it and passes values into the sealed child, and \
-     secrets.ts exposes read, isSet and describe with no write among them. A flow that depends \
-     on storing a new token has nowhere to store it.";
+    "The distinction still matters, because \"does it support OAuth\" has two answers. A \
+     long-lived token is the simpler path wherever a provider offers one: nothing to register, \
+     nothing to renew. A sign-in earns its keep where the token expires, or where the provider \
+     offers nothing else.\n\nThe thing that used to block a sign-in was not the redirect but \
+     where a token would go. That is solved too. The credentials board writes the file now, so \
+     a sign-in writes its token into the credential a job already reads, and a renewed one \
+     replaces it the same way.";
 
 const OAUTH_IF_WRONG: &str =
-    "A refresh token that expires takes the integration down at whatever hour it expires, and \
-     the failure appears in that job's error log as an ordinary 401 — nothing announces that \
-     the cause is a credential that needed rotating.\n\nA credential that is set is not a \
-     credential that works. Nothing tries it: an expired token reads as set on Config → Jobs, \
-     and the first evidence is a job failing. See docs/sec.md.";
+    "The hooks listener still serves no GET, and should not. A redirect aimed at the tunnel \
+     address instead of at 127.0.0.1 gets the same 404 as any unknown path.\n\nA credential \
+     that is set is not one that works. A personal token that expired still reads as set on \
+     Config → Jobs, and the first evidence is a job failing. A signed-in token is better placed: \
+     its expiry is recorded, the tokens board on Monitor → Connection shows it, and the runner \
+     renews it before a run when a refresh token is held. See docs/sec.md.";
 
 /// What `ctx` is, linked from the API panel.
 ///

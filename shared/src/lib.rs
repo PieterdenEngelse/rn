@@ -21,6 +21,7 @@ pub mod links;
 pub mod mail;
 pub mod pages;
 pub mod monitor;
+pub mod oauth;
 pub mod params;
 pub mod tokens;
 pub mod webhooks;
@@ -33,6 +34,7 @@ pub use links::*;
 pub use mail::*;
 pub use pages::*;
 pub use monitor::*;
+pub use oauth::*;
 pub use params::*;
 pub use tokens::*;
 pub use webhooks::*;
@@ -171,6 +173,13 @@ pub fn export_all(cfg: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     TokenEntry::export_all(cfg)?;
     TokensResponse::export_all(cfg)?;
     CredentialSaveResponse::export_all(cfg)?;
+
+    OAuthAttempt::export_all(cfg)?;
+    OAuthConnection::export_all(cfg)?;
+    OAuthProvider::export_all(cfg)?;
+    OAuthResponse::export_all(cfg)?;
+    OAuthStartResponse::export_all(cfg)?;
+    OAuthDisconnectResponse::export_all(cfg)?;
     Ok(())
 }
 

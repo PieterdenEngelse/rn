@@ -35,6 +35,10 @@ if [ "$worktree" != "rn" ]; then
     # And the credentials file, now that a page can write it. Without this a
     # worktree saving a test credential would rewrite the real one.
     export RN_CREDENTIALS_PATH="$state/credentials"
+    # And what an OAuth sign-in recorded beside it, which has to move with the
+    # token: an expiry from the real install describing a worktree's token is
+    # a refresh the runner will attempt with a refresh token it does not hold.
+    export RN_OAUTH_PATH="$state/oauth.json"
     # Per-job overrides, so a ceiling raised while testing does not follow the
     # person to the install they actually run.
     export RN_JOB_OVERRIDES_PATH="$state/job-overrides.json"

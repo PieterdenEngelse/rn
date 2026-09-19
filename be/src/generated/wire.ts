@@ -517,12 +517,11 @@ drifted: number, };
 /**
  * How an expiry was learned.
  *
- * One variant today, and an enum rather than a bare timestamp because the
- * next source — a stored `expires_at` written beside a refresh token —
- * answers a different question about trust: the token says when it dies,
- * whereas a file says when something last believed it would.
+ * An enum rather than a bare timestamp because the sources answer
+ * different questions about trust: the token says when it dies, whereas
+ * a file says when something last believed it would.
  */
-export type ExpirySource = "jwt" | "rclone";
+export type ExpirySource = "jwt" | "rclone" | "oauth";
 
 /**
  * One live handle and whatever distinguishes it from the others of its kind.
@@ -1497,6 +1496,120 @@ export type NodeResources = { maxRssMB: number, fsRead: number, fsWrite: number,
  * cannot say. 0 where the kernel does not report it.
  */
 runqueueWaitMsPerSec: number, };
+
+/**
+ * One attempt at something that can fail: a sign-in, or a refresh.
+ *
+ * `steps` is the point of it. The flow is five hops across two hosts and
+ * a browser, and "failed" alone says nothing about which hop — so each
+ * one that ran says what it did, in order, and the last line is where it
+ * stopped. In memory only; gone on restart, like a probe.
+ */
+export type OAuthAttempt = { atMs: number, ok: boolean, 
+/**
+ * One line: what happened, or the reason it did not. Redacted.
+ */
+detail: string, steps: Array<string>, };
+
+/**
+ * What a completed sign-in left behind. Metadata only — see the module doc.
+ */
+export type OAuthConnection = { connectedAtMs: number, 
+/**
+ * The account the token belongs to, when the provider would say.
+ */
+login?: string | null, 
+/**
+ * What the provider actually granted, which is not always what was
+ * asked for — a user can narrow it on the consent screen.
+ */
+scopes: Array<string>, 
+/**
+ * When the access token dies. Absent when the provider gave no
+ * `expires_in`, which for a GitHub OAuth App is the normal case.
+ */
+expiresAtMs?: number | null, 
+/**
+ * Whether a refresh token is held, so the runner can renew the access
+ * token before a job needs it.
+ */
+refreshable: boolean, refreshExpiresAtMs?: number | null, 
+/**
+ * The last renewal, when there has been one since the process started.
+ */
+lastRefresh?: OAuthAttempt | null, };
+
+/**
+ * `DELETE /api/oauth/:id`.
+ */
+export type OAuthDisconnectResponse = { ok: boolean, 
+/**
+ * Whether the provider was told to revoke the token, and what it said.
+ * Forgetting a token here does not stop it working elsewhere; only
+ * the provider can do that.
+ */
+detail: string, };
+
+/**
+ * One provider as the page sees it: what it needs, where it puts the
+ * token, and whether it has one.
+ */
+export type OAuthProvider = { 
+/**
+ * `github` — the path segment of every route for it.
+ */
+id: string, label: string, 
+/**
+ * Credential names, as the credentials board spells them.
+ */
+clientIdCredential: string, clientSecretCredential: string, tokenCredential: string, clientIdSet: boolean, clientSecretSet: boolean, tokenSet: boolean, 
+/**
+ * Jobs and webhooks that declare the token credential: what a sign-in
+ * feeds, and what a disconnect stops.
+ */
+usedBy: Array<string>, 
+/**
+ * The redirect URI this process sends, port and all. Absent when the
+ * bind address leaves no loopback address to send — see
+ * `redirect_problem`.
+ */
+redirectUri?: string | null, redirectProblem?: string | null, 
+/**
+ * What to register as the app's callback URL. For GitHub this is the
+ * redirect URI without a port, since GitHub matches loopback
+ * callbacks on any port.
+ */
+registerCallback: string, 
+/**
+ * Where the app is registered.
+ */
+registerAt: string, 
+/**
+ * Scopes asked for when the page does not say otherwise.
+ */
+defaultScopes: string, connection?: OAuthConnection | null, lastAttempt?: OAuthAttempt | null, 
+/**
+ * Sign-ins started and not yet finished or expired.
+ */
+pending: number, 
+/**
+ * How long a started sign-in stays valid, in seconds.
+ */
+pendingTtlSeconds: number, };
+
+/**
+ * `GET /api/oauth`.
+ */
+export type OAuthResponse = { providers: Array<OAuthProvider>, };
+
+/**
+ * `POST /api/oauth/:id/start`: where to send the browser.
+ *
+ * The URL carries the client id, the scopes, `state` and the PKCE
+ * challenge — all of it public by design. The verifier the challenge was
+ * made from never leaves the backend.
+ */
+export type OAuthStartResponse = { ok: boolean, authorizeUrl?: string | null, errors?: Array<string>, };
 
 /**
  * The four states a reader cares about, in priority order.

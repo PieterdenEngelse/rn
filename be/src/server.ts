@@ -13,6 +13,10 @@
  * GET  /api/credentials    what this install needs, and whether it has it
  * PUT  /api/credentials/:name    set one (write-only; never read back)
  * DELETE /api/credentials/:name  remove one
+ * GET  /api/oauth     the providers rn can sign in to, and what each sign-in left
+ * POST /api/oauth/:id/start     begin a sign-in; answers where to send the browser
+ * GET  /api/oauth/:id/callback  where the provider sends the browser back
+ * DELETE /api/oauth/:id         forget the token here, and revoke it there
  * GET  /api/webhooks  the webhooks made on the page, and what may be chosen for one
  * PUT  /api/webhooks/:id     make or replace one
  * DELETE /api/webhooks/:id   remove one
@@ -38,6 +42,9 @@ import type {
     MailHealthResponse,
     MailTestResponse,
     MailTestResult,
+    OAuthDisconnectResponse,
+    OAuthResponse,
+    OAuthStartResponse,
     TransientRefusals,
     RunsDeleteResponse,
     MailRuleSaveResponse,
@@ -144,6 +151,7 @@ import { collect as collectNodeMetrics, lifetimeDelay } from "./node_metrics.ts"
 import { withDistribution } from "./node_history.ts";
 import { serveWeb, webRoot } from "./web.ts";
 import * as tokens from "./tokens.ts";
+import * as oauth from "./oauth.ts";
 
 function send(res: ServerResponse, code: number, body: unknown): void {
     const json = JSON.stringify(body);
@@ -200,6 +208,9 @@ function credentialDeclarations(): Map<string, string[]> {
         add(def.credential, def.id);
         add(def.lookup?.credential, def.id);
     }
+    // An OAuth provider's client ID and secret, so the credentials board has a
+    // row to set them on before the first sign-in rather than after it fails.
+    for (const d of oauth.declarations()) add(d.name, d.by);
     return out;
 }
 
@@ -1313,6 +1324,79 @@ export function createApp() {
         // two booleans — never a value, not even a prefix or a length of one.
         // See docs/token-sec.md: a panel renders existence, and this endpoint
         // has no shape that could carry content even if a page asked.
+        // OAuth sign-in. See be/src/oauth.ts for why the callback lives on this
+        // listener — loopback, where the browser already is — and not on the
+        // hooks one, and for what `state` and PKCE stand in for.
+        if (url.pathname === "/api/oauth" && req.method === "GET") {
+            send(res, 200, {
+                providers: oauth.describeAll(declaredBy, Date.now()),
+            } satisfies OAuthResponse);
+            return done(200);
+        }
+
+        const oauthRoute = /^\/api\/oauth\/([a-z0-9-]+)(\/start|\/callback)?$/.exec(url.pathname);
+        if (oauthRoute !== null) {
+            const provider = oauth.providerById(oauthRoute[1]!);
+            const action = oauthRoute[2] ?? "";
+            if (provider === undefined) {
+                send(res, 404, { error: `no OAuth provider called ${oauthRoute[1]}` });
+                return done(404);
+            }
+
+            // A POST, not a GET: it mints state, and a link or a prefetch
+            // should not be able to do that.
+            if (action === "/start" && req.method === "POST") {
+                let body: unknown;
+                try {
+                    body = await readJson(req);
+                } catch {
+                    send(res, 400, {
+                        ok: false,
+                        errors: ["the request body could not be read as JSON"],
+                    } satisfies OAuthStartResponse);
+                    return done(400);
+                }
+                const scopes = (body as { scopes?: unknown })?.scopes;
+                const origin = typeof req.headers.origin === "string" ? req.headers.origin : undefined;
+                const started = oauth.start(
+                    provider,
+                    typeof scopes === "string" ? scopes : undefined,
+                    origin,
+                    Date.now(),
+                );
+                if ("errors" in started) {
+                    send(res, 422, { ok: false, errors: started.errors } satisfies OAuthStartResponse);
+                    return done(422);
+                }
+                send(res, 200, { ok: true, authorizeUrl: started.authorizeUrl } satisfies OAuthStartResponse);
+                return done(200);
+            }
+
+            // Where the provider sends the browser. Not JSON: a person is
+            // looking at this response, so it is either a redirect back to the
+            // page or a sentence saying why not.
+            if (action === "/callback" && req.method === "GET") {
+                const answer = await oauth.callback(provider, url.searchParams, Date.now());
+                if (answer.status === 303) {
+                    res.writeHead(303, { location: answer.location, "cache-control": "no-store" });
+                    res.end();
+                } else {
+                    res.writeHead(400, {
+                        "content-type": "text/plain; charset=utf-8",
+                        "cache-control": "no-store",
+                    });
+                    res.end(answer.text);
+                }
+                return done(answer.status);
+            }
+
+            if (action === "" && req.method === "DELETE") {
+                const result = await oauth.disconnect(provider);
+                send(res, 200, result satisfies OAuthDisconnectResponse);
+                return done(200);
+            }
+        }
+
         if (url.pathname === "/api/credentials" && req.method === "GET") {
             const state = credentialsFile.fileState();
             send(res, 200, {
@@ -1368,6 +1452,9 @@ export function createApp() {
                     // they die — see tokens.rcloneExpiries, which reads that
                     // field and nothing beside it. Absent file, absent rows.
                     rcloneConf: readRcloneConf(),
+                    // What an OAuth sign-in recorded, for a token that is not
+                    // a JWT and so carries no expiry of its own.
+                    recordedExpiry: oauth.expiryOf,
                 }),
             );
             return done(200);
@@ -1402,6 +1489,7 @@ export function createApp() {
                 return done(400);
             }
             const result = credentialsFile.set(name, value);
+            if (result.errors.length === 0) oauth.credentialChangedByHand(name);
             if (result.errors.length > 0) {
                 send(res, 422, {
                     ok: false,
@@ -1420,7 +1508,9 @@ export function createApp() {
         // way DELETE promises: asking twice is a 404 and it is gone either way.
         if (url.pathname.startsWith("/api/credentials/") && req.method === "DELETE") {
             const name = decodeURIComponent(url.pathname.slice("/api/credentials/".length));
-            if (!credentialsFile.clear(name)) {
+            const cleared = credentialsFile.clear(name);
+            if (cleared) oauth.credentialChangedByHand(name);
+            if (!cleared) {
                 send(res, 404, {
                     ok: false,
                     errors: [`Nothing is set for "${name}".`],

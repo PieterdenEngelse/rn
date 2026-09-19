@@ -64,6 +64,12 @@ pub use shared::webhooks::*;
 // shape in there that can carry a value, in either direction.
 pub use shared::credentials::*;
 
+// OAuth sign-in. Its own module because the argument it encodes is its own:
+// the redirect comes back to the browser on this machine, never to a public
+// address, and the token it yields lands in an ordinary credential — so what
+// crosses here is who signed in and when it dies, never the token.
+pub use shared::oauth::*;
+
 // The runtime-parameter and config surface, the last shapes that were written
 // twice. `fe` described them as loose strings and `be` as literal unions, and
 // the two agreed only because someone was careful; `shared::params` is now the

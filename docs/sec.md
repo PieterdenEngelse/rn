@@ -394,6 +394,71 @@ Connection colours that state for exactly this reason.
   bytes, not that they are well-formed or that the job reads them safely. See
   `webhook-echo`'s info panel on reporting the shape rather than the contents.
 
+## OAuth sign-in, and why its callback is not on the hooks port
+
+Config → Connection can sign rn in to a provider (GitHub first) with the
+authorization-code flow and a **loopback** redirect, RFC 8252's shape for an app
+running on the user's own machine. Mechanism in `be/src/oauth.ts`; wire types in
+`shared/src/oauth.rs`.
+
+### The direction
+
+The provider never connects to rn. It redirects the *browser*, and the browser
+is on this machine, so the redirect URI is
+`http://127.0.0.1:<api port>/api/oauth/github/callback` — the API listener,
+bound to loopback, where the page already talks. Nothing is exposed and no
+tunnel is involved. The code exchange that follows is an outbound POST.
+
+The hooks listener does not serve it and must not. Its security argument is
+that every request it accepts carries a signature; a redirect is an unsigned
+GET, and one route that verifies nothing would end that argument.
+
+### What stands in for the signature
+
+The callback adds one caller the API did not have: a web page in this browser
+can navigate to `127.0.0.1`. It cannot read the answer, but it could hand rn a
+code for *its own* account — login CSRF — and every job would then run as the
+attacker. So:
+
+- **`state`**: 32 random bytes, issued by `POST /api/oauth/:id/start`, held in
+  process memory, spent on first use, void after ten minutes or a restart. A
+  callback whose state rn did not issue is refused before any exchange, and is
+  deliberately *not* recorded on the page — otherwise opening a URL could write
+  "failed" into the panel.
+- **PKCE (S256)**: the exchange needs a verifier that never left the process, so
+  a code intercepted on its way back is useless.
+- **The return address** comes from the start request's `Origin`, and only if
+  that origin is already in `RN_CORS_ORIGIN` or is the API's own; otherwise a
+  relative path. An unchecked one would make the callback an open redirect.
+- **`start` is a POST**, so a link or prefetch cannot mint state, and pending
+  sign-ins are capped at eight.
+
+### Where the token goes
+
+Into the credential a job already reads — `githubToken` — through
+`credentials-file.set()`, so redaction is armed before the value reaches disk
+and no job changes. The client ID and secret are credentials too
+(`githubOAuthClientId`, `githubOAuthClientSecret`), shown on the credentials
+board as declared by `oauth:github`. The account, granted scopes and expiry are
+not secret and go to `~/.config/rn/oauth.json` (`RN_OAUTH_PATH`).
+
+A token that can expire is renewed **before** a run that declares it, within
+five minutes of expiry, once per provider however many runs start together —
+rotating refresh tokens make a second concurrent refresh fail. A token already
+dead and not renewable stops the run with the cause named rather than a 401.
+
+### What it does not protect against
+
+- **Anything that can read the credentials file**, which now includes the
+  client secret. For an app on the user's machine that secret was never strong
+  proof; PKCE is the protection that matters.
+- **A token edited into the file by hand.** Setting or removing `githubToken`
+  through the page forgets the sign-in's record; editing the file directly does
+  not, so the account shown can be stale until the next sign-in or disconnect.
+- **Revocation failing.** Disconnect removes the token here first and revokes at
+  the provider second; if the second fails the page says so, and the grant stays
+  live at GitHub until removed there.
+
 ## Why there is no encrypted store (yet)
 
 The conventional shape is an encrypted file with the key held in the OS keychain.

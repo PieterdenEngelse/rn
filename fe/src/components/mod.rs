@@ -26,5 +26,7 @@ pub use panel::Panel;
 pub use info::{GlossaryEntry, InfoButton, PanelTab};
 pub use header::Header;
 pub mod event_families;
+pub mod oauth;
+pub use oauth::OAuthPanel;
 pub mod webhooks;
 pub use webhooks::WebhookTile;

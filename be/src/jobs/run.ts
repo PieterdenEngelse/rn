@@ -34,6 +34,7 @@ import { record, type Trigger } from "./history.ts";
 import { resolveInput } from "./input.ts";
 import { PermanentFailure } from "./permanent.ts";
 import * as secrets from "../secrets.ts";
+import * as oauth from "../oauth.ts";
 import type { JobRun, JobStep } from "../generated/wire.ts";
 import type { JsonValue } from "../generated/serde_json/JsonValue.ts";
 import type { Delivery } from "../generated/wire.ts";
@@ -418,6 +419,13 @@ export async function runJob(
         warn("job-credentials-missing", { id: job.id, missing });
         throw new Error(`${job.id} needs credentials that are not configured: ${wanted}`);
     }
+
+    // A token an OAuth sign-in put there may be minutes from expiry. Renewed
+    // here, before the run, because `ctx.secret` is synchronous and the job
+    // should not have to know which of its tokens are the renewable kind.
+    // Throws only for one that is already dead and cannot be renewed, so the
+    // record names that instead of the 401 the first request would get.
+    await oauth.ensureFresh(job.credentials ?? [], Date.now());
 
     // **One run of a job at a time.** The scheduler has always refused to stack
     // a job on itself; the rule lives here now because the scheduler is no

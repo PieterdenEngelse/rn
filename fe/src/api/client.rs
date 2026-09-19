@@ -11,7 +11,8 @@ use super::wire::{
     MailRuleSaveResponse, MailRulesResponse, MailTestResponse, MailTestResult, NodeHistory,
     NodeMetrics, RunsDeleteResponse, SendDetail,
     ParamsResponse, RestartOutcome, RunsResponse, SaveResponse, StateResetResponse, StatusResponse,
-    CredentialSaveResponse, CredentialsResponse, StopOutcome, TestDelivery, TokenProbe, TokensResponse, WebhookDef,
+    CredentialSaveResponse, CredentialsResponse, OAuthDisconnectResponse, OAuthResponse,
+    OAuthStartResponse, StopOutcome, TestDelivery, TokenProbe, TokensResponse, WebhookDef,
     WebhookSaveResponse, WebhooksResponse,
 };
 
@@ -749,6 +750,50 @@ pub async fn delete_credential(name: &str) -> Result<CredentialSaveResponse, Str
     resp.json::<CredentialSaveResponse>()
         .await
         .map_err(|_| format!("the credential was not removed ({})", resp.status()))
+}
+
+/// The providers rn can sign in to, and what each sign-in left behind.
+///
+/// Metadata only — who it signed in as, the scopes granted, when it dies. The
+/// token itself went into an ordinary credential and never comes back.
+pub async fn fetch_oauth() -> Result<OAuthResponse, String> {
+    let resp = gloo_net::http::Request::get(&format!("{API_BASE}/api/oauth"))
+        .send()
+        .await
+        .map_err(|e| format!("{e}"))?;
+    if !resp.ok() {
+        return Err(format!("backend returned {}", resp.status()));
+    }
+    resp.json::<OAuthResponse>().await.map_err(|e| format!("{e}"))
+}
+
+/// Begin a sign-in. Answers the provider URL to send the browser to.
+///
+/// A POST because it mints single-use state in the backend; a GET would let a
+/// link or a prefetch do that.
+pub async fn start_oauth(id: &str, scopes: &str) -> Result<OAuthStartResponse, String> {
+    let body = serde_json::json!({ "scopes": scopes }).to_string();
+    let resp = gloo_net::http::Request::post(&format!("{API_BASE}/api/oauth/{id}/start"))
+        .header("content-type", "application/json")
+        .body(body)
+        .map_err(|e| format!("{e}"))?
+        .send()
+        .await
+        .map_err(|e| format!("{e}"))?;
+    resp.json::<OAuthStartResponse>()
+        .await
+        .map_err(|_| format!("the sign-in could not be started ({})", resp.status()))
+}
+
+/// Forget the token here, and ask the provider to revoke it.
+pub async fn disconnect_oauth(id: &str) -> Result<OAuthDisconnectResponse, String> {
+    let resp = gloo_net::http::Request::delete(&format!("{API_BASE}/api/oauth/{id}"))
+        .send()
+        .await
+        .map_err(|e| format!("{e}"))?;
+    resp.json::<OAuthDisconnectResponse>()
+        .await
+        .map_err(|_| format!("the disconnect failed ({})", resp.status()))
 }
 
 /// Open both mail connections, authenticate, and close them again.
