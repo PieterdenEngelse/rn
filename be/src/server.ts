@@ -740,6 +740,10 @@ export function createApp() {
                 watchingEnabled: config.mailWatch,
                 watched: watch.mailboxes,
                 rulesEnabled: mailRules.list().filter((r) => r.enabled).length,
+                // Named separately from `watched`, which is empty while
+                // watching is off: whether a rule replaces the two filters
+                // below does not depend on a connection being held.
+                ruleMailboxes: mailRules.watchedMailboxes(),
                 allowedSenders: config.mailAllowedSenders,
 
                 allowedRecipients: config.mailAllowedRecipients,

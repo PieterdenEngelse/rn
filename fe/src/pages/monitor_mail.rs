@@ -137,6 +137,25 @@ fn Receiving(data: MailHealthResponse) -> Element {
     } else {
         data.allowed_recipients.clone()
     };
+    // Rules replace these two filters for every mailbox they name, rather than
+    // narrowing further (read-mail.ts builds its search from one or the other).
+    // So a filter shown bare reads as in force where it is not consulted at
+    // all; both rows say which mailboxes it has been displaced from.
+    let displaced = data.rule_mailboxes.join(", ");
+    let (senders, recipients) = if data.rule_mailboxes.is_empty() {
+        (senders, recipients)
+    } else {
+        (format!("{senders} — fallback only"), format!("{recipients} — fallback only"))
+    };
+    let scope = if data.rule_mailboxes.is_empty() {
+        "No enabled rule names a mailbox, so this filter applies to every mail run.".to_string()
+    } else {
+        format!(
+            "Enabled rules name {displaced}. There the rules decide on their own and this \
+             filter is not consulted; it applies only to a mailbox no rule names, such as one \
+             given to a run by hand."
+        )
+    };
 
     rsx! {
         Board { title: "Receiving — IMAP".to_string(),
@@ -192,16 +211,16 @@ fn Receiving(data: MailHealthResponse) -> Element {
             Metric {
                 label: "Recipient filter".to_string(),
                 value: recipients,
-                what: "Addresses a To or Cc must match for an arriving message to count — RN_MAIL_ALLOWED_RECIPIENTS, applied in the same server-side search as the sender filter. Both apply when both are set.".to_string(),
-                why: "It is what makes watching a sent mailbox worth doing. There the sender is always you, so a sender filter matches everything and only this distinguishes one message from another — \"from me to her\" needs both halves.".to_string(),
+                what: format!("Addresses a To or Cc must match for an arriving message to count — RN_MAIL_ALLOWED_RECIPIENTS, applied in the same server-side search as the sender filter. Both apply when both are set.\n\n{scope}"),
+                why: "It predates rules, and was what made watching a sent mailbox possible: there the sender is always you, so only a recipient distinguishes one message from another. A rule now says that per mailbox — \"from me, to her\" on the sent folder — and a rule naming a mailbox replaces both install-wide filters there rather than adding to them.".to_string(),
                 if_wrong: "Empty means any recipient. It is a filter on mail that arrives and has nothing to do with sending: nothing here bounds who a send may go to.\n\nSaving it and not restarting is the failure worth knowing. It takes effect at startup, so between the two the page says mail is narrowed and the process still has no filter — read-mail refuses to run rather than reading the whole mailbox while somebody believes otherwise.".to_string(),
             }
             Metric {
                 label: "Sender filter".to_string(),
                 value: senders,
-                what: "Addresses or domains arriving mail is narrowed to before anything is reported — RN_MAIL_ALLOWED_SENDERS, applied in the server-side search rather than after fetching.".to_string(),
+                what: format!("Addresses or domains arriving mail is narrowed to before anything is reported — RN_MAIL_ALLOWED_SENDERS, applied in the server-side search rather than after fetching.\n\n{scope}"),
                 why: "Narrowing on the server means mail from everybody else is never fetched, never scanned and never recorded. That is a privacy property rather than an optimisation: what is not read cannot end up in a run record.".to_string(),
-                if_wrong: "Empty means any sender, and the rules alone decide. A domain matches as a suffix on @domain rather than as a substring, because notexample.com contains example.com and anybody can register it.".to_string(),
+                if_wrong: "Empty means any sender in a mailbox no rule names. Reading this row as the filter in force when rules name the mailbox is the misreading the fallback label exists for: a rule's own sender and recipient are the whole search there. A domain matches as a suffix on @domain rather than as a substring, because notexample.com contains example.com and anybody can register it.".to_string(),
             }
         }
     }

@@ -161,13 +161,23 @@ wire! {
         pub watched: Vec<WatchedMailbox>,
         /// Enabled rules, which is what decides the list above.
         pub rules_enabled: u32,
-        /// Addresses arriving mail is narrowed to, as configured. Empty means
-        /// the rules alone decide.
+        /// The mailboxes enabled rules name, whether or not watching is on.
+        /// A mailbox named here is searched by its rules alone; the two
+        /// install-wide filters below apply only to a mailbox none of them
+        /// covers. `watched` cannot answer this, since it is empty while
+        /// watching is off.
+        #[serde(default)]
+        pub rule_mailboxes: Vec<String>,
+        /// Addresses arriving mail is narrowed to in a mailbox no enabled rule
+        /// names. Rules replace it rather than adding to it, so for a mailbox
+        /// in `rule_mailboxes` it is not consulted at all. Empty means any
+        /// sender.
         #[serde(default)]
         pub allowed_senders: String,
 
-        /// Addresses a `To` or `Cc` must match for arriving mail to count.
-        /// Empty means any.
+        /// Addresses a `To` or `Cc` must match for arriving mail to count, in
+        /// a mailbox no enabled rule names — replaced by the rules exactly as
+        /// `allowed_senders` is. Empty means any.
         ///
         /// An *inbound* filter, beside `allowed_senders` and applied in the
         /// same search — despite the name, which reads like a send guard and
