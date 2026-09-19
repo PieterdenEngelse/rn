@@ -11,7 +11,7 @@
     "start": "node --env-file-if-exists=.env src/main.ts",
     "dev": "node --env-file-if-exists=.env --watch src/main.ts",
     "start:sealed": "./runtime/bin/node --env-file-if-exists=.env src/main.ts",
-    "test": "node --test",
+    "test": "node tools/test.ts",
     "typecheck": "tsc --noEmit",
     "start:sealed:win": "runtime\\bin\\node.exe --env-file-if-exists=.env src/main.ts",
     "params:build": "node tools/gen-params.ts",

@@ -26,7 +26,7 @@ cd fe && ./s
 # Backend run / watch / test
 cd be && npm run dev
 cd be && npm run start:sealed         # against the bundled runtime — what users get
-cd be && npm test && npm run typecheck
+cd be && npm test && npm run typecheck   # suites get an empty HOME: see be/tools/test.ts
 
 # Frontend CSS build (Tailwind v4 + daisyUI)
 cd fe && npm install && npm run css:build
