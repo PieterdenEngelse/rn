@@ -1005,9 +1005,37 @@ fn span(secs: f64) -> String {
     if rh == 0 { format!("{d}d") } else { format!("{d}d {rh}h") }
 }
 
+/// How long an rclone access token may go unrenewed before the row speaks up.
+/// Google and Microsoft both issue them for an hour, and a running mount renews
+/// on its next call, so two hours past is one missed renewal with room to
+/// spare — long enough to be the mount and not the clock.
+const RCLONE_STALE_SECS: f64 = 2.0 * 3600.0;
+
+/// An rclone row's expiry column, word and colour together.
+///
+/// What rclone writes down is the *access* token's expiry: an hour, renewed on
+/// use from a refresh token that carries no expiry of its own. A countdown to
+/// that reads as a credential about to die when it is one about to be
+/// replaced, and on 2026-09-19 it was amber on both mounts at 2 minutes. The
+/// signal that is actually there is how long ago renewal fell due — a mount
+/// that is running renews, so a token long past is a mount that is not.
+fn rclone_expiry(in_seconds: f64) -> (String, &'static str) {
+    if in_seconds >= 0.0 {
+        (format!("current for {} · rclone renews it", span(in_seconds)), "text-gray-300")
+    } else if -in_seconds < RCLONE_STALE_SECS {
+        (format!("renewal due {} ago · on next use", span(in_seconds)), "text-gray-300")
+    } else {
+        (
+            format!("not renewed for {} — is the mount running?", span(in_seconds)),
+            "text-amber-400",
+        )
+    }
+}
+
 /// The expiry column: a countdown, or the reason there is not one.
 fn expiry_word(e: &TokenEntry) -> String {
     match &e.expiry {
+        Some(x) if e.origin == TokenOrigin::Rclone => rclone_expiry(x.in_seconds).0,
         Some(x) if x.in_seconds < 0.0 => format!("expired {} ago", span(x.in_seconds)),
         Some(x) => format!("in {}", span(x.in_seconds)),
         None => e
@@ -1022,6 +1050,7 @@ fn expiry_word(e: &TokenEntry) -> String {
 /// expiry is the ordinary case, not a fault.
 fn expiry_class(e: &TokenEntry) -> &'static str {
     match &e.expiry {
+        Some(x) if e.origin == TokenOrigin::Rclone => rclone_expiry(x.in_seconds).1,
         Some(x) if x.in_seconds < 0.0 => "text-red-400",
         Some(x) if x.in_seconds < 7.0 * 86_400.0 => "text-amber-400",
         Some(_) => "text-gray-200",
@@ -1115,9 +1144,12 @@ const TOKENS_WHAT: &str =
      provider, so an open page is not traffic and cannot exhaust anyone's rate limit.\n\nThe \
      last rows are not rn's at all: rclone's remotes, read from its own config for their expiry \
      and nothing else. They are here because this machine depends on them — the Drive and \
-     OneDrive mounts are two of the user units — and because they are the only tokens on it \
-     that say when they die. A lapsed mount goes quiet rather than loud, which is the sort of \
-     failure a countdown is for.\n\nWorks now is the one column that costs something. Pressing \
+     OneDrive mounts are two of the user units — and a lapsed mount goes quiet rather than \
+     loud.\n\nWhat rclone records is the access token's expiry, which is an hour and renewed on \
+     use, so those rows do not count down. They say how long the current token has left while \
+     it is current, and how long ago renewal fell due once it is not: a running mount renews \
+     within the hour, so a token more than two hours past is the mount not running, or its \
+     renewal failing.\n\nWorks now is the one column that costs something. Pressing \
      it asks the provider: for the GitHub token, the one endpoint GitHub exempts from its own \
      rate limit, so asking cannot spend the budget the token is for; for the mailbox password, \
      a login and an immediate logout, opening nothing and reading nothing. The probe belongs to \
@@ -1148,12 +1180,39 @@ const TOKENS_IF_WRONG: &str =
      failure classifier is a guess at prose from whatever library made the call: it reads 401, \
      403, invalid token, bad credentials and their neighbours. A provider that words a refusal \
      differently will land in the job's error log without being counted here.\n\nAn rclone row \
-     is second-hand in a way the others are not. Its expiry is what rclone last wrote down, so \
-     a refresh rclone performed without rn watching leaves the file — and this row — describing \
-     an older token than the one in use. Treat it as the floor: past that instant something had \
-     to have been renewed.\n\nA probe result is a moment, not a guarantee: it says the \
+     is second-hand in a way the others are not. Its expiry is what rclone last wrote down, and \
+     it is the access token's rather than the refresh token's, which is the one that can \
+     actually lapse — a Microsoft one after long enough unused. Nothing in rclone's config says \
+     when that happens, so a quiet row means renewal is working, not that it will go on \
+     working.\n\nA probe result is a moment, not a guarantee: it says the \
      credential worked when asked, and a token can be revoked a second later. A refusal can \
      also be the network rather than the credential — the detail beside it is the provider's \
      own words, and \"ENOTFOUND\" is a different problem from \"401\". Results live in memory \
      and are gone after a restart, for the same reason the listener counts are: an answer from \
      before a restart would be older than the process reporting it.";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_current_rclone_token_is_quiet_however_close() {
+        let (word, class) = rclone_expiry(120.0);
+        assert!(word.starts_with("current for 2m"), "{word}");
+        assert_eq!(class, "text-gray-300");
+    }
+
+    #[test]
+    fn a_just_lapsed_rclone_token_waits_for_the_next_use() {
+        let (word, class) = rclone_expiry(-30.0 * 60.0);
+        assert!(word.starts_with("renewal due 30m ago"), "{word}");
+        assert_eq!(class, "text-gray-300");
+    }
+
+    #[test]
+    fn an_rclone_token_unrenewed_for_hours_asks_about_the_mount() {
+        let (word, class) = rclone_expiry(-5.0 * 3600.0);
+        assert!(word.contains("is the mount running?"), "{word}");
+        assert_eq!(class, "text-amber-400");
+    }
+}
