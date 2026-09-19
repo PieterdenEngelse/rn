@@ -68,7 +68,19 @@ pub static FAMILIES: [EventFamily; 6] = [
         name: "Create events",
         examples: "payment.created; order.created; user.registered",
         meaning: "Something new was created",
-        words: &["created", "create", "registered", "added", "add", "new", "opened", "inserted"],
+        // "opened" was here and moved to Lifecycle: in a name it is nearly always
+        // a stage — an email read, a Stripe review that will later close.
+        words: &[
+            // brought into existence
+            "created", "create", "creation", "new", "generated", "provisioned",
+            // somebody arrived
+            "registered", "signup", "join", "joined", "subscribe", "subscribed", "enrolled",
+            // added to a collection
+            "added", "add", "inserted", "insert", "appended", "uploaded", "imported",
+            "submission", "booked",
+            // made from something that already existed
+            "copy", "copied", "duplicated", "cloned", "fork", "forked",
+        ],
         by_subject: false,
         asks: "safe to run twice — a retried delivery is the same order again",
         kind: WebhookKind::DataPayload,
@@ -77,7 +89,10 @@ pub static FAMILIES: [EventFamily; 6] = [
         what: "A provider telling you a record now exists that did not before — a payment, an \
                order, an account. The verb is usually the last word of the name: \
                `payment.created`, `user.registered`. GitHub is the exception worth knowing: its \
-               event header says just `create`, with no noun, and means a branch or tag.",
+               event header says just `create`, with no noun, and means a branch or tag; its \
+               `fork` lands here too. HubSpot uses the noun instead of the verb — \
+               `contact.creation` — and Webflow's `form_submission` is a new record by another \
+               name.",
         why: "Create deliveries are the ones a retry hurts. A provider waits a few seconds for a \
               2xx and sends again if none comes, so the same order can arrive twice. rn answers \
               202 before the job runs, which keeps retries rare, and the replay log refuses a \
@@ -183,7 +198,7 @@ pub static FAMILIES: [EventFamily; 6] = [
             "escalated", "assigned", "unassigned", "resolved",
             // switched on, off, or put away
             "activated", "deactivated", "enabled", "disabled", "paused", "resumed", "suspended",
-            "closed", "reopened", "archived", "unarchived", "restored",
+            "opened", "closed", "reopened", "archived", "unarchived", "restored",
             // made public
             "published", "unpublished", "released", "deployed", "merged",
             // the calendar
@@ -574,6 +589,35 @@ mod tests {
         assert_eq!(words("PAYMENT.CAPTURE.DENIED"), ["payment", "capture", "denied"]);
         assert_eq!(words("oauth2Token"), ["oauth2", "token"]);
         assert_eq!(words("rate_limit.hit"), ["rate", "limit", "hit"]);
+    }
+
+    /// Real provider names that sorted as Unsorted before the create list
+    /// covered noun forms, arrivals, uploads and copies.
+    #[test]
+    fn provider_create_names() {
+        for event in [
+            "contact.creation",      // HubSpot
+            "deal.creation",         // HubSpot
+            "fork",                  // GitHub
+            "form_submission",       // Webflow
+            "copyCard",              // Trello
+            "team_join",             // Slack
+            "member_joined_channel", // Slack
+            "subscribe",             // Mailchimp
+        ] {
+            assert_eq!(sorted_into(event), Some(CREATE), "{event}");
+        }
+    }
+
+    /// Opening is a stage, not a birth; and a later verb or a subject word
+    /// still outranks a create word.
+    #[test]
+    fn near_misses_stay_out_of_create() {
+        assert_eq!(sorted_into("email.opened"), Some(LIFECYCLE)); // Resend
+        assert_eq!(sorted_into("review.opened"), Some(LIFECYCLE)); // Stripe
+        assert_eq!(sorted_into("form_submission.updated"), Some(UPDATE));
+        assert_eq!(sorted_into("api.key.created"), Some(SECURITY));
+        assert_eq!(sorted_into("app_mention"), None); // Slack
     }
 
     #[test]
