@@ -157,14 +157,27 @@ pub static FAMILIES: [EventFamily; 6] = [
         name: "Delete events",
         examples: "customer.deleted; file.removed",
         meaning: "Something was removed",
-        words: &["deleted", "delete", "removed", "remove", "destroyed", "destroy", "purged", "erased"],
+        words: &[
+            // gone outright
+            "deleted", "delete", "deletion", "destroyed", "destroy", "purged", "purge",
+            "erased", "erase", "trashed", "wiped",
+            // erased because the law or a person asked — Shopify's `customers/redact`
+            "redact", "redacted", "anonymized", "anonymised",
+            // taken out of a collection, the record itself surviving elsewhere
+            "removed", "remove", "unsubscribe", "unsubscribed", "cleaned", "leave", "left",
+            // withdrawn after being offered
+            "withdrawn", "retracted",
+        ],
         by_subject: false,
         asks: "deleting what is already gone is a success, not an error",
         kind: WebhookKind::DataPayload,
         kind_why: "a lookup would get a 404 for a deleted record, and the delivery would be dropped",
         job: None,
         what: "A record is gone at the provider: `customer.deleted`, `file.removed`. The body \
-               often carries only the id, since there is nothing left to describe.",
+               often carries only the id, since there is nothing left to describe. Two are \
+               owed rather than merely reported: Shopify's `customers/redact` and `shop/redact`, \
+               and HubSpot's `contact.privacyDeletion`, are a person's data-protection request to \
+               be erased. A job receiving one has to erase what it holds, not just note it.",
         why: "The one family where fetching first fails by design. A Notification hook looks the \
               record up by id, the provider answers 404 because it was deleted, and rn counts \
               the delivery as dropped — lookup failed, no run started. Delete events want a \
@@ -198,7 +211,8 @@ pub static FAMILIES: [EventFamily; 6] = [
             "escalated", "assigned", "unassigned", "resolved",
             // switched on, off, or put away
             "activated", "deactivated", "enabled", "disabled", "paused", "resumed", "suspended",
-            "opened", "closed", "reopened", "archived", "unarchived", "restored",
+            "opened", "closed", "reopened", "archived", "unarchived", "restored", "undeleted",
+            "recovered",
             // made public
             "published", "unpublished", "released", "deployed", "merged",
             // the calendar
@@ -618,6 +632,37 @@ mod tests {
         assert_eq!(sorted_into("form_submission.updated"), Some(UPDATE));
         assert_eq!(sorted_into("api.key.created"), Some(SECURITY));
         assert_eq!(sorted_into("app_mention"), None); // Slack
+    }
+
+    /// Real provider names that sorted as Unsorted before the delete list
+    /// covered noun forms, erasure requests and leaving a collection.
+    #[test]
+    fn provider_delete_names() {
+        for event in [
+            "contact.deletion",        // HubSpot
+            "contact.privacyDeletion", // HubSpot
+            "customers/redact",        // Shopify
+            "shop/redact",             // Shopify
+            "unsubscribe",             // Mailchimp
+            "cleaned",                 // Mailchimp
+            "user.unsubscribed",       // Intercom
+            "member_left_channel",     // Slack
+            "channel_left",            // Slack
+            "recording.trashed",       // Zoom
+            "deleteCard",              // Trello
+        ] {
+            assert_eq!(sorted_into(event), Some(DELETE), "{event}");
+        }
+    }
+
+    /// Coming back from deletion is a stage, not a deletion; and a subject word
+    /// still outranks a delete word.
+    #[test]
+    fn near_misses_stay_out_of_delete() {
+        assert_eq!(sorted_into("page.undeleted"), Some(LIFECYCLE)); // Notion
+        assert_eq!(sorted_into("recording.recovered"), Some(LIFECYCLE)); // Zoom
+        assert_eq!(sorted_into("api.key.deleted"), Some(SECURITY));
+        assert_eq!(sorted_into("customer.subscription.deleted"), Some(DELETE)); // Stripe
     }
 
     #[test]
