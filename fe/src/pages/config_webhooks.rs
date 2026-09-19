@@ -84,8 +84,9 @@ const SECRETS_IF_WRONG: &str = "A secret here that differs from the one given to
 const SORT_WHAT: &str = "Type any event name and see which board it lands on, and which word put \
     it there. The same function sorts every delivery on Monitor → Webhooks.";
 const SORT_WHY: &str = "A rule you can try is a rule you can argue with. The name is split into \
-    words on anything that is not a letter or digit, so rate_limit.hit is rate, limit, hit. \
-    Security and System words are looked for first, anywhere in the name — password.changed is a \
+    words on anything that is not a letter or digit, so rate_limit.hit is rate, limit, hit, and \
+    at a capital that follows a lowercase letter, so HubSpot's contact.propertyChange is contact, \
+    property, change. Security and System words are looked for first, anywhere in the name — password.changed is a \
     security event before it is an update. Then the last verb any other board knows decides, \
     reading from the end, so order.status.updated is an update rather than a lifecycle event on \
     the strength of status.";
