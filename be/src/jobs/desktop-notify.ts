@@ -57,7 +57,8 @@ import { existsSync } from "node:fs";
 import { outcome } from "./history.ts";
 import { PermanentFailure } from "./permanent.ts";
 import type { Job, JobContext, JobResult } from "./types.ts";
-import type { JobRun } from "../generated/wire.ts";
+import type { Delivery, JobRun } from "../generated/wire.ts";
+import { deliveryMessage } from "./delivery-message.ts";
 
 /**
  * Absolute, and checked rather than assumed.
@@ -103,10 +104,19 @@ export function findNotifySend(): string | undefined {
  * Exported for the tests: what a notification says is the whole product of this
  * job, and it should be checkable without a desktop.
  */
-export function buildNotification(cause: JobRun | undefined): {
+export function buildNotification(
+    cause: JobRun | undefined,
+    delivery?: Delivery,
+): {
     title: string;
     body: string;
 } {
+    // A webhook pointed straight at this job: no run to report, but a
+    // delivery that is very much not a test. See delivery-message.ts.
+    if (cause === undefined && delivery !== undefined) {
+        const { title, lines } = deliveryMessage(delivery);
+        return { title, body: lines.join("\n").slice(0, MAX_BODY) };
+    }
     if (cause === undefined) {
         // Run by hand, which is how you find out whether notifications work at
         // all. Saying it is a test matters: one that arrives looking like real
@@ -289,7 +299,8 @@ export const desktopNotify: Job = {
             "using notify-send. Wire it to a job with onChange or onFailure and it reports " +
             "what that job found: for arriving mail, the sender, the subject and the links.\n\n" +
             "Run by hand it sends a test notification saying so, which is how you check it " +
-            "reaches your screen before relying on it.",
+            "reaches your screen before relying on it. Named as a webhook's job, it reports " +
+            "the delivery: the event name and the hook it arrived on.",
         why:
             "The local answer to \"tell me\", where the notify job is the remote one. No " +
             "account, no service, no URL that is a bearer capability — and it appears over " +
@@ -376,6 +387,12 @@ export const desktopNotify: Job = {
                     "With no cause — you pressed Run now — it builds a test notification " +
                     "that says it is a test. One that arrives looking like real news and is " +
                     "not teaches you to distrust the next one.\n\n" +
+                    "Started by a webhook instead — a hook on Config → Jobs or Config → Webhooks that " +
+                    "names this job — there is no run to report either, and it is not a test: it " +
+                    "reports the delivery. The title is the event name and the hook it arrived " +
+                    "on, the body adds the provider's delivery id, and the delivery's own body " +
+                    "is left out on purpose — it is the provider's data, often other people's, " +
+                    "and a notification is a copy of it somewhere nobody chose.\n\n" +
                     "A colour wraps the body in Pango markup, and the body is escaped " +
                     "first, because it is mail somebody else composed. On this desktop the " +
                     "colour is inert — xfce4-notifyd renders bold and drops the foreground " +
@@ -458,7 +475,7 @@ export const desktopNotify: Job = {
             );
         }
 
-        const { title: plainTitle, body: plain } = buildNotification(ctx.cause);
+        const { title: plainTitle, body: plain } = buildNotification(ctx.cause, ctx.delivery);
         const title = `${prefix}${plainTitle}`;
 
         // The span is kept for the desktops that honour it — dunst and mako

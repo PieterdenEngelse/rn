@@ -108,10 +108,16 @@ fn blank(kind: WebhookKind, jobs: &[String]) -> Draft {
 /// A new draft made on one family's board: that family, and the kind the
 /// board recommends for it. Everything else starts as blank as anywhere else.
 pub(crate) fn blank_for(family: &EventFamily, jobs: &[String]) -> Draft {
-    Draft {
+    let mut draft = Draft {
         family: Some(family.id.clone()),
         ..blank(family.kind.clone(), jobs)
+    };
+    // Only when this install has it: a pre-selected job the backend does not
+    // know would be refused on save, for a choice the reader never made.
+    if let Some(job) = family.job.filter(|j| jobs.iter().any(|x| x == j)) {
+        draft.job = job.to_string();
     }
+    draft
 }
 
 /// Fill a draft from a stored webhook, so editing starts from what is live.

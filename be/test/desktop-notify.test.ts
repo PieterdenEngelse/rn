@@ -35,6 +35,16 @@ test("run by hand it says it is a test", () => {
     assert.match(n.body, /You pressed Run now/);
 });
 
+test("started by a webhook it reports the delivery, and is not a test", () => {
+    // A security event reported as "test notification — you pressed Run now"
+    // says nothing happened on exactly the delivery where something did.
+    const n = buildNotification(undefined, { event: "api.key.revoked", hook: "github-security", id: "d-42" });
+    assert.equal(n.title, "rn: api.key.revoked — via github-security");
+    assert.doesNotMatch(n.title + n.body, /test notification|Run now/);
+    assert.match(n.body, /POST \/api\/hooks\/github-security/);
+    assert.match(n.body, /delivery: d-42/);
+});
+
 test("it reports the sender, the subject and the links", () => {
     const n = buildNotification(
         run({

@@ -38,6 +38,7 @@ import { notifyMail } from "./notify-mail.ts";
 import { runJob } from "./run.ts";
 import { PermanentFailure } from "./permanent.ts";
 import type { Job, JobContext, JobResult } from "./types.ts";
+import { aboutOf } from "./delivery-message.ts";
 
 export const notifyAll: Job = {
     id: "notify-all",
@@ -239,7 +240,9 @@ export const notifyAll: Job = {
                     "have to open two others to find out which half did not happen.\n\n" +
                     "changed is true when at least one notifier reported a change. The " +
                     "summary carries how many were delivered, how many failed, and which job " +
-                    "the notification was about — manual when it was a test.",
+                    "the notification was about — manual when it was a test, and the hook when " +
+                    "a webhook started it. In that case each notifier is handed the same " +
+                    "delivery and reports the event, rather than sending a test message.",
             },
         ],
     },
@@ -271,8 +274,22 @@ export const notifyAll: Job = {
             if (!wanted) continue;
             try {
                 // The same cause this job was given, so each notifier describes
-                // the run that actually changed something rather than this one.
-                const result = await runJob(job, "change", ctx.cause);
+                // the run that actually changed something rather than this one —
+                // or, when a webhook started this, the same delivery, so each
+                // one describes the event rather than sending a test message.
+                //
+                // The children stay `change` runs even then. Recorded as
+                // `webhook` they would each count as a delivery of their own on
+                // Monitor → Webhooks, and one event would read as four.
+                const result = await runJob(
+                    job,
+                    "change",
+                    ctx.cause,
+                    {},
+                    ctx.delivery === undefined
+                        ? undefined
+                        : { payload: null, delivery: ctx.delivery },
+                );
                 if (result.changed) delivered += 1;
                 ctx.step("notified", { via: job.id, changed: result.changed });
             } catch (err) {
@@ -293,7 +310,7 @@ export const notifyAll: Job = {
             summary: {
                 delivered,
                 failed: failures.length,
-                about: ctx.cause?.jobId ?? "manual",
+                about: aboutOf(ctx.cause, ctx.delivery),
             },
             changed: delivered > 0,
         };

@@ -411,6 +411,15 @@ wire! {
         /// "pull_request", "invoice.paid".
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub event: Option<String>,
+        /// Which hook it arrived on — the `<id>` in `POST /api/hooks/<id>`.
+        ///
+        /// The one field here the listener fills rather than the sender, so it
+        /// is on every delivery recorded since it existed. It is what lets a
+        /// job that serves several hooks — a notifier is the case that asked
+        /// for it — say which one rang: "api.key.revoked" is half a sentence
+        /// without it. The path, never the host: see `WebhookInfo`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub hook: Option<String>,
         /// Headers the job declared it reads, by lowercase name, as they
         /// arrived.
         ///

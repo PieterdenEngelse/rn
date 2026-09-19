@@ -48,7 +48,9 @@ const MAKE_WHY: &str = "The kind is the decision the family actually drives. Not
     fetches the record by id when a delivery lands, Data payload hands the body straight to the \
     job, and Command routes on an action name. An update wants the fetch, because two edits can \
     arrive in either order; a delete cannot have it, because the record is gone and the lookup \
-    would 404. The other four start as Data payload, for the reason on each board.";
+    would 404. The other four start as Data payload, for the reason on each board. Security \
+    also starts with desktop-notify as its job, since a person should see those events at once; \
+    every other board leaves the job to you.";
 const MAKE_IF_WRONG: &str = "The recommendation is a starting point — the form offers all \
     three kinds and the provider decides what the body holds. A provider that sends only an id \
     for its create events needs Notification whatever this board says. A new hook refuses every \
@@ -402,6 +404,11 @@ fn FamilyBoard(
                 }
                 p { class: "text-gray-400 text-xs",
                     "{kind}, because {family.kind_why}."
+                    if let Some(job) = family.job {
+                        " Its job starts as "
+                        span { class: "font-mono", "{job}" }
+                        ", which reports the event and the hook, not the body."
+                    }
                 }
             }
         }

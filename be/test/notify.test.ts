@@ -124,6 +124,19 @@ test("a hand-run message says it is a test, in as many words", () => {
     assert.match(body, /Nothing changed/);
 });
 
+test("a webhook-started message names the event and the hook, and is not a test", () => {
+    const { title, body } = buildMessage(undefined, { event: "api.key.revoked", hook: "github-security", id: "d-42" });
+    assert.equal(title, "rn: api.key.revoked — via github-security");
+    assert.doesNotMatch(title + body, /test notification|Run now/);
+    assert.match(body, /delivery: d-42/);
+});
+
+test("a delivery with no event name still says it was a delivery", () => {
+    const { title, body } = buildMessage(undefined, { hook: "typeform" });
+    assert.equal(title, "rn: webhook delivery — via typeform");
+    assert.match(body, /event: \(none/);
+});
+
 test("a long trace is truncated, and says that it was", () => {
     const many = Array.from({ length: 100 }, (_, i) => ({
         name: "item",

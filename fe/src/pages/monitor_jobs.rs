@@ -1393,7 +1393,12 @@ fn trigger_cell(run: &JobRun) -> String {
     // event to name.
     if let Some(d) = run.delivery.as_ref() {
         if let Some(event) = d.event.as_ref() {
-            return format!("{} {event}", trigger_label(&run.trigger));
+            // The hook too when there is one: a notifier serving several hooks
+            // has runs whose event alone does not say where they came from.
+            return match d.hook.as_ref() {
+                Some(hook) => format!("{} {event} via {hook}", trigger_label(&run.trigger)),
+                None => format!("{} {event}", trigger_label(&run.trigger)),
+            };
         }
         if let Some(id) = d.id.as_ref() {
             // Truncated because a delivery id is a uuid and the column is not

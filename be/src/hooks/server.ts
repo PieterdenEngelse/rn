@@ -451,6 +451,7 @@ export function handle(deliveries: DeliveryLog, lookup: JobLookup = jobById) {
         const record: Delivery = {
             ...(deliveryId === undefined ? {} : { id: deliveryId }),
             ...(event === undefined ? {} : { event }),
+            hook: id,
             ...((): Partial<Delivery> => {
                 const headers = declared(cfg.headers, rawHeader);
                 return headers === undefined ? {} : { headers };

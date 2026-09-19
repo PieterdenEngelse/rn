@@ -43,6 +43,11 @@ pub struct EventFamily {
     /// and why. A starting point — the form still offers all three.
     pub kind: WebhookKind,
     pub kind_why: &'static str,
+    /// The job a webhook made on this board starts with selected, when one
+    /// job is the obvious answer for the whole family. `None` is most of them:
+    /// what a create event should do is yours to write, and pre-selecting the
+    /// first job in the list would be a guess dressed as advice.
+    pub job: Option<&'static str>,
     pub what: &'static str,
     pub why: &'static str,
     pub if_wrong: &'static str,
@@ -68,6 +73,7 @@ pub static FAMILIES: [EventFamily; 6] = [
         asks: "safe to run twice — a retried delivery is the same order again",
         kind: WebhookKind::DataPayload,
         kind_why: "the new record is in the body — there is nothing to go back for",
+        job: None,
         what: "A provider telling you a record now exists that did not before — a payment, an \
                order, an account. The verb is usually the last word of the name: \
                `payment.created`, `user.registered`. GitHub is the exception worth knowing: its \
@@ -98,6 +104,7 @@ pub static FAMILIES: [EventFamily; 6] = [
         asks: "act on the current state — two edits can arrive in either order",
         kind: WebhookKind::Notification,
         kind_why: "rn fetches the record when the delivery lands, so an older edit arriving late cannot win",
+        job: None,
         what: "Something that already existed changed: an invoice's amount, a subscription's \
                plan, an order's status. Usually `<noun>.updated` or `<noun>.changed`; some \
                providers name the field as well, as in `order.status.updated`, which is why the \
@@ -121,6 +128,7 @@ pub static FAMILIES: [EventFamily; 6] = [
         asks: "deleting what is already gone is a success, not an error",
         kind: WebhookKind::DataPayload,
         kind_why: "a lookup would get a 404 for a deleted record, and the delivery would be dropped",
+        job: None,
         what: "A record is gone at the provider: `customer.deleted`, `file.removed`. The body \
                often carries only the id, since there is nothing left to describe.",
         why: "The one family where fetching first fails by design. A Notification hook looks the \
@@ -148,6 +156,7 @@ pub static FAMILIES: [EventFamily; 6] = [
         asks: "one transition can arrive as two events — pick one to act on",
         kind: WebhookKind::DataPayload,
         kind_why: "the stage is in the name and the resource in the body",
+        job: None,
         what: "A resource moved to a new stage: a payment succeeded or failed, a shipment was \
                delivered, a trial expired. The noun stays the same across a whole family of \
                events and the verb names the stage — which is why this family has the longest \
@@ -172,20 +181,32 @@ pub static FAMILIES: [EventFamily; 6] = [
             "permissions", "role", "sso", "security", "suspicious", "fraud", "lockout", "locked",
         ],
         by_subject: true,
-        asks: "worth a person seeing now — route it to a notifier",
+        asks: "worth a person seeing now — a notifier can be its job",
         kind: WebhookKind::DataPayload,
         kind_why: "act on what arrived at once — a lookup is a second call that can fail at the worst moment",
+        job: Some("desktop-notify"),
         what: "Something happened to access itself: a login attempt, a password change, an API \
                key revoked. Recognised by the subject rather than the verb, and checked before \
                any verb, so `password.changed` is here rather than under Update and \
                `api.key.created` rather than under Create.",
-        why: "The events worth acting on quickly and worth a person seeing — a notifier job \
-              (desktop-notify, notify-mail) rather than a report nobody opens. They are also \
-              where a forged delivery would do the most harm, which is why every hook on the \
-              listener checks a signature or token and none accepts an unsigned delivery.",
+        why: "The events worth acting on quickly and worth a person seeing, so a hook made on \
+              this board starts with desktop-notify as its job: the delivery pops up on this \
+              screen, titled with the event name and the hook it arrived on — `rn: \
+              api.key.revoked — via github-security`. It needs no account, which is why it is \
+              the default; notify-mail and notify reach you away from the desk, and notify-all \
+              tries every one. What the message holds is what the listener recorded — event, \
+              hook, delivery id — and never the delivery's body, which is the provider's data \
+              and would leave the machine with mail. A job that wants a fact from the body in \
+              the message reads it, reports it, and names a notifier as its on-change handler. \
+              These are also where a forged delivery would do the most harm, which is why every \
+              hook on the listener checks a signature or token and none accepts an unsigned \
+              delivery.",
         if_wrong: "A revoked key a job goes on using until it fails, or a login from somewhere \
-                   unexpected that nobody hears about. A security event under Unsorted on \
-                   Monitor → Webhooks means its name uses a word this list does not have.",
+                   unexpected that nobody hears about. A notification that arrives saying \
+                   \"webhook delivery\" instead of an event name means the hook reads the wrong \
+                   header for this provider — set its event header. A security event under \
+                   Unsorted on Monitor → Webhooks means its name uses a word this list does not \
+                   have.",
     },
     EventFamily {
         id: WebhookFamily::System,
@@ -200,6 +221,7 @@ pub static FAMILIES: [EventFamily; 6] = [
         asks: "high volume — filter at the provider, not inside the job",
         kind: WebhookKind::DataPayload,
         kind_why: "high volume — a lookup per delivery doubles the cost of every burst",
+        job: None,
         what: "The provider talking about itself or about your account's limits: a server \
                raising an alarm, a quota exceeded, a rate limit hit. Recognised by words like \
                server, quota and rate anywhere in the name. GitHub's `ping`, sent once when a \

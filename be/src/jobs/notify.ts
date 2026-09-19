@@ -62,7 +62,8 @@
 import { outcome } from "./history.ts";
 import type { Job, JobContext, JobResult } from "./types.ts";
 import { PermanentFailure, isPermanentStatus } from "./permanent.ts";
-import type { JobRun } from "../generated/wire.ts";
+import type { Delivery, JobRun } from "../generated/wire.ts";
+import { aboutOf, deliveryMessage } from "./delivery-message.ts";
 
 /** The body shapes, and what each one is for. */
 const FORMATS = ["text", "slack", "discord"] as const;
@@ -105,7 +106,16 @@ function stepLine(name: string, detail: Record<string, unknown>): string {
  * Exported for the tests: what a notification says is the whole product of this
  * job, and it should be checkable without a network.
  */
-export function buildMessage(cause: JobRun | undefined): { title: string; body: string } {
+export function buildMessage(
+    cause: JobRun | undefined,
+    delivery?: Delivery,
+): { title: string; body: string } {
+    // A webhook pointed straight at this job. See delivery-message.ts for why
+    // the delivery's body is not in the message.
+    if (cause === undefined && delivery !== undefined) {
+        const { title, lines } = deliveryMessage(delivery);
+        return { title, body: lines.join("\n") };
+    }
     if (cause === undefined) {
         // Run by hand rather than by a change — which is how you find out
         // whether the URL works, and the first thing anyone does after setting
@@ -297,6 +307,12 @@ export const notify: Job = {
                     "With no cause — you pressed Run now — it builds a test message that " +
                     "says so. That is the first thing anyone does after setting the URL, and " +
                     "a test that looks like real news teaches you to distrust the next one.\n\n" +
+                    "Started by a webhook instead — a hook on Config → Jobs or Config → Webhooks that " +
+                    "names this job — there is no run to report either, and it is not a test: it " +
+                    "reports the delivery. The title is the event name and the hook it arrived " +
+                    "on, the body adds the provider's delivery id, and the delivery's own body " +
+                    "is left out on purpose — it is the provider's data, often other people's, " +
+                    "and a notification is a copy of it somewhere nobody chose.\n\n" +
                     "The values in it were scrubbed of every configured secret by the runner " +
                     "before the record was built, so a job that logged its own token has not " +
                     "published it here. That protects against the accident. Nothing protects " +
@@ -388,14 +404,14 @@ export const notify: Job = {
             );
         }
 
-        const message = buildMessage(ctx.cause);
+        const message = buildMessage(ctx.cause, ctx.delivery);
         const request = requestFor(format as Format, message);
 
         const summary = {
             format,
             // The triggering job, so the record says what this notification was
             // about. `manual` when there is none, which is the test send.
-            about: ctx.cause?.jobId ?? "manual",
+            about: aboutOf(ctx.cause, ctx.delivery),
             bytes: request.body.length,
             steps: ctx.cause?.steps.length ?? 0,
         };

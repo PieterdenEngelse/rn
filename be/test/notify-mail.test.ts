@@ -37,6 +37,14 @@ test("run by hand it says it is a test", () => {
     assert.match(body, /test message/i);
 });
 
+test("started by a webhook it mails the event and the hook, never a test message", () => {
+    const { subject, body } = buildMail(undefined, { event: "api.key.revoked", hook: "github-security", id: "d-42" });
+    assert.equal(subject, "rn: api.key.revoked — via github-security");
+    assert.doesNotMatch(subject + body, /test notification|Run now/);
+    // The payload is the provider's data and this mail leaves the machine.
+    assert.match(body, /body of the delivery is not included/);
+});
+
 test("the subject carries the run's headline, which is where the changed words are", () => {
     const { subject } = buildMail(
         run({

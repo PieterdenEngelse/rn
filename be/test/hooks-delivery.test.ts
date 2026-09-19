@@ -317,6 +317,8 @@ test("a signed form-encoded delivery is accepted and recorded", async (t) => {
     assert.ok(run !== undefined, "the delivery should have produced a run record");
     assert.equal(run.trigger, "webhook");
     assert.equal(run.delivery?.event, "ping");
+    // Filled by the listener, not the sender: which hook rang.
+    assert.equal(run.delivery?.hook, "demo");
     // Declared by the demo job, so recorded.
     assert.equal(run.delivery?.headers?.["content-type"], "application/x-www-form-urlencoded");
     assert.equal(run.delivery?.query?.["source"], "test-suite");

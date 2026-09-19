@@ -41,7 +41,8 @@ import { smtpTransport } from "../mail/smtp.ts";
 import { assertAllowedRecipients } from "./send-mail.ts";
 import { PermanentFailure } from "./permanent.ts";
 import type { Job, JobContext, JobResult } from "./types.ts";
-import type { JobRun } from "../generated/wire.ts";
+import type { Delivery, JobRun } from "../generated/wire.ts";
+import { aboutOf, deliveryMessage } from "./delivery-message.ts";
 
 /** Steps kept in the body. Enough to see what happened, short of a log dump. */
 const MAX_STEPS = 20;
@@ -62,7 +63,16 @@ function outcome(run: JobRun): string {
  * Exported for the tests: what a notification says is the whole product of
  * this job, and it should be checkable without a mail server.
  */
-export function buildMail(cause: JobRun | undefined): { subject: string; body: string } {
+export function buildMail(
+    cause: JobRun | undefined,
+    delivery?: Delivery,
+): { subject: string; body: string } {
+    // A webhook pointed straight at this job. See delivery-message.ts for why
+    // the delivery's body is not in the mail.
+    if (cause === undefined && delivery !== undefined) {
+        const { title, lines } = deliveryMessage(delivery);
+        return { subject: title.slice(0, 200), body: lines.join("\n") };
+    }
     if (cause === undefined) {
         // Run by hand, which is how somebody checks the account works before
         // relying on it. Saying it is a test matters: one that arrives looking
@@ -221,6 +231,12 @@ export const notifyMail: Job = {
                     "Run by hand, with no triggering run, it builds a test message that says it " +
                     "is a test. One that arrived looking like real news would teach you to " +
                     "distrust the next one.\n\n" +
+                    "Started by a webhook — a hook on Config → Jobs or Config → Webhooks that " +
+                    "names this job — there is no triggering run either, and it is not a test: " +
+                    "the subject is the event name and the hook it arrived on, and the body adds " +
+                    "the provider's delivery id. The delivery's own body is left out on purpose. " +
+                    "It is the provider's data, often other people's, and this mail leaves the " +
+                    "machine.\n\n" +
                     "Every value in it was scrubbed of configured secrets by the runner before " +
                     "the record was built, so a job that logged its own token has not mailed it " +
                     "to anybody.",
@@ -282,10 +298,10 @@ export const notifyMail: Job = {
             );
         }
 
-        const { subject, body } = buildMail(ctx.cause);
+        const { subject, body } = buildMail(ctx.cause, ctx.delivery);
         const summary = {
             to,
-            about: ctx.cause?.jobId ?? "manual",
+            about: aboutOf(ctx.cause, ctx.delivery),
             subject,
             bytes: body.length,
         };
