@@ -26,8 +26,10 @@ use crate::api::{
 };
 use crate::components::event_families::{family as family_row, EventFamily, FAMILIES};
 use crate::components::param::PARAM_INPUT_ROW_CLASS;
+use crate::app::Route;
 use crate::components::{GlossaryEntry, InfoButton, Panel};
 use dioxus::prelude::*;
+use dioxus_router::Link;
 
 const TEXT_INPUT: &str =
     "bg-gray-900 border border-gray-600 rounded px-2 py-1 text-gray-200 text-xs w-72";
@@ -553,6 +555,22 @@ pub fn WebhookTile() -> Element {
                         // rather than as a measure. The cost is the long line
                         // that rule exists to prevent, taken knowingly here.
                         p { class: "text-gray-300 leading-relaxed", "{TILE_BODY}" }
+                        // The other door to the same store. Said here because
+                        // two pages that make one thing without mentioning
+                        // each other read as two different things.
+                        p { class: "text-gray-300 leading-relaxed",
+                            "The six boards on "
+                            Link {
+                                to: Route::ConfigWebhooks {},
+                                class: "text-blue-400 hover:text-blue-300",
+                                "Config → Webhooks"
+                            }
+                            " make these same webhooks, one board per family of provider event, \
+                             each opening this form with the kind that family needs already \
+                             chosen. A hook made here is listed there too — on its family's \
+                             board, or under Unfiled when it has none — and editing it on either \
+                             page edits the one record."
+                        }
 
                         Listener { listening: r.listening, port: r.port }
 

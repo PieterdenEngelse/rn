@@ -14,7 +14,9 @@
 //! `components/event_families.rs`, shared with Monitor → Webhooks — which is
 //! the same six boards counting what actually arrived.
 
-use crate::api::{delete_webhook, fetch_webhooks, save_webhook, Webhook, WebhooksResponse};
+use crate::api::{
+    delete_webhook, fetch_webhooks, save_webhook, Webhook, WebhookFamily, WebhooksResponse,
+};
 use crate::app::Route;
 use crate::components::event_families::{sort, EventFamily, FAMILIES};
 use crate::components::param::{PARAM_BOARD_BASE_CLASS, PARAM_BOARD_TITLE_CLASS, PARAM_TEXT_INPUT_CLASS};
@@ -56,8 +58,21 @@ const MAKE_IF_WRONG: &str = "The recommendation is a starting point — the form
     for its create events needs Notification whatever this board says. A new hook refuses every \
     delivery until its signing secret is set, in the Signing secrets panel below.";
 
-const SECRETS_WHAT: &str = "The signing secret for each webhook made on these boards: set or not \
-    set, and a box to set it. Never the value.";
+const SECRETS_WHAT: &str = "The signing secret for each webhook on this page — on a board or \
+    unfiled: set or not set, and a box to set it. Never the value.";
+
+const UNFILED_WHAT: &str = "Webhooks made on the page with no event family: made on Config → \
+    Jobs with the family left at none, or made before the boards existed. They are live and \
+    answer deliveries exactly like the hooks on the boards; they are only not filed under one.";
+const UNFILED_WHY: &str = "Without this row the boards would be a partial list that looked like \
+    a whole one — a hook made on Config → Jobs would simply be absent here, which reads as \
+    missing rather than as not filed. Picking a family files it: the hook is saved with that \
+    family and moves onto the board, with nothing else about it changed.";
+const UNFILED_IF_WRONG: &str = "Filing changes nothing at the listener — the family is never read \
+    when a delivery arrives — so a hook filed under the wrong board runs as before and is only \
+    listed in the wrong place. Monitor → Webhooks' Made for and Sorted as columns show when a \
+    hook's family and its actual events disagree. Hooks declared in a job file are not here or \
+    on any board: they are code, shown on their job's card on Config → Jobs.";
 const SECRETS_WHY: &str = "Every delivery must be signed with this secret, and there is no \
     unsigned mode, so a hook whose secret is not set refuses everything. The provider sees a 401 \
     in its own delivery log, and that log is the only place it shows — which is why the box sits \
@@ -98,16 +113,15 @@ pub fn ConfigWebhooks() -> Element {
     };
     let jobs: Vec<String> = resp.as_ref().map(|r| r.jobs.clone()).unwrap_or_default();
     let at_limit = resp.as_ref().is_some_and(|r| (r.webhooks.len() as f64) >= r.max);
-    // The credentials the board-made hooks sign with, for the secrets panel.
+    // The credentials every hook on this page signs with — the boards' and the
+    // unfiled ones' — for the secrets panel.
     let mut credentials: Vec<String> = resp
         .as_ref()
-        .map(|r| {
-            r.webhooks
-                .iter()
-                .filter(|w| w.def.family.is_some())
-                .map(|w| w.def.credential.clone())
-                .collect()
-        })
+        .map(|r| r.webhooks.iter().map(|w| w.def.credential.clone()).collect())
+        .unwrap_or_default();
+    let unfiled: Vec<Webhook> = resp
+        .as_ref()
+        .map(|r| r.webhooks.iter().filter(|w| w.def.family.is_none()).cloned().collect())
         .unwrap_or_default();
     credentials.sort();
     credentials.dedup();
@@ -223,6 +237,37 @@ pub fn ConfigWebhooks() -> Element {
                 }
             }
 
+            if resp.is_some() {
+                Unfiled {
+                    hooks: unfiled,
+                    busy: busy(),
+                    on_file: move |(w, family): (Webhook, WebhookFamily)| {
+                        busy.set(true);
+                        spawn(async move {
+                            // The stored definition with one field changed —
+                            // not a draft rebuilt from it, so nothing else
+                            // about the hook can shift on the way through.
+                            let mut def = w.def.clone();
+                            def.family = Some(family);
+                            match save_webhook(Some(&w.def.id), &def).await {
+                                Ok(r) if r.ok => errors.write().clear(),
+                                Ok(r) => errors.set(r.errors),
+                                Err(e) => errors.set(vec![e]),
+                            }
+                            busy.set(false);
+                            reload += 1;
+                        });
+                    },
+                    on_edit: {
+                        let jobs = jobs.clone();
+                        move |w: Webhook| {
+                            errors.write().clear();
+                            draft.set(Some(from_webhook(&w, &jobs)));
+                        }
+                    },
+                }
+            }
+
             if at_limit {
                 p { class: "text-amber-400 text-xs",
                     "The webhook limit is reached, so no board can make another. Past it, an \
@@ -274,7 +319,7 @@ pub fn ConfigWebhooks() -> Element {
             if !credentials.is_empty() {
                 Panel {
                     title: "Signing secrets".to_string(),
-                    subtitle: Some("for the webhooks made on these boards".to_string()),
+                    subtitle: Some("for every webhook on this page".to_string()),
                     info: Some(rsx! {
                         InfoButton {
                             title: "Signing secrets".to_string(),
@@ -408,6 +453,85 @@ fn FamilyBoard(
                         " Its job starts as "
                         span { class: "font-mono", "{job}" }
                         ", which reports the event and the hook, not the body."
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The page-made webhooks no board lists, and a way to file each one.
+///
+/// Always drawn, even empty: "every hook is on a board" is a statement worth
+/// making, and a row that appears only when there is something wrong teaches
+/// nobody that the row exists.
+#[component]
+fn Unfiled(
+    hooks: Vec<Webhook>,
+    busy: bool,
+    on_file: EventHandler<(Webhook, WebhookFamily)>,
+    on_edit: EventHandler<Webhook>,
+) -> Element {
+    rsx! {
+        Panel {
+            title: "Unfiled".to_string(),
+            subtitle: Some(match hooks.len() {
+                0 => "every webhook made on the page is on a board".to_string(),
+                1 => "1 webhook with no event family".to_string(),
+                n => format!("{n} webhooks with no event family"),
+            }),
+            info: Some(rsx! {
+                InfoButton {
+                    title: "Unfiled webhooks".to_string(),
+                    what: UNFILED_WHAT.to_string(),
+                    why: UNFILED_WHY.to_string(),
+                    if_wrong: UNFILED_IF_WRONG.to_string(),
+                }
+            }),
+            if hooks.is_empty() {
+                p { class: "text-gray-400",
+                    "A webhook made on "
+                    Link { to: Route::ConfigJobs {}, class: "text-blue-400 hover:text-blue-300", "Config → Jobs" }
+                    " without a family would be listed here until it is filed."
+                }
+            }
+            for w in hooks.iter() {
+                div { key: "{w.def.id}", class: "flex items-center gap-3 flex-wrap text-xs",
+                    span { class: "text-gray-200", "{w.def.label}" }
+                    span { class: "text-gray-400", "{kind_label(&w.def.kind)}" }
+                    span { class: "font-mono text-gray-300", "{w.route}" }
+                    if !w.secret_set {
+                        span { class: "text-red-400", "secret {w.def.credential} not set" }
+                    }
+                    select {
+                        class: "bg-gray-900 border border-gray-600 rounded px-2 py-1 text-gray-200 text-xs",
+                        // A select rather than six buttons: filing is one
+                        // choice among six, and the row stays one line.
+                        onchange: {
+                            let w = w.clone();
+                            move |evt: Event<FormData>| {
+                                if busy {
+                                    return;
+                                }
+                                let v = evt.value();
+                                if let Some(f) = FAMILIES.iter().find(|f| f.name == v) {
+                                    on_file.call((w.clone(), f.id.clone()));
+                                }
+                            }
+                        },
+                        option { value: "", selected: true, "File under…" }
+                        for f in FAMILIES.iter() {
+                            option { key: "{f.name}", value: "{f.name}", "{f.name}" }
+                        }
+                    }
+                    button {
+                        class: "cursor-pointer hover:underline bg-transparent border-0 p-0",
+                        style: "color: #22d3ee;",
+                        onclick: {
+                            let w = w.clone();
+                            move |_| on_edit.call(w.clone())
+                        },
+                        "Edit"
                     }
                 }
             }
