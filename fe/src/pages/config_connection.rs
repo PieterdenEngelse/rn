@@ -7,6 +7,7 @@ use crate::components::webhooks::CredentialsBoard;
 use crate::pages::config::ParamBlock;
 use std::collections::BTreeMap;
 use crate::app::Route;
+use crate::components::event_families::FAMILIES;
 use crate::components::{GlossaryEntry, InfoButton, Panel, PanelTab};
 use dioxus::prelude::*;
 use dioxus_router::Link;
@@ -799,37 +800,12 @@ fn Integrations(
 /// should be written.
 #[component]
 fn EventGroups() -> Element {
-    // Category, examples, meaning. A `Type` column stood in the source of this
-    // table, holding each category's name again as a link; it is dropped here
-    // rather than rendered as a column of duplicates.
-    let rows: [(&str, &str, &str); 6] = [
-        (
-            "Create events",
-            "payment.created; order.created; user.registered",
-            "Something new was created",
-        ),
-        (
-            "Update events",
-            "invoice.updated; subscription.changed; order.status.updated",
-            "Something changed",
-        ),
-        ("Delete events", "customer.deleted; file.removed", "Something was removed"),
-        (
-            "Lifecycle events",
-            "payment.succeeded; payment.failed; shipment.delivered",
-            "Resource moved through a stage",
-        ),
-        (
-            "Security events",
-            "login.attempt; password.changed; api.key.revoked",
-            "Security-related action occurred",
-        ),
-        (
-            "System events",
-            "server.alert; quota.exceeded; rate_limit.hit",
-            "System behaviour or internal alert",
-        ),
-    ];
+    // Category, examples, meaning — read from the one table the two Webhooks
+    // pages use too. A `Type` column stood in the source of this table,
+    // holding each category's name again as a link; it is dropped rather
+    // than rendered as a column of duplicates.
+    let rows: Vec<(&str, &str, &str)> =
+        FAMILIES.iter().map(|f| (f.name, f.examples, f.meaning)).collect();
 
     rsx! {
         p { class: "text-gray-200 leading-relaxed max-w-3xl",
@@ -878,6 +854,21 @@ fn EventGroups() -> Element {
                  high-volume family: a rate-limit event that fires in a loop is a delivery every \
                  few seconds, which is the case for filtering at the webhook rather than inside \
                  the job."
+            }
+            p { class: "text-gray-200 leading-relaxed",
+                "Each family has a board of its own, with the words that sort a name into it, on "
+                Link {
+                    to: Route::ConfigWebhooks {},
+                    class: "text-blue-400 hover:text-blue-300",
+                    "Config → Webhooks"
+                }
+                " — and what has actually arrived, counted by family, is on "
+                Link {
+                    to: Route::MonitorWebhooks {},
+                    class: "text-blue-400 hover:text-blue-300",
+                    "Monitor → Webhooks"
+                }
+                "."
             }
         }
     }

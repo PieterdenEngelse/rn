@@ -65,6 +65,7 @@ fn sections() -> Vec<Section> {
                 SubNavItem { label: "Connection", route: Route::MonitorConnection {} },
                 SubNavItem { label: "Mail", route: Route::MonitorMail {} },
                 SubNavItem { label: "Links", route: Route::MonitorLinks {} },
+                SubNavItem { label: "Webhooks", route: Route::MonitorWebhooks {} },
             ],
         },
         Section {
@@ -77,6 +78,7 @@ fn sections() -> Vec<Section> {
                 SubNavItem { label: "Jobs", route: Route::ConfigJobs {} },
                 SubNavItem { label: "Mail", route: Route::ConfigMail {} },
                 SubNavItem { label: "Watching", route: Route::ConfigWatching {} },
+                SubNavItem { label: "Webhooks", route: Route::ConfigWebhooks {} },
             ],
         },
     ]

@@ -1,9 +1,9 @@
 use crate::components::header::Header;
 use crate::components::SubNav;
 use crate::pages::{
-    Config, ConfigConnection, ConfigJobs, ConfigMail, ConfigWatching, Home, MonitorConnection,
-    MonitorJobs, MonitorLinks,
-    MonitorLinksSend, MonitorMail, MonitorRuntime, PageNotFound,
+    Config, ConfigConnection, ConfigJobs, ConfigMail, ConfigWatching, ConfigWebhooks, Home,
+    MonitorConnection, MonitorJobs, MonitorLinks, MonitorLinksSend, MonitorMail, MonitorRuntime,
+    MonitorWebhooks, PageNotFound,
 };
 use dioxus::prelude::*;
 use dioxus_router::{Outlet, Routable, Router};
@@ -40,6 +40,12 @@ pub enum Route {
         MonitorMail {},
         #[route("/monitor/links")]
         MonitorLinks {},
+        // What has arrived at the hooks listener, sorted into the six event
+        // families Config → Webhooks explains. Its own page rather than a
+        // board on Monitor → Jobs, because the question is "what is this
+        // provider sending me", which cuts across every job a hook can start.
+        #[route("/monitor/webhooks")]
+        MonitorWebhooks {},
         // The arrivals on one send, addressable. A page whose whole job is
         // evidence has to be linkable: a detail that lives only in a signal
         // cannot be reloaded, cannot be sent to the person asking about the
@@ -71,6 +77,12 @@ pub enum Route {
         // "ignore the footer clock on this one page".
         #[route("/config/watching")]
         ConfigWatching {},
+        // The six families a provider's event names fall into. Nothing on it
+        // is a setting — the hooks are made on Config → Jobs — but which
+        // family a provider sends decides how a hook and its job should be
+        // set up, and that is decided here, before the first delivery.
+        #[route("/config/webhooks")]
+        ConfigWebhooks {},
         #[route("/:..segments")]
         PageNotFound { segments: Vec<String> },
 }
