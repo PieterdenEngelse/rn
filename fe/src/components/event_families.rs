@@ -175,10 +175,29 @@ pub static FAMILIES: [EventFamily; 6] = [
         name: "Security events",
         examples: "login.attempt; password.changed; api.key.revoked",
         meaning: "Security-related action occurred",
+        // Grouped by what the word is evidence of. Some words that look like
+        // they belong are left out on purpose, because they appear in other
+        // families' names too: "suspended" (a subscription can be suspended
+        // for billing), "authorization" (a card payment is authorised),
+        // "block" (Notion's content blocks), and "team" and "organization"
+        // (GitHub sends both when a name or description is edited).
         words: &[
-            "login", "logout", "signin", "password", "passwd", "mfa", "2fa", "otp", "token",
-            "key", "secret", "credential", "credentials", "auth", "oauth", "permission",
-            "permissions", "role", "sso", "security", "suspicious", "fraud", "lockout", "locked",
+            // signing in, and the sessions that result
+            "login", "logout", "signin", "session", "sessions", "authentication",
+            // the secrets a person holds
+            "password", "passwd", "mfa", "2fa", "otp", "totp", "webauthn", "passkey",
+            // the secrets software holds
+            "token", "tokens", "key", "keys", "secret", "credential", "credentials", "auth",
+            "oauth",
+            // who may do what
+            "permission", "permissions", "role", "roles", "sso", "member", "members",
+            "membership", "invite", "invited", "invitation",
+            // an account locked or banned
+            "lockout", "locked", "lock", "unlock", "unlocked", "ban", "banned",
+            // the provider suspects something
+            "security", "suspicious", "fraud", "breach", "compromised", "leaked",
+            // the code or its dependencies are unsafe
+            "vulnerability", "vulnerabilities", "advisory", "dependabot", "scanning", "cve",
         ],
         by_subject: true,
         asks: "worth a person seeing now — a notifier can be its job",
@@ -332,6 +351,41 @@ mod tests {
     fn subject_outranks_verb() {
         assert_eq!(sorted_into("api.key.created"), Some(SECURITY));
         assert_eq!(sorted_into("password.changed"), Some(SECURITY));
+    }
+
+    /// Real provider names that sorted as Unsorted, or as System on the strength
+    /// of their last word, before the security list covered
+    /// sessions, membership, locking and vulnerability reports.
+    #[test]
+    fn provider_security_names() {
+        for event in [
+            "user.session.start",                // Okta
+            "session.created",                   // Clerk
+            "user.account.update_password",      // Okta
+            "user.account.lock",                 // Okta
+            "member",                            // GitHub
+            "membership",                        // GitHub
+            "deploy_key",                        // GitHub
+            "secret_scanning_alert",             // GitHub
+            "dependabot_alert",                  // GitHub
+            "code_scanning_alert",               // GitHub
+            "repository_vulnerability_alert",    // GitHub
+            "security_advisory",                 // GitHub
+            "radar.early_fraud_warning.created", // Stripe
+        ] {
+            assert_eq!(sorted_into(event), Some(SECURITY), "{event}");
+        }
+    }
+
+    /// The words left out of the security list on purpose stay where their
+    /// verb puts them, and a system event with no security word is still one.
+    #[test]
+    fn near_misses_stay_out_of_security() {
+        assert_eq!(sorted_into("server.alert"), Some(SYSTEM));
+        assert_eq!(sorted_into("organization"), None);
+        assert_eq!(sorted_into("team.renamed"), Some(UPDATE));
+        assert_eq!(sorted_into("block.updated"), Some(UPDATE));
+        assert_eq!(sorted_into("issuing_authorization.created"), Some(CREATE));
     }
 
     #[test]
