@@ -560,21 +560,21 @@ fn flow_stages() -> Vec<JobStage> {
              purpose: it creates state, and a link, a prefetch or a preview should not be able \
              to.\n\nThe backend refuses here, before any browser leaves the page, if the client \
              ID or secret is unset, if the scopes hold anything outside letters, digits and \
-             `: _ . / -`, or if the API is bound to a non-loopback address — there is no \
+             : _ . / -, or if the API is bound to a non-loopback address — there is no \
              redirect to offer in that last case, and the board says which bind address caused \
-             it.\n\nOtherwise it makes two random 32-byte values, base64url: `state`, and a \
-             PKCE `code_verifier`. It remembers them in memory against the provider, the exact \
+             it.\n\nOtherwise it makes two random 32-byte values, base64url: state, and a \
+             PKCE code_verifier. It remembers them in memory against the provider, the exact \
              redirect URI, the scopes and the page to return to, and answers with a URL.",
         ),
         stage(
             "The authorize URL",
             "What the browser carries to the provider, parameter by parameter.",
-            "`response_type=code`, always — Google refuses an authorize request without it and \
-             GitHub assumes it. `client_id`. `redirect_uri`, the exact loopback URL the callback \
-             will arrive on, because the provider compares it again at the exchange. `scope`, \
-             normalised to space-separated. `state`. `code_challenge`, the SHA-256 of the \
-             verifier, base64url, with `code_challenge_method=S256`.\n\nThen whatever that \
-             provider wants of its own: Google gets `access_type=offline` and `prompt=consent`, \
+            "response_type=code, always — Google refuses an authorize request without it and \
+             GitHub assumes it. client_id. redirect_uri, the exact loopback URL the callback \
+             will arrive on, because the provider compares it again at the exchange. scope, \
+             normalised to space-separated. state. code_challenge, the SHA-256 of the \
+             verifier, base64url, with code_challenge_method=S256.\n\nThen whatever that \
+             provider wants of its own: Google gets access_type=offline and prompt=consent, \
              without which it returns an access token that dies in an hour and no refresh token \
              — a sign-in that looks fine and is dead by lunchtime.\n\nThe client secret is not \
              in this URL and never is. It goes to the token endpoint, from the backend, over \
@@ -589,23 +589,23 @@ fn flow_stages() -> Vec<JobStage> {
              the property that makes a sign-in better than a password in a box.\n\nYou can \
              narrow the scopes here, and providers let you: what is granted is what the consent \
              screen agreed to, not what was asked for. That is why the board reports granted \
-             scopes separately, and why mail checks for `https://mail.google.com/` among them \
+             scopes separately, and why mail checks for https://mail.google.com/ among them \
              rather than assuming the sign-in asked for it.\n\nDeclining is an ordinary answer. \
-             The provider sends the browser back with `error=access_denied` instead of a code, \
+             The provider sends the browser back with error=access_denied instead of a code, \
              and the panel records it in words rather than as a failure to debug.",
         ),
         stage(
             "The redirect back",
             "GET http://127.0.0.1:<API port>/api/oauth/:id/callback?code=…&state=…",
             "This is the hop the flow was once ruled out for. It is an inbound unsigned GET — \
-             but not from the internet. The provider redirects the *browser*, and the browser is \
+             but not from the internet. The provider redirects the browser itself, and the browser is \
              on this machine, so the request comes from loopback to the API listener the page \
              already talks to. RFC 8252 is the standard for exactly this shape. The hooks \
              listener, whose safety is that it verifies a signature on every call, is \
              untouched.\n\nWhat a loopback callback does add is one caller the API did not have: \
              a web page in this browser can navigate to it. It could not read the answer, but it \
-             could hand rn a code for *its own* account, and every job would then run as \
-             someone else — login CSRF. `state` is the answer: the value has to be one this \
+             could hand rn a code for its own account, and every job would then run as \
+             someone else — login CSRF. state is the answer: the value has to be one this \
              process issued, it is spent the moment it is looked up, whatever happens next, and \
              it expires after ten minutes. A callback rn did not start is refused with a short \
              plain-text page, and is deliberately not recorded as an attempt — a page that could \
@@ -616,13 +616,13 @@ fn flow_stages() -> Vec<JobStage> {
         stage(
             "Exchange the code",
             "An outbound POST to the provider's token endpoint — the direction that always worked.",
-            "Form-encoded: `grant_type=authorization_code`, the `code`, the `client_id` and \
-             `client_secret`, the same `redirect_uri` the authorize URL carried, and the \
-             `code_verifier` — the value whose hash went out at the start and which has not left \
+            "Form-encoded: grant_type=authorization_code, the code, the client_id and \
+             client_secret, the same redirect_uri the authorize URL carried, and the \
+             code_verifier — the value whose hash went out at the start and which has not left \
              this process. A code intercepted on the way back is useless without \
-             it.\n\n`accept: application/json` is not optional: without it GitHub answers \
+             it.\n\naccept: application/json is not optional: without it GitHub answers \
              form-encoded and every field reads as absent. GitHub also answers a refused \
-             exchange with **200** and an `error` field, so the body is read either way rather \
+             exchange with 200 and an error field, so the body is read either way rather \
              than trusting the status. Fifteen seconds, then the attempt is abandoned; a \
              runtime that refuses the outbound call is named with the host to allow.",
         ),
@@ -631,11 +631,11 @@ fn flow_stages() -> Vec<JobStage> {
             "Into an ordinary credential — not a second store.",
             "The access token is written with the same writer the credentials board uses: into \
              this process's environment first, which is what arms redaction before the value \
-             touches disk, then into ~/.config/rn/credentials. So `ctx.secret(\"githubToken\")` \
+             touches disk, then into ~/.config/rn/credentials. So ctx.secret(\"githubToken\") \
              does not know or care that a sign-in filled it, and no job changed to gain \
              one.\n\nA refresh token, where the provider sends one, goes to its own credential \
-             beside it. A *sign-in* that returns none clears any old one, because it belonged to \
-             a grant this one replaced; a *refresh* that returns none keeps the one it used, \
+             beside it. A sign-in that returns none clears any old one, because it belonged to \
+             a grant this one replaced; a refresh that returns none keeps the one it used, \
              because that provider simply is not rotating.\n\nWhat is not secret — when it was \
              connected, the account, the granted scopes, the expiries — goes to a small JSON \
              file beside it. Nothing the page can read ever carries the token itself.",
@@ -653,23 +653,23 @@ fn flow_stages() -> Vec<JobStage> {
         stage(
             "Back to the page",
             "303 to the board the sign-in started from.",
-            "The return address was taken from the start request's `Origin` and kept with the \
+            "The return address was taken from the start request's Origin and kept with the \
              pending flow — and only if that origin is one the API already trusts: the CORS list, \
              or the API's own address in a packaged install. Anything else falls back to a \
              relative path. Taking a return address from a request unchecked would make this \
-             callback an open redirect.\n\nThe answer carries `cache-control: no-store`, and the \
+             callback an open redirect.\n\nThe answer carries cache-control: no-store, and the \
              URL that carried the code is spent by the time the browser follows it.",
         ),
         stage(
             "Use it in a run",
             "The job reads a credential, as it always did.",
-            "`ctx.secret` is synchronous and stays so: it reads the value the sign-in wrote and \
+            "ctx.secret is synchronous and stays so: it reads the value the sign-in wrote and \
              knows nothing about OAuth. A job declares the credential by name, and the Jobs page \
              says whether it is set.\n\nWhere two routes are possible the job declares a choice \
-             instead — `credentialsAnyOf` — and the three mail jobs do: an app password or the \
+             instead — credentialsAnyOf — and the three mail jobs do: an app password or the \
              Google token. Gmail will not take a token as a password, so the mail code sends it \
              through XOAUTH2 instead, and only when the sign-in granted \
-             `https://mail.google.com/`. A token minted for Drive is a perfectly good token that \
+             https://mail.google.com/. A token minted for Drive is a perfectly good token that \
              Gmail refuses, and being told that by name beats being told \"invalid \
              credentials\".",
         ),
@@ -679,7 +679,7 @@ fn flow_stages() -> Vec<JobStage> {
             "The runner calls into the OAuth module with the credentials the job declared, \
              before it starts. A token more than five minutes from expiry is left alone. One \
              inside that margin is renewed with the refresh token — the same token endpoint, \
-             `grant_type=refresh_token` — and the new values are stored exactly as a sign-in's \
+             grant_type=refresh_token — and the new values are stored exactly as a sign-in's \
              are.\n\nOnce, under a per-provider lock: two jobs starting at the same moment \
              would otherwise each spend the refresh token, and where the provider rotates it the \
              second would find its copy already invalid.\n\nA failed renewal on a token that \
