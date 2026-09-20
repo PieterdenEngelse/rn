@@ -11,8 +11,8 @@
 //! the only shape that could carry it back does not exist.
 
 use crate::api::{
-    disconnect_oauth, fetch_oauth, save_credential, start_oauth, OAuthAttempt, OAuthConnection,
-    OAuthProvider,
+    disconnect_oauth, fetch_oauth, save_credential, start_oauth, JobStage, OAuthAttempt,
+    OAuthConnection, OAuthProvider,
 };
 use crate::clipboard::copy_to_clipboard;
 use crate::components::param::{PARAM_BOARD_BASE_CLASS, PARAM_BOARD_TITLE_CLASS, PARAM_INPUT_ROW_CLASS, PARAM_TEXT_INPUT_CLASS};
@@ -42,6 +42,11 @@ pub fn OAuthPanel() -> Element {
                     what: PANEL_WHAT.to_string(),
                     why: PANEL_WHY.to_string(),
                     if_wrong: PANEL_IF_WRONG.to_string(),
+                    // The whole flow, a tab per hop. The Overview's five-line
+                    // version is the shape of it; these are the parameters,
+                    // the routes and the refusals, which is what anyone
+                    // debugging a sign-in actually needs.
+                    stages: flow_stages(),
                 }
             }),
             match &*providers.read_unchecked() {
@@ -521,20 +526,198 @@ fn ClientCredentialRow(
     }
 }
 
+/// The authorization-code flow as rn runs it, one tab per hop.
+///
+/// Written from `be/src/oauth.ts` rather than from the RFC: the parameters
+/// named here are the ones this backend sends, the routes are its routes, and
+/// the refusals are the ones it makes. A generic OAuth explainer is a search
+/// away and would not say which of five hops a sign-in stopped at.
+fn stage(name: &str, lead: &str, body: &str) -> JobStage {
+    JobStage { name: name.to_string(), lead: lead.to_string(), body: body.to_string(), reports: None }
+}
+
+fn flow_stages() -> Vec<JobStage> {
+    vec![
+        stage(
+            "Register the app",
+            "Once per provider, on the provider's own site.",
+            "A sign-in needs an app to sign in to. The provider gives back a client ID, which is \
+             public, and a client secret, which is not; both go on the board below, where they \
+             are stored like any other credential and neither is ever rendered back.\n\nThe \
+             callback URL is what the provider will send the browser to. It is shown on each \
+             board with a Copy button, without a port: GitHub matches a loopback callback on \
+             host and path and lets the port vary, which is what lets four worktrees on four API \
+             ports share one app. Google only does that for a client registered as a Desktop \
+             app — a Web application client matches the redirect URI exactly, port and all — and \
+             its board says so.\n\nNothing is registered from here. rn cannot create an app on \
+             somebody else's site, and a page that pretended to would be a form that silently \
+             did nothing.",
+        ),
+        stage(
+            "Start",
+            "POST /api/oauth/:id/start — the only request that mints anything.",
+            "The button sends the scopes from the box beside it. A POST rather than a GET on \
+             purpose: it creates state, and a link, a prefetch or a preview should not be able \
+             to.\n\nThe backend refuses here, before any browser leaves the page, if the client \
+             ID or secret is unset, if the scopes hold anything outside letters, digits and \
+             `: _ . / -`, or if the API is bound to a non-loopback address — there is no \
+             redirect to offer in that last case, and the board says which bind address caused \
+             it.\n\nOtherwise it makes two random 32-byte values, base64url: `state`, and a \
+             PKCE `code_verifier`. It remembers them in memory against the provider, the exact \
+             redirect URI, the scopes and the page to return to, and answers with a URL.",
+        ),
+        stage(
+            "The authorize URL",
+            "What the browser carries to the provider, parameter by parameter.",
+            "`response_type=code`, always — Google refuses an authorize request without it and \
+             GitHub assumes it. `client_id`. `redirect_uri`, the exact loopback URL the callback \
+             will arrive on, because the provider compares it again at the exchange. `scope`, \
+             normalised to space-separated. `state`. `code_challenge`, the SHA-256 of the \
+             verifier, base64url, with `code_challenge_method=S256`.\n\nThen whatever that \
+             provider wants of its own: Google gets `access_type=offline` and `prompt=consent`, \
+             without which it returns an access token that dies in an hour and no refresh token \
+             — a sign-in that looks fine and is dead by lunchtime.\n\nThe client secret is not \
+             in this URL and never is. It goes to the token endpoint, from the backend, over \
+             TLS.\n\nThe page then navigates this tab to it. The same tab rather than a new \
+             one, so the board you started from is the board that shows the result.",
+        ),
+        stage(
+            "Consent",
+            "At the provider. rn is not in this hop at all.",
+            "You authenticate to the provider — password, passkey, whatever they use, plus \
+             whatever second factor — and approve the scopes. rn never sees any of it, which is \
+             the property that makes a sign-in better than a password in a box.\n\nYou can \
+             narrow the scopes here, and providers let you: what is granted is what the consent \
+             screen agreed to, not what was asked for. That is why the board reports granted \
+             scopes separately, and why mail checks for `https://mail.google.com/` among them \
+             rather than assuming the sign-in asked for it.\n\nDeclining is an ordinary answer. \
+             The provider sends the browser back with `error=access_denied` instead of a code, \
+             and the panel records it in words rather than as a failure to debug.",
+        ),
+        stage(
+            "The redirect back",
+            "GET http://127.0.0.1:<API port>/api/oauth/:id/callback?code=…&state=…",
+            "This is the hop the flow was once ruled out for. It is an inbound unsigned GET — \
+             but not from the internet. The provider redirects the *browser*, and the browser is \
+             on this machine, so the request comes from loopback to the API listener the page \
+             already talks to. RFC 8252 is the standard for exactly this shape. The hooks \
+             listener, whose safety is that it verifies a signature on every call, is \
+             untouched.\n\nWhat a loopback callback does add is one caller the API did not have: \
+             a web page in this browser can navigate to it. It could not read the answer, but it \
+             could hand rn a code for *its own* account, and every job would then run as \
+             someone else — login CSRF. `state` is the answer: the value has to be one this \
+             process issued, it is spent the moment it is looked up, whatever happens next, and \
+             it expires after ten minutes. A callback rn did not start is refused with a short \
+             plain-text page, and is deliberately not recorded as an attempt — a page that could \
+             write failures into this panel by opening a URL would be a way to mislead \
+             you.\n\nAt most eight sign-ins may be in flight at once, oldest dropped past that, \
+             so a loop calling start cannot grow the map without bound.",
+        ),
+        stage(
+            "Exchange the code",
+            "An outbound POST to the provider's token endpoint — the direction that always worked.",
+            "Form-encoded: `grant_type=authorization_code`, the `code`, the `client_id` and \
+             `client_secret`, the same `redirect_uri` the authorize URL carried, and the \
+             `code_verifier` — the value whose hash went out at the start and which has not left \
+             this process. A code intercepted on the way back is useless without \
+             it.\n\n`accept: application/json` is not optional: without it GitHub answers \
+             form-encoded and every field reads as absent. GitHub also answers a refused \
+             exchange with **200** and an `error` field, so the body is read either way rather \
+             than trusting the status. Fifteen seconds, then the attempt is abandoned; a \
+             runtime that refuses the outbound call is named with the host to allow.",
+        ),
+        stage(
+            "Store the token",
+            "Into an ordinary credential — not a second store.",
+            "The access token is written with the same writer the credentials board uses: into \
+             this process's environment first, which is what arms redaction before the value \
+             touches disk, then into ~/.config/rn/credentials. So `ctx.secret(\"githubToken\")` \
+             does not know or care that a sign-in filled it, and no job changed to gain \
+             one.\n\nA refresh token, where the provider sends one, goes to its own credential \
+             beside it. A *sign-in* that returns none clears any old one, because it belonged to \
+             a grant this one replaced; a *refresh* that returns none keeps the one it used, \
+             because that provider simply is not rotating.\n\nWhat is not secret — when it was \
+             connected, the account, the granted scopes, the expiries — goes to a small JSON \
+             file beside it. Nothing the page can read ever carries the token itself.",
+        ),
+        stage(
+            "Say whose account it is",
+            "One authenticated call, and it is allowed to fail.",
+            "GitHub is asked at api.github.com/user, Google at its OpenID userinfo endpoint, and \
+             the login or email is recorded beside the connection so the board can say \
+             \"connected as\" rather than only \"connected\".\n\nOptional on purpose: a token \
+             scoped for one API is not necessarily allowed to read the account that holds it, \
+             and a sign-in that worked must not be reported as failed because a cosmetic call \
+             did not. The connection is recorded either way, without a name.",
+        ),
+        stage(
+            "Back to the page",
+            "303 to the board the sign-in started from.",
+            "The return address was taken from the start request's `Origin` and kept with the \
+             pending flow — and only if that origin is one the API already trusts: the CORS list, \
+             or the API's own address in a packaged install. Anything else falls back to a \
+             relative path. Taking a return address from a request unchecked would make this \
+             callback an open redirect.\n\nThe answer carries `cache-control: no-store`, and the \
+             URL that carried the code is spent by the time the browser follows it.",
+        ),
+        stage(
+            "Use it in a run",
+            "The job reads a credential, as it always did.",
+            "`ctx.secret` is synchronous and stays so: it reads the value the sign-in wrote and \
+             knows nothing about OAuth. A job declares the credential by name, and the Jobs page \
+             says whether it is set.\n\nWhere two routes are possible the job declares a choice \
+             instead — `credentialsAnyOf` — and the three mail jobs do: an app password or the \
+             Google token. Gmail will not take a token as a password, so the mail code sends it \
+             through XOAUTH2 instead, and only when the sign-in granted \
+             `https://mail.google.com/`. A token minted for Drive is a perfectly good token that \
+             Gmail refuses, and being told that by name beats being told \"invalid \
+             credentials\".",
+        ),
+        stage(
+            "Renew",
+            "Before a run, never inside one.",
+            "The runner calls into the OAuth module with the credentials the job declared, \
+             before it starts. A token more than five minutes from expiry is left alone. One \
+             inside that margin is renewed with the refresh token — the same token endpoint, \
+             `grant_type=refresh_token` — and the new values are stored exactly as a sign-in's \
+             are.\n\nOnce, under a per-provider lock: two jobs starting at the same moment \
+             would otherwise each spend the refresh token, and where the provider rotates it the \
+             second would find its copy already invalid.\n\nA failed renewal on a token that \
+             still has minutes left lets the run go ahead — it may well work, and stopping it \
+             would turn a hiccup into an outage. A failed renewal on a token that is already \
+             dead stops the run with the cause named, which beats the provider's 401 arriving \
+             from somewhere inside the job.\n\nReplacing the token by hand on the credentials \
+             board forgets what the sign-in recorded: the expiry and the account belonged to the \
+             value that was there, and keeping them would have the page describing a token that \
+             is gone.",
+        ),
+        stage(
+            "Disconnect",
+            "DELETE /api/oauth/:id — revoke there, forget here.",
+            "The provider is told first, where it offers a way: GitHub takes the app's own \
+             client ID and secret as Basic auth and deletes the grant; Google takes the token \
+             alone at its revoke endpoint and kills the refresh token with it. The board reports \
+             what the provider said.\n\nThen the token and any refresh token are removed from \
+             this process and from the credentials file, and the stored connection is \
+             forgotten.\n\nBoth halves matter, and in that order. Forgetting the token here \
+             without revoking leaves a live grant nobody is watching; revoking without \
+             forgetting leaves a credential that is set and refuses everything. If the provider \
+             cannot be reached, the local half still happens and the panel says the token was \
+             removed but not revoked — so you know there is a grant to kill on their site.",
+        ),
+    ]
+}
+
 const PANEL_WHAT: &str =
     "Signing rn in to a provider through the provider's own consent screen, so a job gets a \
      token without anyone creating one by hand. This is the OAuth authorization-code flow, with \
-     a loopback redirect.\n\nFive hops, in order:\n\n1. Pressing the button asks this backend to \
-     start. It makes two random values: state, which it remembers for ten minutes, and a PKCE \
-     verifier, which never leaves it. It answers with the provider's URL, carrying the state and \
-     a hash of the verifier.\n2. This tab goes to the provider. You sign in there and approve.\n3. \
-     The provider sends this tab back to http://127.0.0.1:<API port>/api/oauth/<provider>/callback \
-     with a one-time code. That is the backend on this machine; the browser is the only thing \
-     that travels.\n4. The backend checks the state against the one it issued and spends it, then \
-     POSTs the code, the verifier and the app's secret to the provider. That is an outbound \
-     request, the direction that always worked.\n5. The token that comes back is written into an \
-     ordinary credential, and this tab is sent back here.\n\nThe provider never connects to rn, \
-     no tunnel is involved, and the hooks listener is untouched.";
+     a loopback redirect.\n\nIn one line: this backend mints a state and a PKCE verifier, the \
+     browser goes to the provider and comes back to a loopback URL with a code, the backend \
+     exchanges that code for a token, and the token lands in an ordinary credential a job \
+     already reads.\n\nThe tabs above walk it, one per hop — the parameters each carries, what \
+     is refused where, and what is stored. Start there when a sign-in stopped somewhere and you \
+     need to know where.\n\nThe provider never connects to rn, no tunnel is involved, and the \
+     hooks listener is untouched.";
 
 const PANEL_WHY: &str =
     "Because the alternative is a personal access token made by hand: a page on the provider's \
