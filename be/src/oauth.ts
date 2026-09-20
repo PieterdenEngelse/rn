@@ -177,10 +177,14 @@ export const PROVIDERS: ProviderDef[] = [
         // for GitHub. What the sign-in feeds is listed on the board as it is used.
         tokenCredential: "googleToken",
         refreshCredential: "googleRefreshToken",
-        // Enough to say whose account it is and nothing else. Google's tokens are
-        // scoped per API, so the useful scope is whichever the thing reading the
-        // token needs, and that is a per-sign-in answer rather than a default.
-        defaultScopes: "openid email",
+        // Gmail, because the mail jobs are what reads this token: read-mail,
+        // send-mail and notify-mail take it through XOAUTH2 in place of the app
+        // password. Google has no narrower scope that serves IMAP and SMTP, so
+        // this is a broad default and is stated as one — a sign-in for anything
+        // else should narrow it in the scopes box to whatever that API needs,
+        // and a token without the mail scope is refused for mail by name rather
+        // than tried and rejected by Google.
+        defaultScopes: "https://mail.google.com/ openid email",
         registerAt: "https://console.cloud.google.com/apis/credentials",
         // Google always sends expires_in, so this is the sentence for the case
         // that should not happen rather than for a normal one.
@@ -225,6 +229,18 @@ export const PROVIDERS: ProviderDef[] = [
         },
     },
 ];
+
+/**
+ * The scopes a provider's sign-in actually granted, which is not always what
+ * was asked for — a consent screen can narrow them.
+ *
+ * Exported because a token is only useful for what it was scoped to, and the
+ * thing reading it is the only thing that knows which scope that is. mail/auth.ts
+ * checks for Gmail's before it opens a mailbox with the token.
+ */
+export function grantedScopes(id: string): readonly string[] {
+    return readStore()[id]?.scopes ?? [];
+}
 
 export function providerById(id: string): ProviderDef | undefined {
     return PROVIDERS.find((p) => p.id === id);

@@ -1154,7 +1154,7 @@ fn JobConfigRow(
                 dt { class: "text-gray-400", "Credentials" }
                 dd { class: CARD_ROW_CLASS,
                     div { class: CARD_ROW_TEXT_CLASS,
-                    if job.credentials.is_empty() {
+                    if job.credentials.is_empty() && job.credential_choices.is_empty() {
                         // "nothing" is only true when there is no webhook row
                         // above saying otherwise. A card that named a signing
                         // secret and then said the job authenticates to nothing
@@ -1174,6 +1174,20 @@ fn JobConfigRow(
                                 class: if c.set { "text-gray-300" } else { "text-red-400" },
                                 "{c.name} — "
                                 if c.set { "set" } else { "not set, put it in {c.env_var}" }
+                            }
+                        }
+                        // A choice, not a list: the unused half is not
+                        // missing, so neither half is red while one of them
+                        // is set. Red only when the whole group is empty,
+                        // which is the state that stops the job.
+                        for group in job.credential_choices.iter() {
+                            span {
+                                class: if group.iter().any(|c| c.set) { "text-gray-300" } else { "text-red-400" },
+                                "one of: "
+                                {group.iter().map(|c| format!("{} ({})", c.name, if c.set { "set" } else { "not set" })).collect::<Vec<_>>().join(" or ")}
+                                if !group.iter().any(|c| c.set) {
+                                    " — set one of them, or sign in on Config → Connection"
+                                }
                             }
                         }
                     }

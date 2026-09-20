@@ -50,6 +50,7 @@ import {
     recipientMatches,
     senderMatches,
 } from "../mail/extract.ts";
+import { authForJob, imapAuth } from "../mail/auth.ts";
 import { netPermissionHint } from "./net-permission.ts";
 import { PermanentFailure } from "./permanent.ts";
 import { seenCapacity } from "./state.ts";
@@ -180,28 +181,36 @@ export const readMail: Job = {
 
     // The same app password the send job uses: one Google account, one
     // credential, SMTP and IMAP both. docs/link-tracking.md §1.
-    credentials: ["gmailAppPassword"],
+    // Either: the mailbox is opened with the app password or with a Google
+    // sign-in's token, and which one is a choice made on another page. See
+    // mail/auth.ts.
+    credentialsAnyOf: [["gmailAppPassword", "googleToken"]],
 
     probes: {
         // A login and an immediate logout, against the same host and port a
         // run would use. It proves the one thing a run proves and nothing
         // else: no mailbox is opened, no message is read, nothing is marked.
         gmailAppPassword: async (ctx) => {
-            const password = ctx.secret("gmailAppPassword");
-            if (password === undefined) return { ok: false, detail: "not set" };
+            const chosen = authForJob(ctx);
+            if ("problem" in chosen) return { ok: false, detail: chosen.problem };
             const { ImapFlow } = await import("imapflow");
             const client = new ImapFlow({
                 host: config.imapHost,
                 port: config.imapPort,
                 secure: config.imapPort === 993,
-                auth: { user: config.mailUser, pass: password },
+                auth: imapAuth(chosen),
                 logger: false,
                 socketTimeout: 15_000,
             });
             try {
                 await client.connect();
                 await client.logout();
-                return { ok: true, detail: `${config.mailUser} on ${config.imapHost}` };
+                return {
+                    ok: true,
+                    detail: `${config.mailUser} on ${config.imapHost}, ${
+                        chosen.kind === "oauth" ? "signed in with Google" : "with the app password"
+                    }`,
+                };
             } catch (err) {
                 client.close();
                 return { ok: false, detail: String((err as Error).message ?? err) };
@@ -483,7 +492,13 @@ export const readMail: Job = {
             });
         }
 
-        const password = ctx.secret("gmailAppPassword");
+        const chosen = authForJob(ctx);
+        if ("problem" in chosen) {
+            throw new PermanentFailure(
+                `read-mail: ${chosen.problem}`,
+                "a credential that is not configured is not configured on the next attempt either",
+            );
+        }
         const { ImapFlow } = await import("imapflow");
         const client = new ImapFlow({
             host: config.imapHost,
@@ -494,7 +509,7 @@ export const readMail: Job = {
             // connection would still insist on TLS — and would have left no way
             // to point this at a server on a bench.
             secure: config.imapPort === 993,
-            auth: { user: config.mailUser, pass: password },
+            auth: imapAuth(chosen),
             // imapflow logs the whole conversation at info by default, which
             // would put every subject line and the auth exchange on stdout.
             logger: false,

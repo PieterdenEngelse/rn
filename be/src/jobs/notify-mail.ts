@@ -37,6 +37,7 @@
  */
 
 import { config } from "../config.ts";
+import { authForJob } from "../mail/auth.ts";
 import { smtpTransport } from "../mail/smtp.ts";
 import { assertAllowedRecipients } from "./send-mail.ts";
 import { PermanentFailure } from "./permanent.ts";
@@ -133,7 +134,8 @@ export const notifyMail: Job = {
     // than send-mail's because that one is a list and this is one address.
     timeoutMs: 60_000,
 
-    credentials: ["gmailAppPassword"],
+    // Either one: see mail/auth.ts, and read-mail, which says the same.
+    credentialsAnyOf: [["gmailAppPassword", "googleToken"]],
 
     // A refused connection is usually a bad minute rather than a bad password,
     // and a wrong password throws permanently anyway.
@@ -325,8 +327,14 @@ export const notifyMail: Job = {
         // point of opening a connection with a password in hand.
         assertAllowedRecipients([to]);
 
-        const password = ctx.secret("gmailAppPassword");
-        const tx = await smtpTransport(password);
+        const chosen = authForJob(ctx);
+        if ("problem" in chosen) {
+            throw new PermanentFailure(
+                `notify-mail: ${chosen.problem}`,
+                "a credential that is not configured is not configured on the next attempt either",
+            );
+        }
+        const tx = await smtpTransport(chosen);
         let accepted: string[];
         try {
             const result = await tx.send({

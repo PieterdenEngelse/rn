@@ -43,7 +43,7 @@ import { config } from "../config.ts";
 import { readMail } from "../jobs/read-mail.ts";
 import * as rules from "./rules.ts";
 import { runJob } from "../jobs/run.ts";
-import * as secrets from "../secrets.ts";
+import { chooseAuth, imapAuth } from "./auth.ts";
 import { debug, step, warn } from "../log.ts";
 
 /** One watched mailbox, and whether its connection is up. */
@@ -157,12 +157,16 @@ async function trigger(mailbox: string): Promise<void> {
 
 /** One connection, held until it drops. Resolves when it does. */
 async function session(mailbox: string): Promise<void> {
+    // Password or Google sign-in, decided in one place for all five callers.
+    const chosen = chooseAuth();
+    if ("problem" in chosen) throw new Error(chosen.problem);
+    const auth = chosen;
     const { ImapFlow } = await import("imapflow");
     const client = new ImapFlow({
         host: config.imapHost,
         port: config.imapPort,
         secure: config.imapPort === 993,
-        auth: { user: config.mailUser, pass: secrets.read("gmailAppPassword") ?? "" },
+        auth: imapAuth(auth),
         logger: false,
         // imapflow waits 15s of inactivity before entering IDLE, because for an
         // ordinary client every command would otherwise have to break an IDLE
@@ -260,15 +264,11 @@ export function startMailWatch(): void {
         });
     };
 
-    if (secrets.read("gmailAppPassword") === undefined) {
-        refuse("the gmailAppPassword credential is not set");
+    const chosen = chooseAuth();
+    if ("problem" in chosen) {
+        refuse(chosen.problem);
         return;
     }
-    if (config.mailUser === "") {
-        refuse("RN_MAIL_USER is not set");
-        return;
-    }
-
     stopped = false;
 
     // One connection per mailbox, each reconnecting on its own. IMAP idles on

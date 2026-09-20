@@ -78,6 +78,7 @@ import { createHookApp, hooksHealth, startHooks } from "./hooks/server.ts";
 import { createTrackerApp, startTracker, trackerHealth } from "./tracker/server.ts";
 import { mailWatchHealth, startMailWatch } from "./mail/watcher.ts";
 import * as mailRules from "./mail/rules.ts";
+import { chooseAuth, describeAuth, imapAuth, smtpAuth } from "./mail/auth.ts";
 import * as watchedPages from "./pages.ts";
 import * as mailTest from "./mail/test-record.ts";
 import * as trackerStore from "./tracker/store.ts";
@@ -201,6 +202,11 @@ function credentialDeclarations(): Map<string, string[]> {
 
     for (const job of JOBS) {
         for (const name of job.credentials ?? []) add(name, job.id);
+        // Either-or names too: a mail job's app password and the Google token
+        // that can stand in for it are both things this install may need a row
+        // for, and `usedBy` on the OAuth board is how a sign-in says what it
+        // feeds.
+        for (const name of (job.credentialsAnyOf ?? []).flat()) add(name, job.id);
         add(job.webhook?.credential, job.id);
         add(job.webhook?.auth?.kind === "token" ? job.webhook.credential : undefined, job.id);
     }
@@ -365,6 +371,10 @@ function catalogueEntry(declared: Job): CatalogueJob {
         // fail at 03:00 for want of a token otherwise looks exactly
         // like one that will work.
         credentials: (j.credentials ?? []).map((name) => secrets.describe(name)),
+        // One group per either-or, each a list the page renders as "one of".
+        // Flattening them into the list above would mark the unused half of a
+        // choice missing in red, which is a fault that is not.
+        credentialChoices: (j.credentialsAnyOf ?? []).map((group) => group.map((name) => secrets.describe(name))),
         // Structured, unlike the phrase in `scheduled` below: that
         // one is for reading and this one is for a control, and
         // deriving fields back out of "daily at 03:00" would be a
@@ -601,19 +611,13 @@ export function createApp() {
         // or a link checker will do on its own. Repeated failed authentication
         // is noticed by providers.
         if (url.pathname === "/api/mail-test" && req.method === "POST") {
-            const password = secrets.read("gmailAppPassword");
-
             // Refused here rather than at the protocol, so the answer names
             // the thing to fix instead of an authentication failure that reads
-            // like a wrong password.
-            const missing =
-                password === undefined
-                    ? "the gmailAppPassword credential is not set"
-                    : config.mailUser === ""
-                      ? "RN_MAIL_USER is not set"
-                      : undefined;
-            if (missing !== undefined) {
-                const refused = { ok: false, ms: 0, error: missing };
+            // like a wrong password — and it is the same choice the jobs make,
+            // so a test cannot pass by a route a run would not take.
+            const chosen = chooseAuth();
+            if ("problem" in chosen) {
+                const refused = { ok: false, ms: 0, error: chosen.problem };
                 send(res, 200, { imap: refused, smtp: refused } satisfies MailTestResponse);
                 return done(200);
             }
@@ -647,7 +651,7 @@ export function createApp() {
                     host: config.imapHost,
                     port: config.imapPort,
                     secure: config.imapPort === 993,
-                    auth: { user: config.mailUser, pass: password ?? "" },
+                    auth: imapAuth(chosen),
                     logger: false,
                 });
                 client.on("error", () => {});
@@ -665,7 +669,7 @@ export function createApp() {
                     host: config.smtpHost,
                     port: config.smtpPort,
                     secure: config.smtpPort === 465,
-                    auth: { user: config.mailUser, pass: password ?? "" },
+                    auth: smtpAuth(chosen),
                 });
                 try {
                     await tx.verify();
@@ -722,6 +726,10 @@ export function createApp() {
                 user: config.mailUser,
                 // Whether, never what. docs/token-sec.md.
                 credentialSet: secrets.read("gmailAppPassword") !== undefined,
+                ...((): { authKind: string; authDetail: string } => {
+                    const a = describeAuth();
+                    return { authKind: a.kind, authDetail: a.detail };
+                })(),
 
                 imap: {
                     host: config.imapHost,

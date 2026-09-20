@@ -113,9 +113,34 @@ fn Account(data: MailHealthResponse) -> Element {
                 if_wrong: "Empty and both mail jobs refuse before opening a connection, which is the good failure: it happens here rather than as an authentication error against somebody's server. A wrong address fails at authentication instead, which reads the same as a wrong password.".to_string(),
             }
             Metric {
+                label: "Signs in with".to_string(),
+                value: match data.auth_kind.as_str() {
+                    "oauth" => "a Google sign-in".to_string(),
+                    "password" => "the app password".to_string(),
+                    _ => "nothing — neither is usable".to_string(),
+                },
+                what: format!(
+                    "Which of the two ways in is actually used when a mailbox is opened: {}. \
+                     Gmail takes an OAuth token through XOAUTH2 rather than as a password, so \
+                     this is a different exchange and not a different string.",
+                    data.auth_detail
+                ),
+                why: "Two credentials can be set at once, and then \"the password is set\" stops \
+                      answering the question — the one being used is the one whose failure has to \
+                      be explained. A signed-in token wins when it is there, because Google keeps \
+                      narrowing where app passwords work and a token is renewed before a run \
+                      rather than expiring quietly in a file. The sign-in is on Config → \
+                      Connection; the app password is a credential on Config → Jobs.".to_string(),
+                if_wrong: "A Google sign-in whose scopes do not include https://mail.google.com/ \
+                           is not used for mail, and this row says so rather than letting the \
+                           mailbox refuse it — Google has no narrower scope that serves IMAP and \
+                           SMTP, so the sign-in has to ask for that one. With neither route \
+                           usable, both mail jobs refuse before they connect.".to_string(),
+            }
+            Metric {
                 label: "Password".to_string(),
                 value: credential.to_string(),
-                what: "Whether the gmailAppPassword credential exists. Set it on Config → Jobs; it is stored outside the settings file and is never sent to this page.".to_string(),
+                what: "Whether the gmailAppPassword credential exists. Set it on Config → Jobs; it is stored outside the settings file and is never sent to this page. It is one of the two ways in — the row above says which is in use.".to_string(),
                 why: "This row says whether, and deliberately never what. A password on a screen is a broadcast rather than a read — it reaches a screenshot, a screen share and a browser's memory — so every panel in rn reports that a secret is set and none of them shows one. docs/token-sec.md is the argument in full.".to_string(),
                 if_wrong: "Missing, and both directions stop before connecting rather than failing an authentication exchange. For a Google account this is an app password rather than the account password, and an ordinary password will authenticate against nothing however carefully it is typed.".to_string(),
             }

@@ -1107,6 +1107,46 @@ test("under dry run the handler still runs, and is itself disarmed", async () =>
     assert.equal(history.list().length, 4, "and it ran on both, rather than once");
 });
 
+test("one of a credential group is enough, and none of it is refused by naming the choice", async () => {
+    // The mail jobs' shape: a mailbox is opened with an app password or with a
+    // Google sign-in's token, and the unused half is not missing. Declaring
+    // both as required would refuse a run that has everything it needs.
+    let read: string | undefined;
+    const either: Job = {
+        id: "either-way", label: "either way",
+        info: { what: "w", why: "y", ifWrong: "i" },
+        source: import.meta.filename,
+        credentialsAnyOf: [["thisWayIn", "orThatWayIn"]],
+        async run(ctx) {
+            read = ctx.secret("orThatWayIn");
+            return { summary: {}, changed: false };
+        },
+    };
+
+    await registered([either], async () => {
+        await assert.rejects(runJob(either), (err: Error) => {
+            // Both named, and as a choice: a message naming one of them would
+            // send somebody to configure the half they had deliberately left
+            // alone.
+            assert.match(err.message, /one of these credentials/);
+            assert.match(err.message, /thisWayIn \(RN_SECRET_THIS_WAY_IN\)/);
+            assert.match(err.message, /orThatWayIn \(RN_SECRET_OR_THAT_WAY_IN\)/);
+            return true;
+        });
+
+        process.env.RN_SECRET_OR_THAT_WAY_IN = "the-token";
+        try {
+            const result = await runJob(either);
+            assert.equal(result.changed, false);
+            // Declared through the group, so ctx.secret reads it without the
+            // undeclared-name throw — which is the whole point of declaring.
+            assert.equal(read, "the-token");
+        } finally {
+            delete process.env.RN_SECRET_OR_THAT_WAY_IN;
+        }
+    });
+});
+
 test("a handler that cannot even start is reported, not swallowed", async () => {
     // The quietest failure of the three. A handler that runs and throws leaves
     // its own failed run on the page; one that never starts — an unconfigured

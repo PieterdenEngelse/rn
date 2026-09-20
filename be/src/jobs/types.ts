@@ -494,6 +494,22 @@ export interface Job {
      * reading `process.env` directly.
      */
     credentials?: string[];
+
+    /**
+     * Credentials where **one of** a group is required, not all of them.
+     *
+     * One group per either-or. The mail jobs are the case it exists for: a
+     * mailbox is opened with an app password *or* with a Google sign-in's
+     * token, and which one is a choice the person made on another page rather
+     * than a property of the job. Declared as `[["gmailAppPassword",
+     * "googleToken"]]`, both are readable through `ctx.secret`, the runner
+     * refuses to start only when neither is set, and the Jobs page can say
+     * "one of these" rather than marking the unused one missing in red.
+     *
+     * Every name here is also a name the runner keeps fresh, so a token in a
+     * group is renewed before the run exactly as a declared one is.
+     */
+    credentialsAnyOf?: string[][];
     /**
      * The cheapest call that proves a credential this job declares still
      * works, keyed by the credential's name.

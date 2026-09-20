@@ -148,7 +148,9 @@ test("Google's sign-in asks for the refresh token GitHub never needed to be aske
         // token out at the consent screen, and skips it on a second sign-in.
         assert.equal(url.searchParams.get("access_type"), "offline");
         assert.equal(url.searchParams.get("prompt"), "consent");
-        assert.equal(url.searchParams.get("scope"), "openid email");
+        // Gmail's scope leads, because the mail jobs are what reads this
+        // token — Google has no narrower one that serves IMAP and SMTP.
+        assert.equal(url.searchParams.get("scope"), "https://mail.google.com/ openid email");
         assert.equal(url.searchParams.get("code_challenge_method"), "S256");
         assert.equal(
             url.searchParams.get("redirect_uri"),

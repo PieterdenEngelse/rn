@@ -139,6 +139,18 @@ wire! {
         /// `docs/token-sec.md`: a page reports that a secret exists and never
         /// what it is.
         pub credential_set: bool,
+        /// Which of the two ways in is actually being used: "oauth" for a
+        /// Google sign-in's token through XOAUTH2, "password" for the app
+        /// password, "none" when neither can be.
+        ///
+        /// Sent because "the credential is set" stopped being the whole
+        /// question the moment there were two of them, and the one being used
+        /// is the one whose failure the page has to explain.
+        #[serde(default)]
+        pub auth_kind: String,
+        /// That choice in a sentence, or the reason there is none.
+        #[serde(default)]
+        pub auth_detail: String,
 
         pub imap: MailServer,
         /// How long a run's IMAP socket may sit silent, in ms. Not applied to

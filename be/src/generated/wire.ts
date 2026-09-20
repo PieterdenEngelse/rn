@@ -147,6 +147,16 @@ inputs: Array<JobInput>,
  */
 credentials: Array<CredentialRef>, 
 /**
+ * Credentials where the job needs **one of** each group, not all.
+ *
+ * The mail jobs are what this is for: a mailbox is opened with an app
+ * password or with a Google sign-in's token, and the unused half of
+ * that choice is not missing. A page that flattened these into
+ * `credentials` would show a red "not set" for a credential nothing
+ * is waiting on.
+ */
+credentialChoices: Array<Array<CredentialRef>>, 
+/**
  * Set when this job accepts a webhook. Absent is the common case and
  * renders as nothing, rather than as a row saying "no webhook".
  */
@@ -1203,7 +1213,21 @@ user: string,
  * `docs/token-sec.md`: a page reports that a secret exists and never
  * what it is.
  */
-credentialSet: boolean, imap: MailServer, 
+credentialSet: boolean, 
+/**
+ * Which of the two ways in is actually being used: "oauth" for a
+ * Google sign-in's token through XOAUTH2, "password" for the app
+ * password, "none" when neither can be.
+ *
+ * Sent because "the credential is set" stopped being the whole
+ * question the moment there were two of them, and the one being used
+ * is the one whose failure the page has to explain.
+ */
+authKind: string, 
+/**
+ * That choice in a sentence, or the reason there is none.
+ */
+authDetail: string, imap: MailServer, 
 /**
  * How long a run's IMAP socket may sit silent, in ms. Not applied to
  * the held-open watch connection — see the setting.

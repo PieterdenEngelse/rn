@@ -49,6 +49,7 @@
 import { createHash } from "node:crypto";
 import { config } from "../config.ts";
 import { parseSenders, senderMatches } from "../mail/extract.ts";
+import { authForJob } from "../mail/auth.ts";
 import { smtpTransport, type Transport } from "../mail/smtp.ts";
 import { load as loadSettings } from "../settings.ts";
 import { classifyBaseUrl, type BaseUrlProblem } from "../tracker/base-url.ts";
@@ -265,7 +266,8 @@ export const sendMail: Job = {
     // raise it to ten from a page. See tracker/sent.ts.
     retry: { attempts: 3, backoffMs: 30_000 },
 
-    credentials: ["gmailAppPassword"],
+    // Either one: see mail/auth.ts, and read-mail, which says the same.
+    credentialsAnyOf: [["gmailAppPassword", "googleToken"]],
 
     inputs: [
         {
@@ -563,8 +565,14 @@ export const sendMail: Job = {
             );
         }
 
-        const password = ctx.secret("gmailAppPassword");
-        const tx = await smtpTransport(password);
+        const chosen = authForJob(ctx);
+        if ("problem" in chosen) {
+            throw new PermanentFailure(
+                `send-mail: ${chosen.problem}`,
+                "a credential that is not configured is not configured on the next attempt either",
+            );
+        }
+        const tx = await smtpTransport(chosen);
 
         let delivered = 0;
         let skipped = 0;

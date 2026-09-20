@@ -13,6 +13,7 @@
  */
 
 import { config } from "../config.ts";
+import { smtpAuth, type MailAuth } from "./auth.ts";
 
 export interface Transport {
     send(message: {
@@ -48,14 +49,14 @@ export interface Transport {
  * runtime dependency, and the one place it is loaded is the line before it is
  * used.
  */
-export async function smtpTransport(password: string): Promise<Transport & { close(): void }> {
+export async function smtpTransport(auth: MailAuth): Promise<Transport & { close(): void }> {
     const { createTransport } = await import("nodemailer");
     const tx = createTransport({
         host: config.smtpHost,
         port: config.smtpPort,
         // 465 is implicit TLS. See config.ts for why not 587.
         secure: config.smtpPort === 465,
-        auth: { user: config.mailUser, pass: password },
+        auth: smtpAuth(auth),
         // Both, from one setting. nodemailer defaults these to ten and two
         // minutes, and the first of those is the job's own ceiling — so a
         // silent socket presents as the run timing out rather than as the

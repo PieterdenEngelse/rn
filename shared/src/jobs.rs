@@ -238,6 +238,15 @@ wire! {
         /// Credentials this job needs, and whether each is configured.
         #[serde(default)]
         pub credentials: Vec<CredentialRef>,
+        /// Credentials where the job needs **one of** each group, not all.
+        ///
+        /// The mail jobs are what this is for: a mailbox is opened with an app
+        /// password or with a Google sign-in's token, and the unused half of
+        /// that choice is not missing. A page that flattened these into
+        /// `credentials` would show a red "not set" for a credential nothing
+        /// is waiting on.
+        #[serde(default)]
+        pub credential_choices: Vec<Vec<CredentialRef>>,
         /// Set when this job accepts a webhook. Absent is the common case and
         /// renders as nothing, rather than as a row saying "no webhook".
         #[serde(default, skip_serializing_if = "Option::is_none")]

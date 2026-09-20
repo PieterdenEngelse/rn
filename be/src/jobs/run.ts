@@ -411,6 +411,15 @@ export async function runJob(
     // then fails for want of a token has already made its first side effect,
     // and an empty Authorization header fails somewhere far less legible than
     // here. All declared credentials are required.
+    // Groups first: "one of these" fails differently from "this one", and the
+    // message has to name the choice rather than one arbitrary half of it.
+    for (const group of job.credentialsAnyOf ?? []) {
+        if (group.some((name) => secrets.isSet(name))) continue;
+        const wanted = group.map((n) => `${n} (${secrets.envVarFor(n)})`).join(" or ");
+        warn("job-credentials-missing", { id: job.id, oneOf: group });
+        throw new Error(`${job.id} needs one of these credentials, and has none: ${wanted}`);
+    }
+
     const missing = (job.credentials ?? []).filter((name) => !secrets.isSet(name));
     if (missing.length > 0) {
         const wanted = missing.map((n) => `${n} (${secrets.envVarFor(n)})`).join(", ");
@@ -425,7 +434,10 @@ export async function runJob(
     // should not have to know which of its tokens are the renewable kind.
     // Throws only for one that is already dead and cannot be renewed, so the
     // record names that instead of the 401 the first request would get.
-    await oauth.ensureFresh(job.credentials ?? [], Date.now());
+    await oauth.ensureFresh(
+        [...(job.credentials ?? []), ...(job.credentialsAnyOf ?? []).flat()],
+        Date.now(),
+    );
 
     // **One run of a job at a time.** The scheduler has always refused to stack
     // a job on itself; the rule lives here now because the scheduler is no
@@ -529,7 +541,10 @@ export async function runJob(
             // Declared names only. `ctx.secret` throwing on an undeclared name
             // is what keeps `credentials` honest — a job that reads one it
             // never declared is one the page cannot warn about.
-            const declared = new Set(job.credentials ?? []);
+            const declared = new Set([
+                ...(job.credentials ?? []),
+                ...(job.credentialsAnyOf ?? []).flat(),
+            ]);
             const secret = (name: string): string => {
                 if (!declared.has(name)) {
                     throw new Error(
