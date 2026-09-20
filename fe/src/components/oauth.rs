@@ -47,6 +47,7 @@ pub fn OAuthPanel() -> Element {
                     // the routes and the refusals, which is what anyone
                     // debugging a sign-in actually needs.
                     stages: flow_stages(),
+                    stage_figures: flow_figures(),
                 }
             }),
             match &*providers.read_unchecked() {
@@ -526,6 +527,89 @@ fn ClientCredentialRow(
     }
 }
 
+/// A table of named values for a step: what is sent, and what each one is for.
+///
+/// The shape the two request steps wanted. Their subject is a list of
+/// parameters, and a list of parameters written as a sentence is a paragraph
+/// nobody can scan — "which of these does the provider compare again later"
+/// takes a re-read, where a column takes a glance.
+#[component]
+fn Fields(caption: String, rows: Vec<(String, String, String)>) -> Element {
+    rsx! {
+        div { class: "mt-3",
+            p { class: "text-gray-300 text-xs mb-1", "{caption}" }
+            // Capped rather than filling the window: three short cells with
+            // half a screen between them is a row the eye tracks instead of
+            // reads. The same reason the event-families table has a measure.
+            table { class: "w-full max-w-4xl text-left border-collapse",
+                thead {
+                    tr {
+                        for h in ["Parameter", "Value", "Why"] {
+                            th {
+                                key: "{h}",
+                                class: "text-gray-300 font-semibold text-xs py-1 pr-6 border-b border-gray-700",
+                                "{h}"
+                            }
+                        }
+                    }
+                }
+                tbody {
+                    for (name, value, why) in rows.iter() {
+                        tr { key: "{name}",
+                            td { class: "text-gray-200 text-xs py-2 pr-6 align-top font-mono whitespace-nowrap", "{name}" }
+                            td { class: "text-gray-300 text-xs py-2 pr-6 align-top font-mono", "{value}" }
+                            td { class: "text-gray-200 text-xs py-2 align-top", "{why}" }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn row(name: &str, value: &str, why: &str) -> (String, String, String) {
+    (name.to_string(), value.to_string(), why.to_string())
+}
+
+/// Markup under the steps that have any: the two whose subject is a list of
+/// parameters. Index-aligned with [`flow_stages`], and `None` everywhere else.
+fn flow_figures() -> Vec<Option<Element>> {
+    let mut figures: Vec<Option<Element>> = vec![None; flow_stages().len()];
+
+    figures[2] = Some(rsx! {
+        Fields {
+            caption: "What the authorize URL carries, in the order the backend sets it:".to_string(),
+            rows: vec![
+                row("response_type", "code", "Asks for the authorization-code flow. Google refuses a request without it; GitHub assumes it. Sent to both."),
+                row("access_type", "offline (Google only)", "Asks for a refresh token. Without it Google's token dies in an hour with nothing to renew it from."),
+                row("prompt", "consent (Google only)", "Makes Google show the consent screen again, which is the only place it hands the refresh token over — a second sign-in without it returns none."),
+                row("client_id", "the app's public identifier", "Which app is asking. Public: it is in a URL a browser follows."),
+                row("redirect_uri", "the loopback callback, port and all", "Where the provider sends the browser back — the URL the board shows as \"This backend sends\". Compared again at the exchange, so the two must match exactly."),
+                row("scope", "space-separated, from the box on the board", "What the token may do. What is granted is what the consent screen agrees to, which can be less."),
+                row("state", "32 random bytes, base64url", "Proves the callback answers a sign-in this process started. Held in memory for ten minutes, spent on first use."),
+                row("code_challenge", "SHA-256 of the verifier, base64url", "The public half of PKCE. The verifier itself never leaves the backend."),
+                row("code_challenge_method", "S256", "Says the challenge is hashed rather than sent in the clear. The plain option exists and is not used."),
+            ],
+        }
+    });
+
+    figures[5] = Some(rsx! {
+        Fields {
+            caption: "The form body of the POST to the provider's token endpoint:".to_string(),
+            rows: vec![
+                row("grant_type", "authorization_code", "Which exchange this is. The renewal later sends refresh_token here instead, and nothing else changes."),
+                row("code", "from the callback", "One use, and short-lived at every provider."),
+                row("client_id", "the app's public identifier", "Which app is exchanging."),
+                row("client_secret", "the app's secret", "Proves it is the app. This is the request the secret exists for, and the only one it is sent in."),
+                row("redirect_uri", "the same one the authorize URL carried", "The provider compares it to what it redirected to. A mismatch is refused here rather than earlier."),
+                row("code_verifier", "the 32 random bytes the challenge was made from", "The other half of PKCE. A stolen code without it exchanges for nothing."),
+            ],
+        }
+    });
+
+    figures
+}
+
 /// The authorization-code flow as rn runs it, one tab per hop.
 ///
 /// Written from `be/src/oauth.ts` rather than from the RFC: the parameters
@@ -569,17 +653,12 @@ fn flow_stages() -> Vec<JobStage> {
         stage(
             "The authorize URL",
             "What the browser carries to the provider, parameter by parameter.",
-            "response_type=code, always — Google refuses an authorize request without it and \
-             GitHub assumes it. client_id. redirect_uri, the exact loopback URL the callback \
-             will arrive on, because the provider compares it again at the exchange. scope, \
-             normalised to space-separated. state. code_challenge, the SHA-256 of the \
-             verifier, base64url, with code_challenge_method=S256.\n\nThen whatever that \
-             provider wants of its own: Google gets access_type=offline and prompt=consent, \
-             without which it returns an access token that dies in an hour and no refresh token \
-             — a sign-in that looks fine and is dead by lunchtime.\n\nThe client secret is not \
-             in this URL and never is. It goes to the token endpoint, from the backend, over \
-             TLS.\n\nThe page then navigates this tab to it. The same tab rather than a new \
-             one, so the board you started from is the board that shows the result.",
+            "Every parameter below, in one URL, and the page then navigates this tab to it — \
+             the same tab rather than a new one, so the board you started from is the board \
+             that shows the result.\n\nThe client secret is not in this URL and never is. It \
+             goes to the token endpoint, from the backend, over TLS. Everything here is public \
+             by design: it travels through a browser, through the provider's logs, and through \
+             whatever sits between.",
         ),
         stage(
             "Consent",
@@ -616,15 +695,16 @@ fn flow_stages() -> Vec<JobStage> {
         stage(
             "Exchange the code",
             "An outbound POST to the provider's token endpoint — the direction that always worked.",
-            "Form-encoded: grant_type=authorization_code, the code, the client_id and \
-             client_secret, the same redirect_uri the authorize URL carried, and the \
-             code_verifier — the value whose hash went out at the start and which has not left \
-             this process. A code intercepted on the way back is useless without \
-             it.\n\naccept: application/json is not optional: without it GitHub answers \
-             form-encoded and every field reads as absent. GitHub also answers a refused \
-             exchange with 200 and an error field, so the body is read either way rather \
-             than trusting the status. Fifteen seconds, then the attempt is abandoned; a \
-             runtime that refuses the outbound call is named with the host to allow.",
+            "The fields below, form-encoded, from the backend rather than the browser. The \
+             code_verifier is the one that matters: a code intercepted on the way back is \
+             useless without it, and it has never left this process.\n\nTwo headers are not \
+             optional. accept: application/json, because without it GitHub answers form-encoded \
+             and every field reads as absent; and content-type: \
+             application/x-www-form-urlencoded, which is what the fields are sent as. GitHub \
+             also answers a refused exchange with 200 and an error field, so the body is read \
+             either way rather than trusting the status. Fifteen seconds, then the attempt is \
+             abandoned; a runtime that refuses the outbound call is named with the host to \
+             allow.",
         ),
         stage(
             "Store the token",

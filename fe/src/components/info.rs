@@ -164,6 +164,17 @@ pub fn InfoButton(
     /// nothing to tab through looks exactly as it did before this existed.
     #[props(default = vec![])]
     stages: Vec<JobStage>,
+    /// Markup for a step, by the same index as `stages`, drawn under its
+    /// prose.
+    ///
+    /// A stage's body is a `String` — it comes off the wire from a job, where
+    /// an `Element` cannot — so a step whose subject is a list of named values
+    /// had to spell it as a sentence. Nine query parameters read as a sentence
+    /// are nine things to hold in your head; as a table they are a column to
+    /// scan. Shorter than `stages` is fine, and so is a `None` in the middle:
+    /// most steps are prose and want nothing here.
+    #[props(default = vec![])]
+    stage_figures: Vec<Option<Element>>,
     /// Extra tabs, after any stages, whose content is markup rather than prose
     /// — a table, a diagram, a list of examples.
     ///
@@ -322,6 +333,12 @@ pub fn InfoButton(
                         div {
                             h4 { class: "text-sm font-semibold text-gray-300", "How this step works" }
                             RichText { text: stage.body.clone(), glossary: glossary.clone(), open_term }
+                        }
+                        // After the prose, not before it: the table is what
+                        // the step is about, and the paragraph is why it is
+                        // shaped that way.
+                        if let Some(Some(figure)) = stage_figures.get(tab() - 1).cloned() {
+                            {figure}
                         }
                         if let Some(reports) = stage.reports.clone() {
                             div {
