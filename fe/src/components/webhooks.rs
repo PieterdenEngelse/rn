@@ -20,7 +20,8 @@
 //! anyone holding that can reach the listener, so it is not a thing to render.
 
 use crate::api::{
-    delete_credential, delete_webhook, fetch_credentials, fetch_jobs, fetch_webhooks,
+    delete_credential, delete_webhook, fetch_credentials, fetch_jobs, fetch_oauth, fetch_webhooks,
+    OAuthProvider,
     save_credential, save_webhook, CatalogueJob, CommandRoute, CredentialEntry, CredentialRef,
     JobInput, Lookup, SeenAction, Webhook, WebhookDef, WebhookFamily, WebhookKind,
     WebhookStats, WebhooksResponse,
@@ -733,6 +734,76 @@ pub fn WebhookTile() -> Element {
     }
 }
 
+/// Under the lookup credential: the providers rn can sign in to, and the
+/// credential each sign-in fills.
+///
+/// A button that fills the field, never one that starts the sign-in. A sign-in
+/// sends this tab to the provider and back — deliberately, so the board it was
+/// started from is the board that shows the result — and a form half filled in
+/// would not survive the trip. So an unconnected provider gets the route to
+/// the place that can connect it, and the advice to save first.
+#[component]
+fn FromASignIn(
+    providers: Vec<OAuthProvider>,
+    chosen: String,
+    on_use: EventHandler<String>,
+) -> Element {
+    if providers.is_empty() {
+        return rsx! {};
+    }
+    rsx! {
+        div { class: "flex flex-col gap-1 mt-1",
+            for p in providers.iter() {
+                div { key: "{p.id}", class: "flex items-center gap-2 flex-wrap",
+                    span { class: HINT, "{p.label}:" }
+                    match (&p.connection, p.token_set) {
+                        (Some(c), _) => rsx! {
+                            span { class: "text-gray-300 text-xs",
+                                "signed in"
+                                if let Some(login) = c.login.as_ref() { " as {login}" }
+                                " — token in "
+                                span { class: "font-mono", "{p.token_credential}" }
+                            }
+                        },
+                        (None, true) => rsx! {
+                            span { class: "text-gray-300 text-xs",
+                                span { class: "font-mono", "{p.token_credential}" }
+                                " is set, though not by a sign-in here"
+                            }
+                        },
+                        (None, false) => rsx! {
+                            span { class: "text-gray-400 text-xs", "not connected" }
+                        },
+                    }
+                    if p.connection.is_some() || p.token_set {
+                        if chosen.trim() == p.token_credential {
+                            span { class: HINT, "— in use" }
+                        } else {
+                            button {
+                                class: "text-xs cursor-pointer hover:underline bg-transparent border-0 p-0",
+                                style: "color: #22d3ee;",
+                                onclick: {
+                                    let name = p.token_credential.clone();
+                                    move |_| on_use.call(name.clone())
+                                },
+                                "use it"
+                            }
+                        }
+                    } else {
+                        span { class: HINT, "— sign in on " }
+                        Link {
+                            to: Route::ConfigConnection {},
+                            class: "text-blue-400 hover:text-blue-300 text-xs",
+                            "Config → Connection"
+                        }
+                        span { class: HINT, ", after saving this hook — the sign-in leaves this page" }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// The values a hook has been sent at its action paths, busiest first.
 fn busiest(seen: &[SeenAction]) -> Vec<SeenAction> {
     let mut v = seen.to_vec();
@@ -1134,6 +1205,15 @@ pub(crate) fn Form(
     // Above the early return, because a hook that runs on some renders and not
     // others is the one rule Dioxus does not forgive.
     let catalogue = use_resource(fetch_jobs);
+    // The providers rn can sign in to, for the lookup credential below: a
+    // notification hook's fetch needs a token for the provider's API, and a
+    // sign-in on Config → Connection is one of the two ways to have one. Here
+    // rather than in the tile for the reason the catalogue is: nothing asks
+    // until a form is open.
+    let providers: Vec<OAuthProvider> = match &*use_resource(fetch_oauth).read_unchecked() {
+        Some(Ok(r)) => r.providers.clone(),
+        _ => Vec::new(),
+    };
     let described: Vec<CatalogueJob> = match &*catalogue.read_unchecked() {
         Some(Ok(r)) => r.catalogue.clone(),
         // Empty while it is in flight, and empty if it failed. `JobOptions`
@@ -1424,7 +1504,15 @@ pub(crate) fn Form(
                     Field {
                         label: "with credential".to_string(),
                         hint: Some("optional — sent as Authorization: Bearer. A name, not a token".to_string()),
-                        info: None,
+                        info: Some(rsx! {
+                            InfoButton {
+                                title: "The credential the fetch uses".to_string(),
+                                what: LOOKUP_CRED_WHAT.to_string(),
+                                why: LOOKUP_CRED_WHY.to_string(),
+                                if_wrong: LOOKUP_CRED_IF_WRONG.to_string(),
+                                glossary: glossary(),
+                            }
+                        }),
                         input {
                             r#type: "text",
                             class: TEXT_INPUT,
@@ -1434,6 +1522,11 @@ pub(crate) fn Form(
                                 let v = evt.value();
                                 edit(&move |d| d.lookup_credential = v.clone());
                             },
+                        }
+                        FromASignIn {
+                            providers: providers.clone(),
+                            chosen: draft.lookup_credential.clone(),
+                            on_use: move |name: String| edit(&move |d| d.lookup_credential = name.clone()),
                         }
                     }
                 }
@@ -1754,6 +1847,24 @@ const TILE_BODY: &str =
      below may declare webhooks of their own in code; those are not shown here, because there is \
      nothing on this page that could change them.\n\nEvery delivery must carry a valid signature \
      or it is refused before anything runs. That is not a setting.";
+
+const LOOKUP_CRED_WHAT: &str = "The credential the fetch authenticates with, sent as \
+    Authorization: Bearer. A name, not a token — the value lives in the credentials file and is \
+    never on this page.\n\nIt is not the signing credential above. That one proves a delivery \
+    came from the provider; this one proves rn to the provider when it calls back for the \
+    record. They are different directions and almost always different strings.";
+const LOOKUP_CRED_WHY: &str = "A notification hook fetches the record the delivery names, and \
+    an API that answers with anything worth fetching wants authentication. Two ways to have a \
+    token: paste one the provider issued you — a personal access token, a service account key — \
+    or sign in, where rn holds the token the flow returns and renews it before a run when the \
+    provider gives an expiry. Any provider rn can sign in to is listed under the field, with \
+    the credential its sign-in fills.";
+const LOOKUP_CRED_IF_WRONG: &str = "A missing or wrong token means every lookup fails, and the \
+    hook's counter reads \"accepted but started nothing\" — the provider sees success, since \
+    the delivery was accepted before the fetch was tried. An expired one fails the same way, \
+    which is why a token that can expire is better held by a sign-in than pasted. Using a \
+    provider's token here also means every delivery to this hook can read whatever that token \
+    can.";
 
 const SEEN_WHAT: &str = "The values this hook's deliveries actually carried in the body, and \
     how often. A command hook is read at its own action field — the value its routing table is \

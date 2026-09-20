@@ -150,8 +150,10 @@ pub static FAMILIES: [EventFamily; 6] = [
               job acts on what is true now rather than on what was true when the event was \
               sent.\n\nThat fetch needs a credential of its own — the hook's `with credential` \
               field — and it is a token for the provider's API rather than the signing secret \
-              the delivery is checked against. Where that token comes from, and which half of \
-              OAuth rn can do, is the OAuth board on Config → Connection.",
+              the delivery is checked against. Either paste one the provider issued you, or \
+              sign in on Config → Connection and let the flow fill it: the form lists every \
+              provider rn can sign in to under that field, with the credential each sign-in \
+              fills.",
         if_wrong: "A value that drifts back to an earlier state for no visible reason. Compare the \
                    order of the runs on Monitor → Webhooks with the order of edits at the \
                    provider; if they differ, the hook wants to fetch first.",
