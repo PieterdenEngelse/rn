@@ -697,6 +697,16 @@ what is occupied. The `Done` block prints all three with the variables that set
 them, which is also the first place the two extra ports have ever been named to
 someone who only ran the installer.
 
+The port scan is a guess made before the fact, though — it names a *likely*
+cause and can be wrong in both directions. The authoritative answer comes from
+the backend itself once it is up, and both installers now read it: `/api/health`
+reports `ok` or `degraded`, because the two listeners have no GET of their own
+(one is what a tunnel points at, the other is public by design) and the mail
+watch is a client rather than a listener, so all three are answered for from
+the API's own process. That an install printed `running:` has never meant more
+than "the API answered"; a degraded one now says so, with the body and a
+pointer to Monitor → Connection, where the reason is spelled out.
+
 **`notify-send`, named on Linux and ruled out on Windows.** The `desktop-notify`
 job runs `/usr/bin/notify-send` or `/bin/notify-send` by absolute path and has
 no fallback (`be/src/jobs/desktop-notify.ts`), so its absence is a permanent

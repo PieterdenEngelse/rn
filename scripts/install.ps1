@@ -628,14 +628,27 @@ if (-not $NoStart) {
             "Tracking links already sent stop resolving while it is."
         Start-ScheduledTask -TaskName $TaskName
         $up = $false
+        $health = ""
         foreach ($attempt in 1..30) {
             try {
-                Invoke-WebRequest -Uri "${url}api/health" -UseBasicParsing -TimeoutSec 2 | Out-Null
+                $health = (Invoke-WebRequest -Uri "${url}api/health" -UseBasicParsing -TimeoutSec 2).Content
                 $up = $true; break
             } catch { Start-Sleep -Milliseconds 500 }
         }
         if ($up) {
             Write-Log "running: $url"
+            # The API answering used to be the whole test, and it cannot see
+            # the three things beside it: the two listeners have no GET of
+            # their own and the mail watch is a client, so all three are
+            # reported from here instead (be/src/server.ts). "degraded" means
+            # the page will load and something behind it will not work. Parsed
+            # rather than matched as text, because a JSON shape is what it is.
+            $status = try { ($health | ConvertFrom-Json).status } catch { "" }
+            if ($status -eq "degraded") {
+                Write-Warn "the API is up and reports itself degraded — a listener or the mail watch did not start:"
+                Write-Warn "  $health"
+                Write-Warn "  Monitor -> Connection shows the same thing with the reason spelled out."
+            }
         } else {
             Write-Warn "started, but ${url}api/health is not answering yet."
             Write-Warn "Check it with: (Get-ScheduledTask $TaskName).State, then $Prefix\rn.exe --status"

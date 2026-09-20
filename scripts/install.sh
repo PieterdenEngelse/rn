@@ -299,12 +299,25 @@ if [ "$START" = 1 ]; then
             "Tracking links already sent stop resolving while it is."
         systemctl --user start "$UNIT"
         up=0
+        health=""
         for _ in $(seq 1 30); do
-            if curl -fsS "${url}api/health" >/dev/null 2>&1; then up=1; break; fi
+            if health=$(curl -fsS "${url}api/health" 2>/dev/null); then up=1; break; fi
             sleep 0.5
         done
         if [ "$up" = 1 ]; then
             log "running: $url"
+            # The API answering used to be the whole test, and it cannot see
+            # the three things beside it: the two listeners have no GET of
+            # their own and the mail watch is a client, so all three are
+            # reported from here instead (be/src/server.ts). "degraded" means
+            # the page will load and something behind it will not work.
+            case "$health" in
+                *'"status":"degraded"'*)
+                    warn "the API is up and reports itself degraded — a listener or the mail watch did not start:"
+                    warn "  $health"
+                    warn "  Monitor → Connection shows the same thing with the reason spelled out."
+                    ;;
+            esac
         else
             warn "started, but ${url}api/health is not answering yet; see: journalctl --user -u $UNIT"
         fi
