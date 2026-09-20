@@ -221,16 +221,35 @@ function Remove-Tree($dir) {
     }
 }
 
-# BACKEND_PORT out of app\.env, read the way the launcher reads it; 3010
-# otherwise. Same default and same precedence as be/src/config.ts.
-function Get-ApiPort {
+# A port out of app\.env, read the way the launcher reads it; the default
+# otherwise. Same defaults and same precedence as be/src/config.ts, which now
+# binds three listeners rather than one: the API, the webhook listener and the
+# click tracker.
+function Get-EnvPort($Name, $Default) {
     $envFile = Join-Path $Prefix "app\.env"
     if (Test-Path $envFile) {
-        $hit = Select-String -Path $envFile -Pattern '^\s*BACKEND_PORT\s*=\s*["'']?(\d+)' |
+        $hit = Select-String -Path $envFile -Pattern "^\s*$Name\s*=\s*[`"']?(\d+)" |
                Select-Object -Last 1
         if ($hit) { return [int] $hit.Matches[0].Groups[1].Value }
     }
-    return 3010
+    return $Default
+}
+
+# Whoever is listening on a port, or $null. The two secondary listeners fail
+# soft — a bind they lose leaves the API running and is reported only in the
+# log and on /api/health (be/src/hooks/server.ts) — so an install that does not
+# look here reads as a healthy one until the first delivery goes missing.
+function Get-PortHolder($Port) {
+    Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+}
+
+function Write-SecondaryPortWarning($What, $Port, $Cost) {
+    $holder = Get-PortHolder $Port
+    if (-not $holder) { return }
+    $who = try { (Get-Process -Id $holder.OwningProcess).ProcessName } catch { "unknown" }
+    Write-Warn "port $Port is taken by $who (pid $($holder.OwningProcess)), so the $What listener will not bind."
+    Write-Warn "  $Cost The API is unaffected and rn starts anyway; /api/health reports the fault."
 }
 
 # ---------------------------------------------------------------------------
@@ -540,7 +559,9 @@ Remove-Tree $Prefix
 Move-Item $staging $Prefix
 Write-Log "installed, $(Get-TreeSizeMB $Prefix) MB"
 
-$port = Get-ApiPort
+$port        = Get-EnvPort "BACKEND_PORT" 3010
+$hooksPort   = Get-EnvPort "BACKEND_HOOKS_PORT" 3011
+$trackerPort = Get-EnvPort "BACKEND_TRACKER_PORT" 3012
 $url  = "http://127.0.0.1:$port/"
 
 if (-not $NoAutostart) {
@@ -591,8 +612,7 @@ if (-not $NoAutostart) {
 
 if (-not $NoStart) {
     Write-Step "Starting"
-    $holder = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue |
-              Select-Object -First 1
+    $holder = Get-PortHolder $port
     if ($holder) {
         $who = try { (Get-Process -Id $holder.OwningProcess).ProcessName } catch { "unknown" }
         Write-Warn "port $port is already taken by $who (pid $($holder.OwningProcess)), so rn was not started."
@@ -602,6 +622,10 @@ if (-not $NoStart) {
         # to this console: it would die with the window. Say so instead.
         Write-Log "no autostart was registered — run $Prefix\rn.exe yourself"
     } else {
+        Write-SecondaryPortWarning "webhook" $hooksPort `
+            "Deliveries are refused while it is, and a provider retrying gets a closed port."
+        Write-SecondaryPortWarning "tracker" $trackerPort `
+            "Tracking links already sent stop resolving while it is."
         Start-ScheduledTask -TaskName $TaskName
         $up = $false
         foreach ($attempt in 1..30) {
@@ -621,6 +645,14 @@ if (-not $NoStart) {
 
 Write-Step "Done"
 Write-Log "launcher:  $Prefix\rn.exe  (--status, --print-env)"
+Write-Log "listeners: API $port, webhooks $hooksPort, tracker $trackerPort"
+Write-Log "           set as BACKEND_PORT, BACKEND_HOOKS_PORT and BACKEND_TRACKER_PORT in app\.env"
 Write-Log "settings:  $ConfigDir  (never touched by install or uninstall)"
+# Said here because nothing else will say it. The desktop-notify job runs
+# /usr/bin/notify-send or /bin/notify-send and nothing else
+# (be/src/jobs/desktop-notify.ts), so on Windows it can only fail — and it
+# fails as a red run half an hour after whatever it was meant to announce,
+# which is the worst place to learn it. Every other job is unaffected.
+Write-Log "notify:    the desktop-notify job is Linux-only (it runs notify-send); use the notify job instead"
 Write-Log "update:    .\install.ps1 -FromRelease   rebuild: .\scripts\install.ps1"
 Write-Log "remove:    .\scripts\install.ps1 -Uninstall"

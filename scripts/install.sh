@@ -163,13 +163,19 @@ stop_service() {
     fi
 }
 
-# BACKEND_PORT from app/.env, as the launcher reads it; 3010 otherwise.
-api_port() {
-    local p
-    p=$(sed -n 's/^[[:space:]]*BACKEND_PORT[[:space:]]*=[[:space:]]*["'\'']\{0,1\}\([0-9][0-9]*\).*/\1/p' \
+# A port from app/.env, as the launcher reads it; the default otherwise. The
+# backend binds three listeners, not one (be/src/config.ts): the API, the
+# webhook listener and the click tracker. Same defaults as that file.
+env_port() {
+    local name=$1 default=$2 p
+    p=$(sed -n "s/^[[:space:]]*$name[[:space:]]*=[[:space:]]*[\"']\{0,1\}\([0-9][0-9]*\).*/\1/p" \
         "$PREFIX/app/.env" 2>/dev/null | tail -1)
-    echo "${p:-3010}"
+    echo "${p:-$default}"
 }
+
+# Whoever is listening on a port, or nothing. One line, the same shape the
+# start step prints back.
+port_holder() { ss -ltnpH "sport = :$1" 2>/dev/null | head -1; }
 
 if [ "$UNINSTALL" = 1 ]; then
     step "Uninstalling $PREFIX"
@@ -223,7 +229,9 @@ mv "$new" "$PREFIX"
 rm -rf "$old"
 log "installed, $(du -sh "$PREFIX" | cut -f1)"
 
-port=$(api_port)
+port=$(env_port BACKEND_PORT 3010)
+hooks_port=$(env_port BACKEND_HOOKS_PORT 3011)
+tracker_port=$(env_port BACKEND_TRACKER_PORT 3012)
 url="http://127.0.0.1:$port/"
 
 if [ "$SERVICE" = 1 ]; then
@@ -263,15 +271,32 @@ EOF
     log "enabled $UNIT; the menu entry opens $url"
 fi
 
+# The other two listeners fail soft, which is why they are looked at here.
+# A bind they lose leaves the API running and is reported only in the journal
+# and on /api/health (be/src/hooks/server.ts), so an install that says nothing
+# looks like a healthy one until the first delivery goes missing.
+warn_secondary_port() {
+    local what=$1 p=$2 cost=$3 h
+    h=$(port_holder "$p")
+    [ -n "$h" ] || return 0
+    warn "port $p is taken, so the $what listener will not bind:"
+    warn "  $h"
+    warn "  $cost  The API is unaffected and rn starts anyway; /api/health reports the fault."
+}
+
 if [ "$START" = 1 ]; then
     step "Starting"
-    holder=$(ss -ltnpH "sport = :$port" 2>/dev/null | head -1)
+    holder=$(port_holder "$port")
     if [ -n "$holder" ]; then
         warn "port $port is already taken, so $UNIT was not started:"
         warn "  $holder"
         warn "a development backend (rn-backend.service) uses the same ports and the same ~/.config/rn."
         warn "stop that first, or set BACKEND_PORT in $PREFIX/app/.env, then: systemctl --user start $UNIT"
     else
+        warn_secondary_port webhook "$hooks_port" \
+            "Deliveries are refused while it is, and a provider retrying gets a closed port."
+        warn_secondary_port tracker "$tracker_port" \
+            "Tracking links already sent stop resolving while it is."
         systemctl --user start "$UNIT"
         up=0
         for _ in $(seq 1 30); do
@@ -288,5 +313,19 @@ fi
 
 step "Done"
 log "launcher:  $PREFIX/rn  (--status, --print-env)"
+log "listeners: API $port, webhooks $hooks_port, tracker $tracker_port"
+log "           set as BACKEND_PORT, BACKEND_HOOKS_PORT and BACKEND_TRACKER_PORT in app/.env"
 log "settings:  ~/.config/rn  (never touched by install or uninstall)"
+# The desktop-notify job runs /usr/bin/notify-send or /bin/notify-send by
+# absolute path and nothing else (be/src/jobs/desktop-notify.ts), so a machine
+# without one fails that job permanently rather than falling back to anything.
+# A note rather than a refusal: every other job works without it, and this is
+# the only place the absence is cheap to see — in the job it surfaces as a red
+# run half an hour after something else went right.
+if [ -x /usr/bin/notify-send ] || [ -x /bin/notify-send ]; then
+    log "notify:    notify-send is here, so the desktop-notify job can draw on this screen"
+else
+    warn "no notify-send at /usr/bin or /bin, so the desktop-notify job will fail every run."
+    warn "  Install libnotify-bin (Debian, Ubuntu) or libnotify (Fedora, Arch); nothing else needs it."
+fi
 log "remove:    $PREFIX/install.sh --uninstall"

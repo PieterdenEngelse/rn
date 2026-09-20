@@ -682,6 +682,32 @@ nothing to source them from yet.
 by AST in the PowerShell container and run, checking it passes for a present
 cmdlet and that its failure names the cmdlet, the reason and the remedy.
 
+**Both installers know three listeners now, not one.** The backend binds the
+API, the webhook listener and the click tracker (`be/src/config.ts`), and the
+installers had only ever read `BACKEND_PORT`. That was right while it was the
+only port and wrong afterwards, in a way that hides itself: a lost API bind is
+fatal and reported on stderr, while the other two *fail soft* — the bind error
+goes to the log and to `/api/health`, the API stays up, and the install reads
+as a healthy one until the first delivery goes missing or a tracking link stops
+resolving. So `install.sh` has `env_port NAME DEFAULT` and `install.ps1` has
+`Get-EnvPort` in place of the old single-purpose readers; both check all three
+ports before starting, refuse to start on a taken API port exactly as before,
+and warn on a taken hooks or tracker port naming what stops working rather than
+what is occupied. The `Done` block prints all three with the variables that set
+them, which is also the first place the two extra ports have ever been named to
+someone who only ran the installer.
+
+**`notify-send`, named on Linux and ruled out on Windows.** The `desktop-notify`
+job runs `/usr/bin/notify-send` or `/bin/notify-send` by absolute path and has
+no fallback (`be/src/jobs/desktop-notify.ts`), so its absence is a permanent
+failure of that job — surfacing half an hour later as a red run, which is the
+worst place to learn it. `install.sh` says which of the two it found, or names
+the package to install (`libnotify-bin`, or `libnotify`) and says nothing else
+needs it: a note, not a refusal, because every other job works without it.
+`install.ps1` says the job is Linux-only and points at the `notify` job, which
+posts to a URL and works anywhere. Neither installer can fix this for the user;
+both can stop it being a mystery.
+
 **`install-gui.ps1`** is `install-gui.sh`'s Windows twin, and `install-rn.cmd`
 now fetches it rather than `install.ps1`: the same three windows — a
 confirmation, a progress window naming the step from `install.ps1`'s own
