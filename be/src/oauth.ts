@@ -84,6 +84,18 @@ export interface ProviderDef {
     registerAt: string;
     /** What the provider says about a token with no `expires_in`. */
     noExpiryNote: string;
+    /**
+     * Extra query parameters on the authorize URL, where a provider needs its
+     * own. Google wants `access_type=offline` and `prompt=consent` or it hands
+     * back an access token with no refresh token — and then a sign-in that
+     * looked fine dies an hour later with nothing to renew it from.
+     */
+    authorizeParams?: Record<string, string>;
+    /**
+     * What to know before registering the app, where the callback line above
+     * is not the whole story. Rendered under it.
+     */
+    registerNote?: string;
     /** Hosts the flow reaches, named in the hint when Deno refuses one. */
     hosts: string[];
     /** Who the token belongs to. Optional to succeed: a sign-in without it still works. */
@@ -97,6 +109,12 @@ const GITHUB_HEADERS = {
     "user-agent": "rn",
     "x-github-api-version": "2022-11-28",
 };
+
+const GOOGLE_HOSTS = [
+    "accounts.google.com",
+    "oauth2.googleapis.com",
+    "openidconnect.googleapis.com",
+];
 
 export const PROVIDERS: ProviderDef[] = [
     {
@@ -144,6 +162,66 @@ export const PROVIDERS: ProviderDef[] = [
             if (res.status === 204) return "GitHub revoked the token";
             if (res.status === 404) return "GitHub no longer knew the token — it was already revoked or expired";
             throw new Error(`${res.status} ${res.statusText} from GitHub's revoke endpoint`);
+        },
+    },
+    {
+        id: "google",
+        label: "Google",
+        authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+        tokenUrl: "https://oauth2.googleapis.com/token",
+        clientIdCredential: "googleOAuthClientId",
+        clientSecretCredential: "googleOAuthClientSecret",
+        // Nothing in rn reads this yet, unlike githubToken: it is a token to point
+        // something at — a notification webhook's fetch, or a job written against a
+        // Google API — which is why the scopes box matters more here than it does
+        // for GitHub. What the sign-in feeds is listed on the board as it is used.
+        tokenCredential: "googleToken",
+        refreshCredential: "googleRefreshToken",
+        // Enough to say whose account it is and nothing else. Google's tokens are
+        // scoped per API, so the useful scope is whichever the thing reading the
+        // token needs, and that is a per-sign-in answer rather than a default.
+        defaultScopes: "openid email",
+        registerAt: "https://console.cloud.google.com/apis/credentials",
+        // Google always sends expires_in, so this is the sentence for the case
+        // that should not happen rather than for a normal one.
+        noExpiryNote:
+            "signed in with Google, which did not say when the token expires — Google normally does, so treat it as short-lived and expect the refresh to be what keeps it alive",
+        authorizeParams: {
+            // Without these two Google returns an access token and no refresh
+            // token: offline access is what asks for one, and consent is what
+            // makes it do so again on a second sign-in rather than assuming the
+            // first one is still held here.
+            access_type: "offline",
+            prompt: "consent",
+        },
+        registerNote:
+            "Create it as a Desktop app client. Google then accepts a loopback redirect on any port, which is what lets several worktrees share one app; a Web application client matches the redirect URI exactly, port and all, and would need an entry per port.",
+        hosts: GOOGLE_HOSTS,
+        async identify(token, signal) {
+            // Works on the openid/email scopes above, and returns nothing useful
+            // without them — which is why identify is allowed to fail.
+            const res = await fetch("https://openidconnect.googleapis.com/v1/userinfo", {
+                headers: { authorization: `Bearer ${token}`, "user-agent": "rn" },
+                signal,
+            });
+            if (!res.ok) throw new Error(`${res.status} ${res.statusText} from Google's userinfo endpoint`);
+            const body = (await res.json()) as { email?: unknown; sub?: unknown };
+            if (typeof body.email === "string") return body.email;
+            return typeof body.sub === "string" ? body.sub : undefined;
+        },
+        async revoke(_clientId, _clientSecret, token, signal) {
+            // The token authenticates this one, not the app: Google's revoke
+            // endpoint takes the token alone and kills the whole grant, refresh
+            // token included.
+            const res = await fetch("https://oauth2.googleapis.com/revoke", {
+                method: "POST",
+                headers: { "content-type": "application/x-www-form-urlencoded", "user-agent": "rn" },
+                body: new URLSearchParams({ token }).toString(),
+                signal,
+            });
+            if (res.ok) return "Google revoked the token, and the refresh token with it";
+            if (res.status === 400) return "Google no longer knew the token — it was already revoked or expired";
+            throw new Error(`${res.status} ${res.statusText} from Google's revoke endpoint`);
         },
     },
 ];
@@ -348,6 +426,10 @@ export function start(
     });
 
     const url = new URL(p.authorizeUrl);
+    // Always, though GitHub assumes it: Google refuses an authorize request
+    // without it, and a provider that defaults it cannot mind being told.
+    url.searchParams.set("response_type", "code");
+    for (const [k, v] of Object.entries(p.authorizeParams ?? {})) url.searchParams.set(k, v);
     url.searchParams.set("client_id", clientId);
     url.searchParams.set("redirect_uri", redirectUri);
     if (scoped.scopes !== "") url.searchParams.set("scope", scoped.scopes);
@@ -770,6 +852,7 @@ export function describeAll(usedBy: (credential: string) => string[], nowMs: num
                 : { redirectProblem: redirect.problem }),
             registerCallback: registerCallback(p),
             registerAt: p.registerAt,
+            ...(p.registerNote === undefined ? {} : { registerNote: p.registerNote }),
             defaultScopes: p.defaultScopes,
             ...(connection === undefined ? {} : { connection }),
             ...(attempt === undefined ? {} : { lastAttempt: attempt }),

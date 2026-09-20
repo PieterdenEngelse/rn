@@ -99,6 +99,12 @@ wire! {
         pub register_callback: String,
         /// Where the app is registered.
         pub register_at: String,
+        /// What to know before registering, where the callback URL is not the
+        /// whole story — Google's client type decides whether the port may
+        /// vary, and getting it wrong is a redirect_uri_mismatch at the end of
+        /// a sign-in rather than at the start.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub register_note: Option<String>,
         /// Scopes asked for when the page does not say otherwise.
         pub default_scopes: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]

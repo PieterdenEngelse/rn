@@ -129,6 +129,58 @@ test("start sends the browser to GitHub with a loopback redirect, state and an S
     assert.ok(!url.toString().includes("client-secret-value-0001"));
 });
 
+test("Google's sign-in asks for the refresh token GitHub never needed to be asked for", () => {
+    const google = oauth.providerById("google")!;
+    const idVar = envVarFor(google.clientIdCredential);
+    const secretVar = envVarFor(google.clientSecretCredential);
+    process.env[idVar] = "1234.apps.googleusercontent.com";
+    process.env[secretVar] = "google-client-secret-0001";
+    try {
+        const started = oauth.start(google, undefined, "http://127.0.0.1:1790", 1_000_000);
+        assert.ok("authorizeUrl" in started, JSON.stringify(started));
+        const url = new URL(started.authorizeUrl);
+        assert.equal(url.origin + url.pathname, "https://accounts.google.com/o/oauth2/v2/auth");
+        // Google refuses without it; GitHub assumes it. Sent to both.
+        assert.equal(url.searchParams.get("response_type"), "code");
+        // Without these two Google returns an access token that expires in an
+        // hour and no refresh token, so the sign-in looks fine and is dead by
+        // lunchtime. prompt=consent because Google only hands the refresh
+        // token out at the consent screen, and skips it on a second sign-in.
+        assert.equal(url.searchParams.get("access_type"), "offline");
+        assert.equal(url.searchParams.get("prompt"), "consent");
+        assert.equal(url.searchParams.get("scope"), "openid email");
+        assert.equal(url.searchParams.get("code_challenge_method"), "S256");
+        assert.equal(
+            url.searchParams.get("redirect_uri"),
+            "http://127.0.0.1:3999/api/oauth/google/callback",
+        );
+        assert.ok(!started.authorizeUrl.includes("google-client-secret-0001"));
+    } finally {
+        delete process.env[idVar];
+        delete process.env[secretVar];
+    }
+});
+
+test("every provider is a sign-in the routes and the credentials board can see", () => {
+    // A provider is four credential names, two URLs and a path segment; one of
+    // them missing is a board with a dead button on it rather than a type
+    // error.
+    for (const p of oauth.PROVIDERS) {
+        assert.match(p.id, /^[a-z0-9-]+$/, p.id);
+        assert.equal(oauth.callbackPath(p.id), `/api/oauth/${p.id}/callback`);
+        for (const url of [p.authorizeUrl, p.tokenUrl]) {
+            assert.equal(new URL(url).protocol, "https:", `${p.id}: ${url}`);
+        }
+        for (const name of [p.clientIdCredential, p.clientSecretCredential, p.tokenCredential, p.refreshCredential]) {
+            assert.match(name, /^[A-Za-z][A-Za-z0-9_]{0,63}$/, `${p.id}: ${name}`);
+        }
+        assert.deepEqual(oauth.normaliseScopes(p.defaultScopes), { scopes: p.defaultScopes });
+        // The hosts the flow reaches, for the hint when a runtime refuses one.
+        assert.ok(p.hosts.includes(new URL(p.tokenUrl).host), `${p.id} does not name its token host`);
+    }
+    assert.deepEqual(oauth.PROVIDERS.map((p) => p.id), ["github", "google"]);
+});
+
 test("scopes are normalised, and anything outside the alphabet is refused", () => {
     assert.deepEqual(oauth.normaliseScopes(" repo,  read:user "), { scopes: "repo read:user" });
     assert.ok("error" in oauth.normaliseScopes("repo&redirect_uri=http://evil"));

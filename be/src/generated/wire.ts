@@ -1596,6 +1596,13 @@ registerCallback: string,
  */
 registerAt: string, 
 /**
+ * What to know before registering, where the callback URL is not the
+ * whole story — Google's client type decides whether the port may
+ * vary, and getting it wrong is a redirect_uri_mismatch at the end of
+ * a sign-in rather than at the start.
+ */
+registerNote?: string | null, 
+/**
  * Scopes asked for when the page does not say otherwise.
  */
 defaultScopes: string, connection?: OAuthConnection | null, lastAttempt?: OAuthAttempt | null, 

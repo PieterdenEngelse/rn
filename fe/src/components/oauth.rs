@@ -241,6 +241,9 @@ fn ProviderBoard(provider: OAuthProvider, on_change: EventHandler<()>) -> Elemen
                             "Copy"
                         }
                     }
+                    if let Some(note) = p.register_note.as_ref() {
+                        div { class: HINT, "{note}" }
+                    }
                     div { class: HINT,
                         "no port: {p.label} matches a loopback callback on any port · register the app at "
                         a {
