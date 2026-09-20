@@ -781,6 +781,16 @@ all three listeners, answer `/api/health`, and serve the page. The probe is the
 bundled node rather than curl, so it needs nothing installed and can never
 itself be the reason a run fails.
 
+The verdict is the health *status* and the three listening steps by name, not
+merely that something answered. That distinction is the whole point on a
+release: the API answers whether or not the hooks listener and the tracker
+bound, because neither has a GET of its own — one is what a tunnel points at,
+the other's single route is public — so both are reported through the API, and
+a release that installed, served the page and refused every webhook delivery
+used to print the word `degraded` in this script's own health line and exit 0.
+Checked both ways: the assertions pass against v0.1.8 on `debian:12`, and
+against a fabricated boot log missing `tracker-listening` they fail, naming it.
+
 It earns its place by having caught the bug it was written for. Pointed at
 v0.1.1 it still fails, with the reason in plain sight:
 
@@ -795,11 +805,15 @@ glibc Linux. An EOL image whose apt repositories have been archived reports
 SKIP rather than FAIL, and a run where *everything* skipped is an error, not a
 pass: the set that was checked was empty.
 
-`install.sh --from-release` downloads that asset with `gh`, because the repo
-is private, checks it against the published sha256, unpacks it and installs
-it exactly as it installs a locally built package. So the machine that
-installs rn needs neither Rust, nor Node, nor `dx`, nor a checkout — only
-`gh`, signed in.
+`install.sh --from-release` downloads that asset, checks it against the
+published sha256, unpacks it and installs it exactly as it installs a locally
+built package. It prefers `gh` when it is there and signed in — that resolves
+"the latest release" for it and keeps working if this repository is ever made
+private again — and falls back to plain `curl` against
+`releases/latest/download`, which a public repository serves to anyone. So the
+machine that installs rn needs neither Rust, nor Node, nor `dx`, nor a
+checkout, and since 4523bc7 not `gh` either: that requirement was what made
+the Linux path the harder of the two, for no reason a user could act on.
 
 **Tested 2026-09-11.** A `--no-web --no-sig` package came to 115M: runtime
 104M, `node_modules` 9M, launcher 868K. It was installed into a scratch

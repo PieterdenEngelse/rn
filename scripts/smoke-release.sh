@@ -27,6 +27,14 @@
 # launcher, the launcher starting the bundled Node, all three listeners coming
 # up, /api/health answering, and the page returning 200.
 #
+# The verdict is the health *status*, not the fact of an answer, and the three
+# listeners are checked by name in the boot log. That distinction is the whole
+# point on a release: the API answers whether or not the hooks listener and the
+# tracker bound, since neither has a GET of its own and both are reported
+# through it. Before this was asserted, a release that installed, served the
+# page and refused every webhook delivery printed the word degraded in the
+# health line and exited 0.
+#
 # What it does NOT cover, and should not be read as covering:
 #
 #   - systemd. A container has no user session, so the install runs
@@ -160,6 +168,34 @@ if [ "$ok" != 1 ]; then
     echo "-- backend log --";      tail -8 /tmp/boot.log
     exit 1
 fi
+
+# Answering is not the same as working, and until this was here the difference
+# went unchecked. The API is up either way; the hooks listener, the tracker and
+# the mail watch are all reported *through* it, because none of the three can
+# answer for itself — so a release that installs, serves the page and refuses
+# every webhook delivery passed this gate, printing the word degraded in the
+# health line above and still exiting 0.
+case "$health" in
+    *'"status":"ok"'*) ;;
+    *)
+        echo "FAIL: the API answered but did not report itself healthy"
+        echo "  $health"
+        echo "-- what failed to start --"
+        grep -E 'listen-failed' /tmp/boot.log | tail -5
+        exit 1 ;;
+esac
+
+# And the three listeners by name, which is what the header of this file has
+# always claimed to cover. The health status stands in for two of them; the
+# API's own listen has no flag in it, and a socket that never bound is easier
+# to read here than to infer from what is missing.
+for s in listening hooks-listening tracker-listening; do
+    grep -q "\"step\":\"$s\"" /tmp/boot.log || {
+        echo "FAIL: the backend never logged $s"
+        echo "-- backend log --"; tail -8 /tmp/boot.log
+        exit 1
+    }
+done
 echo "PASS"
 INNER
 

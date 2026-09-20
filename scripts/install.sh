@@ -20,10 +20,14 @@
 # the launcher reads its ports from there.
 #
 # Linux only, like the package (docs/packaging.md §9). scripts/install.ps1 is
-# not a twin of this file and should not be read as one: with no Windows
-# packager it builds from the checkout and installs in one pass, so it has no
-# --from-release and no package to verify. Its header says so, and says what
-# would have to exist for the two to converge.
+# still not a twin of this file, but for one remaining reason rather than the
+# two written here before: it installs and can also *build*, because there is
+# no package.ps1 for it to install the output of. What it stopped lacking in
+# 72af6d4 is the release path — `install.ps1 -FromRelease` downloads the
+# Windows package that `package.sh --target windows` cross-builds here, checks
+# it and installs it with no toolchain on the machine, which is what
+# --from-release does above. The pairing to keep honest is that file against
+# docs/packaging.md §1, whose layout it has to produce exactly.
 set -euo pipefail
 
 # Piped rather than saved — `curl ... | bash` — means there is no script file,
