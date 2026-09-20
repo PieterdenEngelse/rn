@@ -145,9 +145,13 @@ pub static FAMILIES: [EventFamily; 6] = [
                sorter splits them at each capital, so those read as change and move.",
         why: "Updates come in bursts, and two edits a second apart can be delivered in either \
               order — retries make that worse, not better. A job that writes what the delivery \
-              says can end on the older value. That is the case for the Notification kind on \
-              Config → Jobs: rn fetches the record by id when the delivery lands, so the job \
-              acts on what is true now rather than on what was true when the event was sent.",
+              says can end on the older value. That is why this board starts on the \
+              Notification kind: rn fetches the record by id when the delivery lands, so the \
+              job acts on what is true now rather than on what was true when the event was \
+              sent.\n\nThat fetch needs a credential of its own — the hook's `with credential` \
+              field — and it is a token for the provider's API rather than the signing secret \
+              the delivery is checked against. Where that token comes from, and which half of \
+              OAuth rn can do, is the OAuth board on Config → Connection.",
         if_wrong: "A value that drifts back to an earlier state for no visible reason. Compare the \
                    order of the runs on Monitor → Webhooks with the order of edits at the \
                    provider; if they differ, the hook wants to fetch first.",
