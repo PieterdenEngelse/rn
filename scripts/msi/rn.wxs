@@ -134,10 +134,19 @@
          Named, a round is 15ms. The names are every executable the package
          installs — rn.exe, rnw.exe and runtime/bin/node.exe — plus the two
          alternate runtimes jsRuntime can select; the Path match below is
-         still what decides, so a name that is not ours cannot match. -->
+         still what decides, so a name that is not ours cannot match.
+
+         It writes what it saw to stop.log because the race it exists to
+         prevent leaves no other trace: the install succeeds, the log says
+         nothing, and the only symptom is a silent install that stalls at
+         InstallValidate with no dialog to show. A pid in a later round that
+         was not in the first, with a StartTime after the header line, is a
+         launcher having restarted its child — the thing being claimed, said
+         in a file rather than inferred from a hang. Beside rn's own log, so
+         one place holds both halves. -->
     <CustomAction Id="StopRunning"
                   Directory="System64Folder"
-                  ExeCommand="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -WindowStyle Hidden -Command &quot;Get-Process -Name rn,rnw,node,bun,deno -ErrorAction SilentlyContinue | Where-Object Path -like '[INSTALLFOLDER]*' | Where-Object ProcessName -in 'rn','rnw' | Stop-Process -Force -ErrorAction SilentlyContinue; 1..40 | ForEach-Object { if (-not (Get-Process -Name rn,rnw,node,bun,deno -ErrorAction SilentlyContinue | Where-Object Path -like '[INSTALLFOLDER]*')) { break }; Get-Process -Name rn,rnw,node,bun,deno -ErrorAction SilentlyContinue | Where-Object Path -like '[INSTALLFOLDER]*' | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 250 }&quot;"
+                  ExeCommand="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -WindowStyle Hidden -Command &quot;New-Item -ItemType Directory -Force '[%USERPROFILE]\.local\state\rn' | Out-Null; Add-Content -Path '[%USERPROFILE]\.local\state\rn\stop.log' -Value ('=== StopRunning ' + (Get-Date -Format o)); Get-Process -Name rn,rnw,node,bun,deno -ErrorAction SilentlyContinue | Where-Object Path -like '[INSTALLFOLDER]*' | Select-Object Id,ProcessName,StartTime | Out-String | Add-Content -Path '[%USERPROFILE]\.local\state\rn\stop.log'; Get-Process -Name rn,rnw,node,bun,deno -ErrorAction SilentlyContinue | Where-Object Path -like '[INSTALLFOLDER]*' | Where-Object ProcessName -in 'rn','rnw' | Stop-Process -Force -ErrorAction SilentlyContinue; 1..40 | ForEach-Object { if (Get-Process -Name rn,rnw,node,bun,deno -ErrorAction SilentlyContinue | Where-Object Path -like '[INSTALLFOLDER]*') { Get-Process -Name rn,rnw,node,bun,deno -ErrorAction SilentlyContinue | Where-Object Path -like '[INSTALLFOLDER]*' | Select-Object Id,ProcessName,StartTime | Out-String | Add-Content -Path '[%USERPROFILE]\.local\state\rn\stop.log'; Get-Process -Name rn,rnw,node,bun,deno -ErrorAction SilentlyContinue | Where-Object Path -like '[INSTALLFOLDER]*' | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 250 } }; Add-Content -Path '[%USERPROFILE]\.local\state\rn\stop.log' -Value ('=== done ' + (Get-Date -Format o))&quot;"
                   Execute="immediate"
                   Return="ignore" />
 

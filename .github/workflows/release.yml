@@ -494,7 +494,10 @@ jobs:
           # expanded to nothing, upload-artifact computed D: as the common
           # ancestor of what was left and refused the lot. That is what failed
           # v0.1.13, after the check it exists to explain had passed.
-          Copy-Item "$env:USERPROFILE\.local\state\rn\rn.log*" $env:RUNNER_TEMP -ErrorAction SilentlyContinue
+          # rn.log and stop.log both: what the backend said at boot, and what
+          # StopRunning saw and killed. The second is the only record of a
+          # launcher restarting its child mid-uninstall.
+          Copy-Item "$env:USERPROFILE\.local\state\rn\*.log*" $env:RUNNER_TEMP -ErrorAction SilentlyContinue
 
       - name: Upload the installer logs
         if: always()
