@@ -314,6 +314,104 @@ EOF
         warn "this package has no rn.svg, so the menu entry uses a stock icon that some themes lack."
     fi
 
+    # An `rn` on PATH, which is the only thing that makes rn reachable from
+    # XFCE's "Run Program" box: that dialog completes *commands*, and matches
+    # nothing in a .desktop file — not Name, not GenericName, not Keywords.
+    # Measured by watching it offer `bash -c "set -o pipefail; curl …"` for a
+    # search that never once offered rn itself. It is also the terminal command
+    # an install did not previously leave behind at all.
+    #
+    # A script rather than a symlink, because a bare `rn` is the launcher and
+    # would start a *second* backend — which then fails on the port the service
+    # already holds, and says so to a terminal that a menu launch does not
+    # have. Opening the page is what somebody typing "rn" means, and it cannot
+    # conflict with anything. Every other argument is the launcher's.
+    mkdir -p "$BIN_DIR"
+    if [ -e "$BIN_DIR/rn" ] && ! grep -q "$WRAPPER_MARK" "$BIN_DIR/rn" 2>/dev/null; then
+        warn "$BIN_DIR/rn exists and is not ours, so it was left alone."
+        warn "  rn is still $PREFIX/rn, and the menu entry still opens $url."
+        # Without our wrapper the entry keeps the old behaviour: open the URL
+        # and let the browser explain a dead port, badly.
+        launch_cmd="xdg-open $url"
+    else
+        cat > "$BIN_DIR/rn" <<EOF
+#!/bin/sh
+# $WRAPPER_MARK
+# Written by $PREFIX/install.sh; rewritten on every install, removed by
+# --uninstall. No arguments opens the page, because that is what typing "rn"
+# into a launcher means. Anything else is passed to the launcher itself:
+# rn --status, rn --stop, rn --print-env.
+URL="$url"
+RUNTIME="$PREFIX/runtime/bin/node"
+LAUNCHER="$PREFIX/rn"
+
+# To the terminal when there is one, to the desktop when there is not: this is
+# run from a menu as often as from a shell, and a message printed to a closed
+# stdout is the same as no message.
+say() {
+    if [ -t 1 ] || [ -t 2 ]; then
+        printf '%s\n' "\$@" >&2
+    elif command -v notify-send >/dev/null 2>&1; then
+        notify-send -u normal "rn" "\$1"
+    else
+        printf '%s\n' "\$@" >&2
+    fi
+}
+
+# Is rn actually serving? The bundled Node is the probe, for the reason it is
+# the probe in scripts/smoke-release.sh: it ships with the install, so the
+# check cannot fail for want of curl. Three answers, because "did not open"
+# has three quite different causes.
+#   0  a page came back
+#   2  something answered, but it is not rn's page
+#   1  nothing answered
+probe() {
+    "\$RUNTIME" -e '
+      const u = process.argv[1];
+      fetch(u, { signal: AbortSignal.timeout(3000) })
+        .then(r => {
+          const t = r.headers.get("content-type") || "";
+          process.exit(r.ok && t.includes("text/html") ? 0 : 2);
+        })
+        .catch(() => process.exit(1));
+    ' "\$URL" 2>/dev/null
+}
+
+if [ \$# -eq 0 ]; then
+    if [ -x "\$RUNTIME" ]; then
+        probe
+        case \$? in
+            0) ;;
+            2) say "Something is answering at \$URL, but it is not rn's page." \\
+                   "Another rn on the same port is the usual reason: a development" \\
+                   "backend serves the API and no page at all." \\
+                   "Which one is running:  rn --status"
+               exit 1 ;;
+            *) say "rn is not answering at \$URL." \\
+                   "Start it:  systemctl --user start $UNIT" \\
+                   "Or see why: rn --status"
+               exit 1 ;;
+        esac
+    fi
+    if command -v xdg-open >/dev/null 2>&1; then exec xdg-open "\$URL"; fi
+    say "rn is at \$URL"
+    exit 0
+fi
+exec "\$LAUNCHER" "\$@"
+EOF
+        chmod 755 "$BIN_DIR/rn"
+        log "rn command: $BIN_DIR/rn  (no arguments opens the page)"
+        # The menu entry runs the wrapper rather than xdg-open, so a click gets
+        # the same three answers a terminal does — and a desktop notification
+        # instead of a browser error page when rn is not running.
+        launch_cmd="$BIN_DIR/rn"
+        case ":$PATH:" in
+            *":$BIN_DIR:"*) ;;
+            *) warn "$BIN_DIR is not on PATH, so \`rn\` will not be found until it is."
+               warn "  A desktop session reads PATH at login, so this may need one." ;;
+        esac
+    fi
+
     # Findable, which the first version of this entry was not. "rn" is two
     # letters and the entry carried no icon, so in a menu it was an unnamed
     # blank row, and a search for anything a person would actually type —
@@ -333,7 +431,7 @@ Type=Application
 Name=rn
 GenericName=Automation
 Comment=Open rn; the backend itself runs as $UNIT
-Exec=xdg-open $url
+Exec=$launch_cmd
 Icon=$icon
 Terminal=false
 Categories=Development;Utility;
@@ -344,46 +442,6 @@ EOF
     # updates the caches other things read, and it costs nothing when absent.
     command -v update-desktop-database >/dev/null && \
         update-desktop-database "$APPS_DIR" 2>/dev/null || true
-
-    # An `rn` on PATH, which is the only thing that makes rn reachable from
-    # XFCE's "Run Program" box: that dialog completes *commands*, and matches
-    # nothing in a .desktop file — not Name, not GenericName, not Keywords.
-    # Measured by watching it offer `bash -c "set -o pipefail; curl …"` for a
-    # search that never once offered rn itself. It is also the terminal command
-    # an install did not previously leave behind at all.
-    #
-    # A script rather than a symlink, because a bare `rn` is the launcher and
-    # would start a *second* backend — which then fails on the port the service
-    # already holds, and says so to a terminal that a menu launch does not
-    # have. Opening the page is what somebody typing "rn" means, and it cannot
-    # conflict with anything. Every other argument is the launcher's.
-    mkdir -p "$BIN_DIR"
-    if [ -e "$BIN_DIR/rn" ] && ! grep -q "$WRAPPER_MARK" "$BIN_DIR/rn" 2>/dev/null; then
-        warn "$BIN_DIR/rn exists and is not ours, so it was left alone."
-        warn "  rn is still $PREFIX/rn, and the menu entry still opens $url."
-    else
-        cat > "$BIN_DIR/rn" <<EOF
-#!/bin/sh
-# $WRAPPER_MARK
-# Written by $PREFIX/install.sh; rewritten on every install, removed by
-# --uninstall. No arguments opens the page, because that is what typing "rn"
-# into a launcher means. Anything else is passed to the launcher itself:
-# rn --status, rn --stop, rn --print-env.
-if [ \$# -eq 0 ]; then
-    if command -v xdg-open >/dev/null; then exec xdg-open "$url"; fi
-    echo "rn is at $url"
-    exit 0
-fi
-exec "$PREFIX/rn" "\$@"
-EOF
-        chmod 755 "$BIN_DIR/rn"
-        log "rn command: $BIN_DIR/rn  (no arguments opens the page)"
-        case ":$PATH:" in
-            *":$BIN_DIR:"*) ;;
-            *) warn "$BIN_DIR is not on PATH, so \`rn\` will not be found until it is."
-               warn "  A desktop session reads PATH at login, so this may need one." ;;
-        esac
-    fi
 
     systemctl --user daemon-reload
     systemctl --user enable -q "$UNIT"
