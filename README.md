@@ -371,11 +371,23 @@ Open <http://127.0.0.1:3010/> — the page and the API share that port. The
 webhook listener and the click tracker sit on their own ports beside it, so a
 tunnel pointed at one cannot reach the API's mutating routes.
 
-**There is a menu entry as well**, called **rn** — under Utility on Linux, in
-the Start Menu on Windows. Both only open that URL: keeping rn running is the
-service's job, not the entry's, so closing the page stops nothing. Searching
-for `automation` finds it too, and on Linux the entry is
-`~/.local/share/applications/rn.desktop`, rewritten by every install.
+**There is a menu entry as well**, called **rn** — under Development and
+Accessories on Linux, in the Start Menu on Windows. Both only open that URL:
+keeping rn running is the service's job, not the entry's, so closing the page
+stops nothing. Searching for `automation` finds it too, and on Linux the entry
+is `~/.local/share/applications/rn.desktop`, rewritten by every install.
+
+**And an `rn` command**, in `~/.local/bin`. On its own it opens the page;
+anything else goes to the launcher, so `rn --status` says whether rn is running
+and where its runtime came from, and `rn --stop` stops it. It is a small script
+rather than a link to the launcher, because a bare link would *start a second
+backend* — which then fails on the port the first one holds, and says so to a
+terminal that a menu launch does not have.
+
+It is also the only thing that reaches XFCE's "Run Program…" box, which
+completes commands and matches nothing in a `.desktop` file — not the name, not
+the keywords. An `rn` already on your PATH that is not ours is left alone, and
+said so; the install never overwrites a program it did not write.
 
 If it is not there the moment the install finishes, the menu is what to wait
 for rather than anything rn does. The installer writes the entry and runs

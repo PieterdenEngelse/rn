@@ -8,7 +8,7 @@
 #                                      install that: no toolchains needed
 #   scripts/install.sh --from-release v0.1.0   a particular release
 #   dist/rn/install.sh --prefix DIR    somewhere other than ~/.local/share/rn
-#   dist/rn/install.sh --no-service    files only: no systemd unit, no menu entry
+#   dist/rn/install.sh --no-service    files only: no unit, menu entry or rn command
 #   dist/rn/install.sh --no-start      install and enable, but do not start
 #   ~/.local/share/rn/install.sh --uninstall
 #                                      remove it again; ~/.config/rn is kept
@@ -45,6 +45,11 @@ fi
 PREFIX="${XDG_DATA_HOME:-$HOME/.local/share}/rn"
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 APPS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+BIN_DIR="${XDG_BIN_HOME:-$HOME/.local/bin}"
+# Stamped into the rn wrapper so uninstall can tell ours from somebody
+# else's rn — the Usenet reader of that name is a real program, and
+# deleting a stranger's binary is not something an uninstall gets to do.
+WRAPPER_MARK="written by rn install.sh"
 UNIT=rn.service
 SERVICE=1
 START=1
@@ -70,7 +75,7 @@ usage() {
             "" \
             "  --from-release [TAG]   fetch a published release and install it" \
             "  --prefix DIR           somewhere other than ~/.local/share/rn" \
-            "  --no-service           files only: no systemd unit, no menu entry" \
+            "  --no-service           files only: no unit, menu entry or rn command" \
             "  --no-start             install and enable, but do not start" \
             "  --uninstall            remove it again; ~/.config/rn is kept"
     fi
@@ -188,6 +193,11 @@ if [ "$UNINSTALL" = 1 ]; then
         systemctl --user disable -q "$UNIT" 2>/dev/null || true
     fi
     rm -f "$UNIT_DIR/$UNIT" "$APPS_DIR/rn.desktop"
+    # Only if it is ours: see WRAPPER_MARK.
+    if [ -e "$BIN_DIR/rn" ] && grep -q "$WRAPPER_MARK" "$BIN_DIR/rn" 2>/dev/null; then
+        rm -f "$BIN_DIR/rn"
+        log "removed $BIN_DIR/rn"
+    fi
     have_systemd && systemctl --user daemon-reload
     [ -e "$PREFIX/rn" ] && rm -rf "$PREFIX"
     log "removed the install, $UNIT and the menu entry"
@@ -311,6 +321,47 @@ EOF
     # updates the caches other things read, and it costs nothing when absent.
     command -v update-desktop-database >/dev/null && \
         update-desktop-database "$APPS_DIR" 2>/dev/null || true
+
+    # An `rn` on PATH, which is the only thing that makes rn reachable from
+    # XFCE's "Run Program" box: that dialog completes *commands*, and matches
+    # nothing in a .desktop file — not Name, not GenericName, not Keywords.
+    # Measured by watching it offer `bash -c "set -o pipefail; curl …"` for a
+    # search that never once offered rn itself. It is also the terminal command
+    # an install did not previously leave behind at all.
+    #
+    # A script rather than a symlink, because a bare `rn` is the launcher and
+    # would start a *second* backend — which then fails on the port the service
+    # already holds, and says so to a terminal that a menu launch does not
+    # have. Opening the page is what somebody typing "rn" means, and it cannot
+    # conflict with anything. Every other argument is the launcher's.
+    mkdir -p "$BIN_DIR"
+    if [ -e "$BIN_DIR/rn" ] && ! grep -q "$WRAPPER_MARK" "$BIN_DIR/rn" 2>/dev/null; then
+        warn "$BIN_DIR/rn exists and is not ours, so it was left alone."
+        warn "  rn is still $PREFIX/rn, and the menu entry still opens $url."
+    else
+        cat > "$BIN_DIR/rn" <<EOF
+#!/bin/sh
+# $WRAPPER_MARK
+# Written by $PREFIX/install.sh; rewritten on every install, removed by
+# --uninstall. No arguments opens the page, because that is what typing "rn"
+# into a launcher means. Anything else is passed to the launcher itself:
+# rn --status, rn --stop, rn --print-env.
+if [ \$# -eq 0 ]; then
+    if command -v xdg-open >/dev/null; then exec xdg-open "$url"; fi
+    echo "rn is at $url"
+    exit 0
+fi
+exec "$PREFIX/rn" "\$@"
+EOF
+        chmod 755 "$BIN_DIR/rn"
+        log "rn command: $BIN_DIR/rn  (no arguments opens the page)"
+        case ":$PATH:" in
+            *":$BIN_DIR:"*) ;;
+            *) warn "$BIN_DIR is not on PATH, so \`rn\` will not be found until it is."
+               warn "  A desktop session reads PATH at login, so this may need one." ;;
+        esac
+    fi
+
     systemctl --user daemon-reload
     systemctl --user enable -q "$UNIT"
     log "enabled $UNIT; the menu entry opens $url"
