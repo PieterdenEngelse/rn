@@ -112,10 +112,32 @@
     <!-- Stop whatever runs out of the install folder before its files are
          replaced or removed: Windows will not delete a running executable.
          Matched by path, not name, so a development rn elsewhere is left
-         alone. The bundled node.exe is under the same folder and goes too. -->
+         alone. The bundled node.exe is under the same folder and goes too.
+
+         Supervisors first, then a sweep, because rn supervises node: killing
+         node.exe while its launcher is alive reads as a crash, and
+         launcher/src/main.rs answers a crash by starting a new one 500ms
+         later. Get-Process returns in no particular order, so a single
+         pipeline killed the two in whichever order it happened to list them,
+         and a flat 800ms sleep was long enough for the replacement to appear
+         inside it. That successor is not in the list already being piped, so
+         nothing stops it, and it is still holding the bundled node.exe when
+         InstallValidate runs — the files-in-use path, which under /qn has no
+         dialog to show and is where a silent install stalls instead.
+
+         The loop re-checks rather than sleeping a fixed time, and closes the
+         window where a launcher killed mid-restart has already spawned its
+         successor. Naming the processes first is what makes re-checking
+         affordable: Path on a protected process throws, and swallowing that
+         for every process on the machine costs 1.8 seconds a round, so forty
+         rounds of the obvious version took 35 seconds on an idle laptop.
+         Named, a round is 15ms. The names are every executable the package
+         installs — rn.exe, rnw.exe and runtime/bin/node.exe — plus the two
+         alternate runtimes jsRuntime can select; the Path match below is
+         still what decides, so a name that is not ours cannot match. -->
     <CustomAction Id="StopRunning"
                   Directory="System64Folder"
-                  ExeCommand="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -WindowStyle Hidden -Command &quot;Get-Process | Where-Object Path -like '[INSTALLFOLDER]*' | Stop-Process -Force; Start-Sleep -Milliseconds 800&quot;"
+                  ExeCommand="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -WindowStyle Hidden -Command &quot;Get-Process -Name rn,rnw,node,bun,deno -ErrorAction SilentlyContinue | Where-Object Path -like '[INSTALLFOLDER]*' | Where-Object ProcessName -in 'rn','rnw' | Stop-Process -Force -ErrorAction SilentlyContinue; 1..40 | ForEach-Object { if (-not (Get-Process -Name rn,rnw,node,bun,deno -ErrorAction SilentlyContinue | Where-Object Path -like '[INSTALLFOLDER]*')) { break }; Get-Process -Name rn,rnw,node,bun,deno -ErrorAction SilentlyContinue | Where-Object Path -like '[INSTALLFOLDER]*' | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 250 }&quot;"
                   Execute="immediate"
                   Return="ignore" />
 
