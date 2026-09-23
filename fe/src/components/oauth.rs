@@ -76,7 +76,11 @@ pub fn OAuthPanel() -> Element {
 }
 
 /// "4m ago", from an epoch-millisecond instant in the past.
-fn ago(ms: f64) -> String {
+///
+/// Shared with Monitor → Connection's OAuth panel rather than copied into it:
+/// two spellings of "how long ago" on two pages describing the same sign-in is
+/// the kind of pair that drifts a word at a time and is never noticed.
+pub(crate) fn ago(ms: f64) -> String {
     let secs = ((js_sys::Date::now() - ms) / 1000.0).max(0.0) as i64;
     match secs {
         s if s < 60 => "just now".to_string(),
@@ -86,8 +90,8 @@ fn ago(ms: f64) -> String {
     }
 }
 
-/// "in 7h 40m", or "3m ago" once past.
-fn until(ms: f64) -> String {
+/// "in 7h 40m", or "3m ago" once past. Shared, for [`ago`]'s reason.
+pub(crate) fn until(ms: f64) -> String {
     let secs = ((ms - js_sys::Date::now()) / 1000.0) as i64;
     if secs < 0 {
         return format!("expired {}", ago(ms));

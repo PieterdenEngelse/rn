@@ -13,9 +13,11 @@
 //! render it.
 
 use crate::api::{
-    fetch_connection, fetch_health, fetch_node_metrics, fetch_tokens, ConnectionResponse, HealthResponse, HookOutcome,
-    NodeMetrics, probe_token, TokenEntry, TokenOrigin, TokenProbe, TokensResponse, TrackerOutcome, API_BASE,
+    fetch_connection, fetch_health, fetch_node_metrics, fetch_oauth, fetch_tokens, ConnectionResponse, HealthResponse,
+    HookOutcome, NodeMetrics, OAuthAttempt, OAuthProvider, OAuthResponse, probe_token, TokenEntry, TokenOrigin,
+    TokenProbe, TokensResponse, TrackerOutcome, API_BASE,
 };
+use crate::components::oauth::{ago, until};
 use crate::components::{Board, InfoButton, Metric, Panel};
 use dioxus::prelude::*;
 
@@ -31,6 +33,7 @@ pub fn MonitorConnection() -> Element {
     let mut metrics = use_signal(|| Option::<NodeMetrics>::None);
     let mut health = use_signal(|| Option::<HealthResponse>::None);
     let mut tokens = use_signal(|| Option::<Result<TokensResponse, String>>::None);
+    let mut oauth = use_signal(|| Option::<Result<OAuthResponse, String>>::None);
 
     use_future(move || async move {
         loop {
@@ -55,6 +58,11 @@ pub fn MonitorConnection() -> Element {
             // vanishes for that reason is indistinguishable from a board with
             // nothing to say. It cost a rebuild and a puzzled look once.
             tokens.set(Some(fetch_tokens().await));
+            // Same reasoning as the tokens payload: it reads a small file and
+            // two maps this process already holds, and talks to no provider,
+            // so an open page costs nothing at either end. The error is kept
+            // for the same reason too.
+            oauth.set(Some(fetch_oauth().await));
             gloo_timers::future::TimeoutFuture::new(2_000).await;
         }
     });
@@ -62,7 +70,7 @@ pub fn MonitorConnection() -> Element {
     rsx! {
         div { class: "p-6 w-full space-y-4",
             match conn() {
-                Some(Ok(c)) => rsx! { ConnectionBoards { c, m: metrics(), h: health(), t: tokens() } },
+                Some(Ok(c)) => rsx! { ConnectionBoards { c, m: metrics(), h: health(), t: tokens(), o: oauth() } },
                 Some(Err(e)) => rsx! {
                     Panel { title: "Connection".to_string(),
                         p { class: "text-red-400", "Backend unreachable" }
@@ -185,6 +193,7 @@ fn ConnectionBoards(
     m: Option<NodeMetrics>,
     h: Option<HealthResponse>,
     t: Option<Result<TokensResponse, String>>,
+    o: Option<Result<OAuthResponse, String>>,
 ) -> Element {
     let handles = m
         .as_ref()
@@ -895,8 +904,233 @@ fn ConnectionBoards(
                 },
             }
         }
+
+            match o {
+                Some(Ok(o)) => rsx! { OAuthRenewal { o } },
+                Some(Err(e)) => rsx! {
+                    Panel {
+                        title: "OAuth".to_string(),
+                        subtitle: Some("whether renewal is alive, not whether a token exists".to_string()),
+                        p { class: "text-amber-400", "This backend did not answer /api/oauth." }
+                        p { class: "text-gray-300 mt-1",
+                            "Restart it with "
+                            span { class: "font-mono text-gray-200", "be/r" }
+                            " and this panel fills in by itself."
+                        }
+                        p { class: "text-gray-400 mt-1 text-xs", "{e}" }
+                    }
+                },
+                None => rsx! {
+                    Panel {
+                        title: "OAuth".to_string(),
+                        p { class: "text-gray-400", "Sampling…" }
+                    }
+                },
+            }
     }
 }
+
+/// Whether the renewal machinery is alive — a different question from whether
+/// a credential is, which is what Tokens above answers.
+///
+/// A signed-in token works because something renews it before a run, and that
+/// renewal is the half that fails quietly. A refresh that starts failing leaves
+/// a token that still reads as set, still has an expiry in the future for the
+/// last hour of its life, and then simply stops; the first evidence anyone sees
+/// is an ordinary 401 in whichever job ran next. Everything here is already on
+/// the wire for Config → Connection, which shows it as configuration. This
+/// shows the same fields as movement: when renewal last ran, whether it worked,
+/// and what is waiting on it.
+///
+/// Both attempt rows are in memory and gone on restart, like a probe result —
+/// an attempt recorded before a restart would be older than the process
+/// reporting it.
+#[component]
+fn OAuthRenewal(o: OAuthResponse) -> Element {
+    rsx! {
+        Panel {
+            title: "OAuth".to_string(),
+            subtitle: Some("whether renewal is alive, not whether a token exists".to_string()),
+            info: Some(rsx! {
+                InfoButton {
+                    title: "OAuth — the renewal, not the token".to_string(),
+                    what: OAUTH_WHAT.to_string(),
+                    why: OAUTH_WHY.to_string(),
+                    if_wrong: OAUTH_IF_WRONG.to_string(),
+                }
+            }),
+            div { class: "flex flex-wrap gap-4 items-stretch",
+                for p in o.providers.iter() {
+                    ProviderRenewal { key: "{p.id}", p: p.clone() }
+                }
+            }
+        }
+    }
+}
+
+/// One provider's renewal state.
+#[component]
+fn ProviderRenewal(p: OAuthProvider) -> Element {
+    let c = p.connection.clone();
+    let signed_in = match c.as_ref() {
+        Some(c) => {
+            let who = c.login.clone().unwrap_or_else(|| "account not reported".to_string());
+            format!("{who} · {}", ago(c.connected_at_ms))
+        }
+        None if p.token_set => "never — the token here was typed in".to_string(),
+        None => "never".to_string(),
+    };
+    let source = match (&c, p.token_set) {
+        (Some(_), _) => "signed in here".to_string(),
+        (None, true) => "typed in — nothing renews it".to_string(),
+        (None, false) => "no token".to_string(),
+    };
+    let access = match c.as_ref().and_then(|c| c.expires_at_ms) {
+        Some(at) => until(at),
+        None if c.is_some() => "no expiry given".to_string(),
+        None => "—".to_string(),
+    };
+    let refresh = match c.as_ref() {
+        Some(c) if c.refreshable => match c.refresh_expires_at_ms {
+            Some(at) => format!("held · itself dies {}", until(at)),
+            None => "held · no expiry given".to_string(),
+        },
+        Some(_) => "none — a sign-in is the only way back".to_string(),
+        None => "—".to_string(),
+    };
+    let last_refresh = match c.as_ref().and_then(|c| c.last_refresh.as_ref()) {
+        Some(a) => attempt_line(a),
+        None if c.is_some() => "none since this process started".to_string(),
+        None => "—".to_string(),
+    };
+    let last_attempt = match p.last_attempt.as_ref() {
+        Some(a) => attempt_line(a),
+        None => "none since this process started".to_string(),
+    };
+    let in_flight = if p.pending == 0 {
+        "none".to_string()
+    } else {
+        format!("{} · expiring after {}m", p.pending, p.pending_ttl_seconds / 60)
+    };
+    let scopes = match c.as_ref() {
+        Some(c) if c.scopes.is_empty() => "none — public data only".to_string(),
+        Some(c) => c.scopes.join(", "),
+        None => format!("would ask for: {}", p.default_scopes),
+    };
+    let stops = if p.used_by.is_empty() {
+        "nothing declares it".to_string()
+    } else {
+        p.used_by.join(", ")
+    };
+
+    rsx! {
+        Board {
+            title: p.label.clone(),
+            width: "w-80".to_string(),
+            Metric {
+                label: "signed in".to_string(),
+                value: signed_in,
+                mono_note: Some(p.token_credential.clone()),
+                what: "The account the stored token belongs to, and when the sign-in that produced it happened. 'Never' means no sign-in has completed on this machine, whatever the credential itself holds.".to_string(),
+                why: "A token is an account, and an install that has signed in twice has no other place saying which one won. The provider is asked once, at sign-in, and the answer is kept beside the token rather than fetched again — so reading this page costs the provider nothing.".to_string(),
+                if_wrong: "A login you do not recognise is a token minted for the wrong account, and every job using it acts as that account. Disconnect on Config → Connection and sign in again.".to_string(),
+            }
+            Metric {
+                label: "token source".to_string(),
+                value: source,
+                what: "Whether the credential was filled by a sign-in here, or typed into the credentials board by hand.".to_string(),
+                why: "It decides whether anything renews it. A signed-in token is refreshed before a run when it is close to expiry; a typed one is a fixed string this install cannot renew, so its death is a matter of the provider's clock and nothing here will see it coming.".to_string(),
+                if_wrong: "'Typed in' is not a fault — a personal access token is a perfectly good answer, and for GitHub it is the usual one. It does mean the rows below are blank by nature rather than by failure, and that the refused column on Tokens is the only warning you will get.".to_string(),
+            }
+            Metric {
+                label: "access token".to_string(),
+                value: access,
+                what: "How long the token now held has left, from the expiry the provider gave when it was issued or last renewed.".to_string(),
+                why: "It is the clock renewal runs against: the runner refreshes a token within five minutes of expiry, before the job that needs it starts, rather than letting a run discover it mid-flight.".to_string(),
+                if_wrong: "'No expiry given' is the normal case for a GitHub OAuth App and means there is no countdown to read — the token lasts until revoked, or a year unused. A countdown that keeps reaching zero without the row below moving is renewal that is not running.".to_string(),
+            }
+            Metric {
+                label: "refresh token".to_string(),
+                value: refresh,
+                what: "Whether a refresh token is held, and when it dies if the provider said. It is what renewal spends; the access token above is what jobs use.".to_string(),
+                why: "This is the real death clock. When the refresh token goes, no amount of renewal helps and the only way back is a sign-in in a browser — which is a person's attention, at whatever hour it happens.".to_string(),
+                if_wrong: "'None' with a token still present means renewal cannot happen at all: the grant was made without one, which for Google means the consent screen was skipped on a second sign-in. Disconnect and sign in again to get one.".to_string(),
+            }
+            Metric {
+                label: "last renewal".to_string(),
+                value: last_refresh,
+                what: "The most recent refresh this process performed: whether it worked, how long ago, and the provider's own words when it did not.".to_string(),
+                why: "The failure this whole panel exists for. A refresh that fails leaves everything else reading healthy — the token is set, the expiry is still in the future — until the hour it is not, and the first report is a 401 inside an unrelated job.".to_string(),
+                if_wrong: "A failure here is worth acting on before the access token expires, because after that every job using it fails. 'None since this process started' is ordinary on a fresh restart and says nothing either way.".to_string(),
+            }
+            Metric {
+                label: "last sign-in".to_string(),
+                value: last_attempt,
+                what: "The most recent attempt to complete a sign-in through the browser, successful or not, with the hop it stopped at.".to_string(),
+                why: "A sign-in crosses two hosts and a browser, and 'it did not work' is otherwise unattributable. The steps the attempt recorded name the hop, which is the difference between a wrong client secret, a redirect the provider would not match, and a consent screen somebody closed.".to_string(),
+                if_wrong: "A failure naming the redirect URI means the app registration and this backend disagree about the callback — Config → Connection prints both, and they have to match exactly for Google and by host for GitHub.".to_string(),
+            }
+            Metric {
+                label: "sign-ins in flight".to_string(),
+                value: in_flight,
+                what: "Sign-ins started and neither finished nor expired. Each is a state value this process is holding, waiting for the browser to come back.".to_string(),
+                why: "Starting one is an unauthenticated call on the API, which is deliberate — the page has to be able to begin a sign-in — so this count is where something hitting that route would show. It is also how an abandoned tab reads: one entry, gone by itself once its window passes.".to_string(),
+                if_wrong: "A count that climbs without you pressing anything is worth understanding before signing in again: on a loopback-bound install it can only come from this machine, and a browser page is the only thing that should be making it.".to_string(),
+            }
+            Metric {
+                label: "scopes granted".to_string(),
+                value: scopes,
+                what: "What the provider actually granted, which is not always what was asked for — a consent screen can narrow them. With no connection, what a sign-in would ask for.".to_string(),
+                why: "A narrowed grant produces the most confusing failure available: the sign-in succeeds, the token works, and one job fails with a permission error while the rest are fine. Reading the granted list against what a job needs is what separates that from a broken credential.".to_string(),
+                if_wrong: "Mail wants https://mail.google.com/ and nothing narrower serves IMAP, so a Google token without it authenticates and is then refused by the mailbox. Reading a repository's webhook log wants read:repo_hook. A missing scope needs a fresh sign-in; nothing can widen a grant after the fact.".to_string(),
+            }
+            Metric {
+                label: "stops with it".to_string(),
+                value: stops,
+                what: "The jobs and webhooks that declare this credential — what a sign-in feeds, and what a disconnect or an expiry stops.".to_string(),
+                why: "It turns an abstract expiry into a list of automations that will stop, which is the form the question is actually asked in at the moment something breaks.".to_string(),
+                if_wrong: "'Nothing declares it' means a sign-in here feeds no automation yet. That is the ordinary state for a provider you have not wired a job to, and it makes the rows above informational rather than urgent.".to_string(),
+            }
+        }
+    }
+}
+
+/// A sign-in or a refresh, as one line.
+fn attempt_line(a: &OAuthAttempt) -> String {
+    let when = ago(a.at_ms);
+    if a.ok {
+        format!("worked {when} · {}", a.detail)
+    } else {
+        format!("failed {when} · {}", a.detail)
+    }
+}
+
+const OAUTH_WHAT: &str =
+    "One board per provider: who is signed in, what the grant covers, when the access token dies, \
+     and — the reason the panel exists — whether the renewal that keeps it alive is still \
+     running.\n\nEvery field here is already on Config → Connection, where it reads as \
+     configuration: what to register, what to set, what a sign-in would ask for. The same values \
+     read differently as movement, which is what this is: last renewal, last sign-in, and what is \
+     in flight right now.";
+
+const OAUTH_WHY: &str =
+    "Tokens, beside this, answers whether a credential still works. This answers why it still \
+     works — and a signed-in token works only because something renews it before each run that \
+     needs it.\n\nThat renewal is the half with no symptom of its own. When it starts failing, \
+     the token is still set, the account is still named, and the expiry is still in the future \
+     for the rest of the token's last hour. Then it is not, and what reports the problem is an \
+     ordinary 401 inside whichever automation happened to run next — in that job's log, in that \
+     job's words, naming nothing about a credential that needed renewing.";
+
+const OAUTH_IF_WRONG: &str =
+    "Three readings to be careful with.\n\nThe attempt rows live in memory and start again at \
+     every restart, so 'none since this process started' is not evidence that renewal is \
+     broken — or that it works. Give it a run.\n\nA typed-in token leaves most of this board \
+     blank by nature rather than by failure. There is no sign-in behind it, so there is no \
+     renewal to report; the refused column on Tokens is the whole of the warning available for \
+     one.\n\nAnd a grant narrowed at the consent screen fails one job while the rest are fine, \
+     which reads as that job being broken rather than as the credential being short. The scopes \
+     row is where that is visible, and only a fresh sign-in widens it.";
 
 /// When each declared credential stops working, and what stops with it.
 ///
