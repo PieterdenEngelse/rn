@@ -77,7 +77,7 @@ route, which asks before installing anything and names each step, and which the
 **Linux: put it in the applications menu**, since nothing a browser downloads
 is executable on a click there. Copy
 [`scripts/rn-install.desktop`](scripts/rn-install.desktop) in and launch
-**Install rn** from the menu:
+**Install rn** — Applications → **System**, where installers live:
 
     mkdir -p ~/.local/share/applications
     curl -fsSL https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/rn-install.desktop \
@@ -108,6 +108,14 @@ nothing installs. The terminal
 equivalent of clicking the menu entry is
 
     gtk-launch rn-install.desktop
+
+A command box is not the same thing and will not find it. XFCE's "Run
+Program…", and anything like it, completes *commands*: it never reads a
+`.desktop` file, so neither the name nor the keywords reach it. Nothing in this
+file can change that and nothing should — an installer is what runs when
+nothing is installed yet, so there is no command of ours on your PATH for it to
+find. If you are willing to type, the one line further down is shorter than the
+menu anyway.
 
 The one route that does need the bit is the desktop icon below, and that is
 where it belongs.
