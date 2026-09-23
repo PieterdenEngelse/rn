@@ -371,6 +371,19 @@ Open <http://127.0.0.1:3010/> — the page and the API share that port. The
 webhook listener and the click tracker sit on their own ports beside it, so a
 tunnel pointed at one cannot reach the API's mutating routes.
 
+**There is a menu entry as well**, called **rn** — under Utility on Linux, in
+the Start Menu on Windows. Both only open that URL: keeping rn running is the
+service's job, not the entry's, so closing the page stops nothing. Searching
+for `automation` finds it too, and on Linux the entry is
+`~/.local/share/applications/rn.desktop`, rewritten by every install.
+
+If it is not there the moment the install finishes, the menu is what to wait
+for rather than anything rn does. The installer writes the entry and runs
+`update-desktop-database`; what a desktop that was already running does with a
+new entry is its own decision, and logging out and back in settles it on any of
+them. Nothing about rn changes in the meantime — the URL above works
+regardless, which is why that is what this section leads with.
+
 Two directories matter, and only one of them is yours:
 
 - **`~/.config/rn`** (`%USERPROFILE%\.config\rn` on Windows) — settings,
