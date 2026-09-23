@@ -280,15 +280,34 @@ RestartSec=5
 [Install]
 WantedBy=default.target
 EOF
+    # Findable, which the first version of this entry was not. "rn" is two
+    # letters and the entry carried no icon, so in a menu it was an unnamed
+    # blank row, and a search for anything a person would actually type —
+    # automation, jobs, webhooks — matched nothing at all. Icon is a stock
+    # name rather than a file because rn ships no icon of its own yet; a theme
+    # that lacks it falls back to a generic one, which is still a shape rather
+    # than a hole. One main category, because two makes the entry appear twice
+    # (desktop-file-validate says so). StartupNotify stated rather than left to
+    # default: xdg-open exits at once and never completes the sequence, and on
+    # XFCE an unfinished one moves the workspace under the person —
+    # scripts/rn-install.desktop carries the measurement.
     cat > "$APPS_DIR/rn.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=rn
+GenericName=Automation
 Comment=Open rn; the backend itself runs as $UNIT
 Exec=xdg-open $url
+Icon=applications-system
 Terminal=false
-Categories=Development;Utility;
+Categories=Utility;
+Keywords=rn;automation;jobs;webhooks;scheduler;
+StartupNotify=false
 EOF
+    # Not needed for the menu, which reads the directory, but it is what
+    # updates the caches other things read, and it costs nothing when absent.
+    command -v update-desktop-database >/dev/null && \
+        update-desktop-database "$APPS_DIR" 2>/dev/null || true
     systemctl --user daemon-reload
     systemctl --user enable -q "$UNIT"
     log "enabled $UNIT; the menu entry opens $url"
