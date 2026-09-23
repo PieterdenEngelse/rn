@@ -341,9 +341,17 @@ EOF
 # --uninstall. No arguments opens the page, because that is what typing "rn"
 # into a launcher means. Anything else is passed to the launcher itself:
 # rn --status, rn --stop, rn --print-env.
-URL="$url"
 RUNTIME="$PREFIX/runtime/bin/node"
 LAUNCHER="$PREFIX/rn"
+ENVFILE="$PREFIX/app/.env"
+
+# The port is read now, not baked in at install time. app/.env is the one file
+# an upgrade carries across and the place a person changes the port — often to
+# get out of the way of something already on 3010 — and a command that kept
+# opening the address the installer happened to see would send them to whatever
+# took it instead. Same default and same precedence as be/src/config.ts.
+PORT=\$(awk -F= '/^[[:space:]]*BACKEND_PORT[[:space:]]*=/ { v = \$2; gsub(/[^0-9]/, "", v); if (v != "") p = v } END { print p }' "\$ENVFILE" 2>/dev/null)
+URL="http://127.0.0.1:\${PORT:-$port}/"
 
 # To the terminal when there is one, to the desktop when there is not: this is
 # run from a menu as often as from a shell, and a message printed to a closed
