@@ -388,7 +388,25 @@ jobs:
           function Fail($m) { Write-Host "::error::$m"; exit 1 }
           function Msi($verb, $log, $extra) {
             $a = @($verb, "`"$msi`"", "/qn", "/l*v", "`"$log`"") + $extra
-            $p = Start-Process msiexec.exe -ArgumentList $a -Wait -PassThru
+            # Bounded here, not by timeout-minutes, because timeout-minutes does not
+            # fire on this hang. PR #7 reproduced the v0.1.14 signature deliberately:
+            # the step ran 24.5 minutes under timeout-minutes: 8, and the job's own
+            # 20-minute cap then took a further 5 minutes to take effect. A hang that
+            # outlives the runner's own bounds destroys the logs that would explain
+            # it, which is how three releases failed today saying nothing. Waiting
+            # here keeps the script in control: it can kill msiexec, fail the step
+            # cleanly, and leave the two upload steps below to run.
+            #
+            # .Handle is read and discarded on purpose. Start-Process -PassThru
+            # returns a Process whose ExitCode reads as null once it has exited,
+            # unless the handle was retained while it was still alive.
+            $p = Start-Process msiexec.exe -ArgumentList $a -PassThru
+            $null = $p.Handle
+            if (-not $p.WaitForExit(120000)) {
+              Write-Host "::warning::msiexec $verb did not return within two minutes; killing it"
+              Get-Process msiexec -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+              Fail "msiexec $verb hung; see the uploaded log"
+            }
             if ($p.ExitCode -ne 0) { Fail "msiexec $verb exited $($p.ExitCode); see the uploaded log" }
           }
 
