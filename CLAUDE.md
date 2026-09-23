@@ -390,6 +390,32 @@ landing depend on something unrelated to the change. Run it when a `.ps1`
 changes. Docker or podman — `scripts/container-runtime.sh` decides that once
 for the three scripts that need a userspace which is not this machine's.
 
+**Every install route has a graphical path, and the text installer is the
+fallback rather than the product.** Linux: `rn-install.desktop` → `install-gui.sh`.
+Windows: `install-rn.cmd` → `install-gui.ps1`, and the MSI's own wizard.
+Someone installing an app should not have to read a scrolling console to find
+out what happened — the same standard the info-panel rule applies everywhere
+else here, and the argument that won the case for `install-gui.ps1` above.
+
+It has a consequence that is easy to miss while working on the text half, as a
+whole day of it here did. **What a person sees in the result window is only
+what was printed as a warning.** Both graphical installers build that window by
+scraping their log for the warning prefix — `sed -n 's/^  ! /• /p'` in
+`install-gui.sh`, `-match '^\s+!\s'` in `install-gui.ps1` — so `warn` and
+`Write-Warn` reach the dialog and `log` and `Write-Log` do not. Anything a
+person has to act on is therefore a warning, whatever its tone: a port already
+taken, a backend that answered but called itself degraded, a missing
+`notify-send`. A `log` call for one of those is invisible to everyone who
+clicked an icon, and nothing fails to say so.
+
+`be/test/installer-report.test.ts` pins the pairing — four files agreeing by
+spelling alone, none of which imports another — by running a warning through
+the real emitter and the real scraper, checking a log line does *not* survive
+the same trip, and checking both result windows still render what they
+collected. Checked by breaking it: one space removed from the scraper fails
+the test. What it cannot check is the judgement — whether a given message
+should have been a warning at all. That part is this rule.
+
 Detail, measured sizes and the build checklist: `docs/packaging.md`.
 
 ## Coding Conventions
