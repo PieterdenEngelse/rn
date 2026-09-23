@@ -73,7 +73,7 @@ import {
     needsRestart,
     type Settings,
 } from "./settings.ts";
-import { config, remoteBindRefusal } from "./config.ts";
+import { config, home, remoteBindRefusal } from "./config.ts";
 import { createHookApp, hooksHealth, startHooks } from "./hooks/server.ts";
 import { createTrackerApp, startTracker, trackerHealth } from "./tracker/server.ts";
 import { mailWatchHealth, startMailWatch } from "./mail/watcher.ts";
@@ -231,7 +231,7 @@ function declaredBy(name: string): string[] {
  */
 /** rclone's config, when there is one. Never parsed here — see tokens.ts. */
 function readRcloneConf(): string | undefined {
-    const path = `${process.env.HOME ?? "."}/.config/rclone/rclone.conf`;
+    const path = `${home}/.config/rclone/rclone.conf`;
     try {
         return readFileSync(path, "utf8");
     } catch {

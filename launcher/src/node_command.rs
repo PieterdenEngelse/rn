@@ -28,7 +28,19 @@ impl NodeCommand {
         // — that is always an absolute path.
         c.env("PATH", if cfg!(windows) { "C:\\Windows\\System32" } else { "/usr/bin:/bin" });
 
-        if let Ok(home) = std::env::var("HOME") {
+        // HOME or USERPROFILE, the pair layout.rs, credentials.rs and pidfile.rs
+        // already resolve. Windows sets only the second, and env_clear() above
+        // means the child gets exactly what is named here, so on Windows the
+        // backend ran with no HOME at all.
+        //
+        // This is not what fixes be/src/config.ts: that reads os.homedir(),
+        // which on Windows consults USERPROFILE and ignores HOME, and
+        // USERPROFILE was already forwarded below. What this fixes is
+        // everything else — code and child processes that read HOME directly,
+        // as server.ts did for rclone's config — and the oddity of a launcher
+        // that resolves HOME-or-USERPROFILE in three of its own files while
+        // handing its child an environment where the pair does not exist.
+        if let Ok(home) = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) {
             c.env("HOME", home);
         }
 

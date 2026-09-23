@@ -5,6 +5,34 @@
  * Precedence: real environment variables win over .env, which wins over the
  * defaults below.
  */
+import { homedir } from "node:os";
+
+/**
+ * The user's home directory, for the paths below.
+ *
+ * os.homedir() rather than process.env.HOME, because Windows never sets HOME.
+ * Every path built from it fell back to "." there — a relative path, resolved
+ * against the process's working directory, which for an installed rn is the
+ * install tree: the one place each comment below says these files must never
+ * be, because an upgrade replaces it wholesale. It went unseen because the
+ * Windows half was only ever built on Linux, where HOME is always set. A CI
+ * install on 2026-09-23 showed it plainly, in the listening line:
+ * "settingsPath":"./.config/rn/settings.json".
+ *
+ * Note which variable homedir() actually reads, because it is not the same one
+ * on both platforms and the difference is the whole bug. On Windows it reads
+ * USERPROFILE and ignores HOME even when HOME is set; with USERPROFILE unset it
+ * asks the OS rather than falling back to HOME. On POSIX it reads HOME. So this
+ * is correct on Windows because the launcher has always forwarded USERPROFILE
+ * (launcher/src/node_command.rs), not because it now also forwards HOME — that
+ * change is for anything reading HOME directly, and to stop the launcher and
+ * the backend disagreeing about where ~/.config/rn is.
+ *
+ * be/tools/test.ts points HOME and USERPROFILE at one scratch directory, so a
+ * suite still sees a bare install whichever of the two homedir() consults.
+  */
+export const home = homedir() || ".";
+
 export const config = {
     /**
      * error | warn | info | debug. Read once here; `log.ts` owns the live value
@@ -84,7 +112,7 @@ export const config = {
      */
     settingsPath:
         process.env.RN_SETTINGS_PATH ??
-        `${process.env.HOME ?? "."}/.config/rn/settings.json`,
+        `${home}/.config/rn/settings.json`,
 
     /**
      * Where the rolling metric history is kept between runs. Beside the
@@ -94,7 +122,7 @@ export const config = {
      */
     historyPath:
         process.env.RN_HISTORY_PATH ??
-        `${process.env.HOME ?? "."}/.config/rn/history.json`,
+        `${home}/.config/rn/history.json`,
 
     /**
      * Where each job run is recorded. Beside the settings and the metric
@@ -104,7 +132,7 @@ export const config = {
      */
     jobRunsPath:
         process.env.RN_JOB_RUNS_PATH ??
-        `${process.env.HOME ?? "."}/.config/rn/job-runs.json`,
+        `${home}/.config/rn/job-runs.json`,
 
     /**
      * Where a job's cursors are kept between runs — see be/src/jobs/state.ts.
@@ -118,7 +146,7 @@ export const config = {
      */
     jobStatePath:
         process.env.RN_JOB_STATE_PATH ??
-        `${process.env.HOME ?? "."}/.config/rn/job-state.json`,
+        `${home}/.config/rn/job-state.json`,
 
     /**
      * Where webhooks made on Config → Jobs are kept — see be/src/webhooks.ts.
@@ -132,7 +160,7 @@ export const config = {
      */
     webhooksPath:
         process.env.RN_WEBHOOKS_PATH ??
-        `${process.env.HOME ?? "."}/.config/rn/webhooks.json`,
+        `${home}/.config/rn/webhooks.json`,
 
     /**
      * The credentials file — the one the launcher reads and hands to this
@@ -146,7 +174,7 @@ export const config = {
      */
     credentialsPath:
         process.env.RN_CREDENTIALS_PATH ??
-        `${process.env.HOME ?? "."}/.config/rn/credentials`,
+        `${home}/.config/rn/credentials`,
 
     /**
      * What an OAuth sign-in left behind besides the token — who it signed in
@@ -158,7 +186,7 @@ export const config = {
      * a credential, and redaction would start scrubbing a timestamp.
      */
     oauthPath:
-        process.env.RN_OAUTH_PATH ?? `${process.env.HOME ?? "."}/.config/rn/oauth.json`,
+        process.env.RN_OAUTH_PATH ?? `${home}/.config/rn/oauth.json`,
 
     /**
      * Minted tracking links and the clicks that came back — see
@@ -172,7 +200,7 @@ export const config = {
      */
     trackerStorePath:
         process.env.RN_TRACKER_STORE_PATH ??
-        `${process.env.HOME ?? "."}/.config/rn/link-tracking.jsonl`,
+        `${home}/.config/rn/link-tracking.jsonl`,
 
     /**
      * The origin tracked links are minted against — what actually appears in
@@ -232,7 +260,7 @@ export const config = {
      */
     trackerSentPath:
         process.env.RN_TRACKER_SENT_PATH ??
-        `${process.env.HOME ?? "."}/.config/rn/link-sends.jsonl`,
+        `${home}/.config/rn/link-sends.jsonl`,
 
     /**
      * The name shown beside the address on outgoing mail, or empty for none.
@@ -367,7 +395,7 @@ export const config = {
      * watching a mailbox on the install somebody actually uses.
      */
     mailRulesPath:
-        process.env.RN_MAIL_RULES_PATH ?? `${process.env.HOME ?? "."}/.config/rn/mail-rules.json`,
+        process.env.RN_MAIL_RULES_PATH ?? `${home}/.config/rn/mail-rules.json`,
 
     /**
      * Where the last connection test is remembered.
@@ -378,7 +406,7 @@ export const config = {
      * footing — and make a failed test a settings write.
      */
     mailTestPath:
-        process.env.RN_MAIL_TEST_PATH ?? `${process.env.HOME ?? "."}/.config/rn/mail-test.json`,
+        process.env.RN_MAIL_TEST_PATH ?? `${home}/.config/rn/mail-test.json`,
 
     /**
      * Recipients the read-mail job will accept mail to, install-wide.
@@ -420,7 +448,7 @@ export const config = {
      * must not start being fetched by the install somebody actually uses.
      */
     watchPagesPath:
-        process.env.RN_WATCH_PAGES_PATH ?? `${process.env.HOME ?? "."}/.config/rn/watch-pages.json`,
+        process.env.RN_WATCH_PAGES_PATH ?? `${home}/.config/rn/watch-pages.json`,
 
     /** IMAP host the read-mail job connects to. */
     imapHost: process.env.RN_IMAP_HOST ?? "imap.gmail.com",
@@ -473,7 +501,7 @@ export const config = {
      */
     jobOverridesPath:
         process.env.RN_JOB_OVERRIDES_PATH ??
-        `${process.env.HOME ?? "."}/.config/rn/job-overrides.json`,
+        `${home}/.config/rn/job-overrides.json`,
 
     /**
      * Where V8 drops its profiling artifacts, and how long they are kept.
