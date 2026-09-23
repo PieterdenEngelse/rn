@@ -46,6 +46,12 @@ PREFIX="${XDG_DATA_HOME:-$HOME/.local/share}/rn"
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 APPS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 BIN_DIR="${XDG_BIN_HOME:-$HOME/.local/bin}"
+# hicolor is the theme every desktop falls back to, which is what makes an
+# icon installed here render the same on XFCE, GNOME, KDE or a bare window
+# manager. A stock name cannot promise that: applications-system is in this
+# machine's theme and in Yaru, and is absent from Adwaita, so a GNOME desktop
+# would draw the generic blank application instead.
+ICON_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/scalable/apps"
 # Stamped into the rn wrapper so uninstall can tell ours from somebody
 # else's rn — the Usenet reader of that name is a real program, and
 # deleting a stranger's binary is not something an uninstall gets to do.
@@ -193,6 +199,7 @@ if [ "$UNINSTALL" = 1 ]; then
         systemctl --user disable -q "$UNIT" 2>/dev/null || true
     fi
     rm -f "$UNIT_DIR/$UNIT" "$APPS_DIR/rn.desktop"
+    rm -f "$ICON_DIR/rn.svg"
     # Only if it is ours: see WRAPPER_MARK.
     if [ -e "$BIN_DIR/rn" ] && grep -q "$WRAPPER_MARK" "$BIN_DIR/rn" 2>/dev/null; then
         rm -f "$BIN_DIR/rn"
@@ -290,13 +297,29 @@ RestartSec=5
 [Install]
 WantedBy=default.target
 EOF
+    # The package carries rn.svg; a package built before it did does not, and
+    # falls back to the stock name rather than to nothing.
+    if [ -f "$PKG/rn.svg" ]; then
+        mkdir -p "$ICON_DIR"
+        cp "$PKG/rn.svg" "$ICON_DIR/rn.svg"
+        icon=rn
+        log "icon: $ICON_DIR/rn.svg"
+        # Only some desktops read the cache, and it is only built when the
+        # theme has an index; either way a failure here costs an icon, not an
+        # install.
+        command -v gtk-update-icon-cache >/dev/null && \
+            gtk-update-icon-cache -qtf "$(dirname "$(dirname "$ICON_DIR")")" 2>/dev/null || true
+    else
+        icon=applications-system
+        warn "this package has no rn.svg, so the menu entry uses a stock icon that some themes lack."
+    fi
+
     # Findable, which the first version of this entry was not. "rn" is two
     # letters and the entry carried no icon, so in a menu it was an unnamed
     # blank row, and a search for anything a person would actually type —
-    # automation, jobs, webhooks — matched nothing at all. Icon is a stock
-    # name rather than a file because rn ships no icon of its own yet; a theme
-    # that lacks it falls back to a generic one, which is still a shape rather
-    # than a hole. Two main categories, so it is in Development and in
+    # automation, jobs, webhooks — matched nothing at all. The icon is now
+    # rn's own, installed into hicolor just above, and the stock name only
+    # when a package predates it. Two main categories, so it is in Development and in
     # Accessories both: desktop-file-validate hints that this lists the entry
     # twice, and twice is the right answer for something nobody can find once —
     # the hint is a hint and discoverability is the actual problem.
@@ -311,7 +334,7 @@ Name=rn
 GenericName=Automation
 Comment=Open rn; the backend itself runs as $UNIT
 Exec=xdg-open $url
-Icon=applications-system
+Icon=$icon
 Terminal=false
 Categories=Development;Utility;
 Keywords=rn;automation;jobs;webhooks;scheduler;

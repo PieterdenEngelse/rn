@@ -26,6 +26,7 @@ ways a user's existing Node can still interfere, and how to stop each one.
 │   ├── runtime-params.json # the parameter registry the launcher reads
 │   └── .env.example        # which settings exist; a .env beside it is the user's
 ├── install.sh              # installs this tree, and later uninstalls it
+├── rn.svg                  # the application icon, installed into hicolor
 └── BUILD                   # commit, date, Node version, anything left out
 ```
 
@@ -590,6 +591,20 @@ Four traps it closes. The last two were found by the first full build, and
   swap.
 - It writes `rn.service`, a user unit shaped like the dev
   `rn-backend.service`, and a menu entry that opens the page.
+- It installs `rn.svg` into `~/.local/share/icons/hicolor/scalable/apps/`, and
+  the entry names it as `Icon=rn`. hicolor is the theme every desktop falls
+  back to, which is what makes the icon render the same on XFCE, GNOME, KDE or
+  a bare window manager. A stock name cannot promise that — measured:
+  `applications-system` is in elementary-xfce and in Yaru, and absent from
+  Adwaita, where rn would have drawn as the generic blank application. A
+  package built before the icon existed still installs, and falls back to the
+  stock name with a warning.
+- It writes `~/.local/bin/rn`: bare, it opens the page; with arguments it is
+  the launcher, so `rn --status` and `rn --stop` work from a terminal. It is
+  also the only thing that reaches a command launcher such as XFCE's "Run
+  Program", which matches commands and never reads a `.desktop` file. An `rn`
+  it did not write is left alone, and uninstall removes only a file carrying
+  its marker.
 - It starts the unit only if the API port is free.
 - It is also what `install-gui.sh` runs. That file adds a confirmation, a
   progress window fed from `install.sh`'s own `==>` step lines, and a result

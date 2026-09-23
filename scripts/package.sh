@@ -273,6 +273,13 @@ case "$TARGET" in
 esac
 cp "$REPO/scripts/$GUI_INSTALLER" "$OUT/$GUI_INSTALLER"
 chmod 755 "$OUT/$GUI_INSTALLER"
+# The application icon travels too, because the installer puts it in the icon
+# theme and a package without it can only fall back to a stock name. Stock
+# names are the problem: applications-system exists in this machine's theme and
+# in Yaru, and does not exist in Adwaita — so on a plain GNOME desktop rn would
+# draw as the generic blank application, which is the same "is it even
+# installed" question this package exists to answer.
+cp "$REPO/fe/assets/rn.svg" "$OUT/rn.svg"
 {
     echo "rn $(git -C "$REPO" describe --always --dirty), built $(date -u +%Y-%m-%dT%H:%MZ) for $TARGET"
     echo "node $(cat "$OUT/runtime/VERSION" 2>/dev/null || echo unknown)"

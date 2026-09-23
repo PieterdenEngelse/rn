@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  rn's application icon, and the only one it has ever had.
+
+  Drawn as paths rather than set as text, because an icon is rendered by
+  whatever the desktop uses — librsvg on GTK, Qt's renderer on KDE, a browser
+  for the favicon — and a <text> element depends on a font being installed and
+  hinted the same way in all of them. Two letters are cheap to draw and then
+  they are the same everywhere, which is the rule the rest of this project
+  applies to form controls.
+
+  The teal is the brand colour from CLAUDE.md, #026B7C, with white strokes on
+  it. Stroke 7 on a 64 grid so the shapes survive being drawn at 16px, where a
+  hairline would disappear into the background; round caps because square ones
+  read as noise at that size.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="rn">
+  <title>rn</title>
+  <rect width="64" height="64" rx="14" fill="#026B7C"/>
+  <g fill="none" stroke="#ffffff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+    <!-- r: stem, then the shoulder lifting away from it -->
+    <path d="M15 44 V29"/>
+    <path d="M15 33 C15 27.5 19 25 25 25"/>
+    <!-- n: stem, then shoulder into the second stem -->
+    <path d="M34 44 V29"/>
+    <path d="M34 33 C34 27.5 38 25 42.5 25 C46.5 25 49 28 49 32 V44"/>
+  </g>
+</svg>
