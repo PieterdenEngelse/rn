@@ -27,9 +27,21 @@
 # them. Single quotes around the whole command — the obvious shell instinct —
 # is rejected outright by desktop-file-validate.
 #
-# To use it: copy to ~/.local/share/applications/ and launch it from the menu.
-# That route executes the entry. ~/Desktop plus `chmod +x` also puts an icon on
-# the desktop, but whether a double-click there *runs* the entry is the desktop
+# To use it: copy to ~/.local/share/applications/ and launch it from the menu,
+# or from a shell with `gtk-launch rn-install.desktop`, which looks the entry up
+# by name, or `gio launch` on the full path. Those routes execute the entry.
+#
+# What does not work is `./rn-install.desktop`. The file is executable and has
+# no shebang, so a shell runs it as a shell script and reads every line here as
+# a command: `[Desktop: command not found`, then `rn: command not found` from
+# the Name line, then coreutils `install` reached through Comment. Nothing is
+# installed and nothing can be — Exec= below parses as the assignment
+# `Exec=bash` followed by the command `-c`, so the curl never runs. There is no
+# guarding against it from in here: the spec requires this file to open with
+# [Desktop Entry], which leaves nowhere to put a shebang.
+#
+# ~/Desktop plus `chmod +x` also puts an icon on the desktop, but whether a
+# double-click there *runs* the entry is the desktop
 # environment's decision and not this file's. Measured on XFCE here: the click
 # went to the registered handler for application/x-desktop, which is
 # `xfce4-panel --add=launcher` — named "Create Launcher on the panel" — so the
