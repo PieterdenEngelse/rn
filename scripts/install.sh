@@ -202,7 +202,26 @@ if [ -z "$PKG" ]; then
 fi
 
 step "Checking the package"
-for f in rn runtime/bin/node app/src/server.ts app/runtime-params.json app/node_modules; do
+# Nothing beside this file at all is the likeliest way in, not a rare one: the
+# README links this script for downloading and reading before it is run, so a
+# first-timer saves it to ~/Downloads and runs it. Answering that with "build
+# one with scripts/package.sh" named a script they do not have and a step they
+# do not want, when the remedy is one flag. The two cases are told apart by
+# what sits beside the file rather than by asking.
+if [ ! -e "$PKG/rn" ]; then
+    if [ -f "$PKG/package.sh" ]; then
+        die "this is the installer in a checkout, and there is no package next to it yet.
+       Install the published release, which needs no toolchain:
+         $SELF --from-release
+       Or build one here first, which needs Rust, Node and dx:
+         $PKG/package.sh"
+    fi
+    die "this is install.sh on its own: no rn package sits beside it in $PKG.
+       Install the latest published release — nothing to build, nothing to clone:
+         $SELF --from-release
+       Or, from a package you downloaded and unpacked, run the install.sh inside it."
+fi
+for f in runtime/bin/node app/src/server.ts app/runtime-params.json app/node_modules; do
     [ -e "$PKG/$f" ] || die "not a complete package: $PKG/$f is missing (build one with scripts/package.sh)"
 done
 [ "$PKG" = "$PREFIX" ] && die "this package already is the install at $PREFIX"
