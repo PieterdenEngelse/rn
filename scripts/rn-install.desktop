@@ -32,7 +32,9 @@
 # by name, or `gio launch` on the full path. Those routes execute the entry.
 # None of them needs the executable bit, checked with it off: the menu, both
 # launchers, all fine. Only the desktop-icon route below asks for one, which is
-# why the README stopped setting it on the copy that goes in the menu.
+# why the README now *clears* it on the copy that goes in the menu — `curl -o`
+# keeps the mode of a file already there, so a recipe that merely stopped
+# setting the bit would leave every machine that ran the older one unchanged.
 #
 # What does not work is `./rn-install.desktop`. Given the bit, the file is a
 # shell script with no shebang, so a shell reads every line here as
