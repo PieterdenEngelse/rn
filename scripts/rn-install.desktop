@@ -30,11 +30,15 @@
 # To use it: copy to ~/.local/share/applications/ and launch it from the menu,
 # or from a shell with `gtk-launch rn-install.desktop`, which looks the entry up
 # by name, or `gio launch` on the full path. Those routes execute the entry.
+# None of them needs the executable bit, checked with it off: the menu, both
+# launchers, all fine. Only the desktop-icon route below asks for one, which is
+# why the README stopped setting it on the copy that goes in the menu.
 #
-# What does not work is `./rn-install.desktop`. The file is executable and has
-# no shebang, so a shell runs it as a shell script and reads every line here as
+# What does not work is `./rn-install.desktop`. Given the bit, the file is a
+# shell script with no shebang, so a shell reads every line here as
 # a command: `[Desktop: command not found`, then `rn: command not found` from
-# the Name line, then coreutils `install` reached through Comment. Nothing is
+# the Name line, then coreutils `install` answering "missing file operand",
+# because Keywords= below splits at its semicolons and `install` is one. Nothing is
 # installed and nothing can be — Exec= below parses as the assignment
 # `Exec=bash` followed by the command `-c`, so the curl never runs. There is no
 # guarding against it from in here: the spec requires this file to open with

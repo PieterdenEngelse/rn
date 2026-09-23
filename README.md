@@ -78,12 +78,27 @@ is executable on a click there. Copy
     mkdir -p ~/.local/share/applications
     curl -fsSL https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/rn-install.desktop \
       -o ~/.local/share/applications/rn-install.desktop
-    chmod +x ~/.local/share/applications/rn-install.desktop
     update-desktop-database ~/.local/share/applications
 
 It then asks what you would expect to be asked before software installs itself
 — where the files go, what is downloaded, what is left alone — shows the step
 it is on, and finishes by offering to open rn.
+
+**No `chmod +x` there, deliberately.** An entry in the applications menu does
+not need one — checked both ways on this machine, with the bit off — and the
+bit has a cost, because it makes `./rn-install.desktop` look like a thing to
+try. It is not a script: with no shebang the shell reads every line of the file
+as a command, and you get `[Desktop: command not found`, then `rn: command not
+found` from the Name line, then — because `Keywords=rn;install;automation;`
+splits at its semicolons — coreutils `install` answering `missing file
+operand`, which reads like an installer failing partway. Nothing runs and
+nothing installs. The terminal
+equivalent of clicking the menu entry is
+
+    gtk-launch rn-install.desktop
+
+The one route that does need the bit is the desktop icon below, and that is
+where it belongs.
 
 **Or one line**, which is the same install without the windows:
 
