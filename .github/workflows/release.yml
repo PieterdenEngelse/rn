@@ -469,12 +469,30 @@ jobs:
           Msi "/x" "$env:RUNNER_TEMP\uninstall-noautostart.log" @()
           Write-Host "PASS"
 
+      # A failed check skips the uninstall above, so rn is still running — and
+      # a process holding this job's handles stops the next step finishing.
+      # On v0.1.12 the upload below hung for 24 minutes, the job hit its
+      # timeout and was cancelled, and a cancelled job never finalises its
+      # logs: the one record of why the check failed was destroyed by the step
+      # that exists to preserve it. Stop rn first, always.
+      - name: Stop rn if the check left it running
+        if: always()
+        shell: pwsh
+        run: |
+          Get-Process rn, rnw -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Sleep -Milliseconds 500
+
       - name: Upload the installer logs
         if: always()
+        timeout-minutes: 5
         uses: actions/upload-artifact@v7
         with:
           name: msi-logs
-          path: ${{ runner.temp }}/*.log
+          # rn's own log as well as msiexec's: when the check fails after the
+          # install, what rn said at boot is the half msiexec cannot report.
+          path: |
+            ${{ runner.temp }}/*.log
+            ${{ env.USERPROFILE }}/.local/state/rn/rn.log*
           if-no-files-found: ignore
 
   publish:
