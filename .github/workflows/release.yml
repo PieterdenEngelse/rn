@@ -481,6 +481,13 @@ jobs:
         run: |
           Get-Process rn, rnw -ErrorAction SilentlyContinue | Stop-Process -Force
           Start-Sleep -Milliseconds 500
+          # rn's own log, copied where the upload can see it. It cannot be
+          # named as a second path in the upload step: %USERPROFILE% is not in
+          # the env context — only workflow-defined variables are — so it
+          # expanded to nothing, upload-artifact computed D: as the common
+          # ancestor of what was left and refused the lot. That is what failed
+          # v0.1.13, after the check it exists to explain had passed.
+          Copy-Item "$env:USERPROFILE\.local\state\rn\rn.log*" $env:RUNNER_TEMP -ErrorAction SilentlyContinue
 
       - name: Upload the installer logs
         if: always()
@@ -488,11 +495,9 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: msi-logs
-          # rn's own log as well as msiexec's: when the check fails after the
-          # install, what rn said at boot is the half msiexec cannot report.
-          path: |
-            ${{ runner.temp }}/*.log
-            ${{ env.USERPROFILE }}/.local/state/rn/rn.log*
+          # One path, so there is one root: rn's log is copied in beside
+          # msiexec's by the step above.
+          path: ${{ runner.temp }}/*.log
           if-no-files-found: ignore
 
   publish:
