@@ -15,7 +15,7 @@ out of your way.
 
 ## What it does today
 
-Ten jobs ship. The runner has three front doors — by hand from the page, the
+Twelve jobs ship. The runner has three front doors — by hand from the page, the
 scheduler, or an inbound webhook — and a job says for itself which of them
 apply to it.
 
@@ -23,16 +23,20 @@ apply to it.
 |---|---|
 | `watch-upstreams` | the versions rn pins, and when one of them moves |
 | `watch-feeds` | feeds, reporting only what you have not been told about |
+| `watch-pages` | a web page, and what changed on it — with the noise you name ignored |
 | `watch-deliveries` | GitHub's own record of webhook deliveries, and which failed |
 | `read-mail` / `send-mail` | IMAP in, SMTP out |
 | `notify` / `notify-all` | a change, sent to a URL — or to every notifier at once |
+| `notify-mail` | the same, emailed, using the account rn already has |
 | `desktop-notify` | the same, drawn on the desktop of the machine rn runs on |
 | `prune-profiles` | deletes the V8 profiling artifacts that accumulate silently |
 | `webhook-echo` | what an inbound delivery actually contained, for setting one up |
 
-Around them: a scheduler, a webhook listener on its own port, click tracking
-for mail you send, a credentials store that is written but never read back,
-and monitor pages for the runtime, jobs, connections, mail and links.
+Around them: a scheduler, a webhook listener on its own port with pages that
+sort what providers send into six event families, click tracking for mail you
+send, sign-in to GitHub and Google so a job can carry a token you never had to
+paste, a credentials store that is written but never read back, and monitor
+pages for the runtime, jobs, connections, mail and links.
 
 Jobs start in **dry-run** — `DRY_RUN=true` is the shipped default, and
 anything other than the exact string `false` keeps it on. A job that has never
