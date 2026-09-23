@@ -286,8 +286,11 @@ EOF
     # automation, jobs, webhooks — matched nothing at all. Icon is a stock
     # name rather than a file because rn ships no icon of its own yet; a theme
     # that lacks it falls back to a generic one, which is still a shape rather
-    # than a hole. One main category, because two makes the entry appear twice
-    # (desktop-file-validate says so). StartupNotify stated rather than left to
+    # than a hole. Two main categories, so it is in Development and in
+    # Accessories both: desktop-file-validate hints that this lists the entry
+    # twice, and twice is the right answer for something nobody can find once —
+    # the hint is a hint and discoverability is the actual problem.
+    # StartupNotify stated rather than left to
     # default: xdg-open exits at once and never completes the sequence, and on
     # XFCE an unfinished one moves the workspace under the person —
     # scripts/rn-install.desktop carries the measurement.
@@ -300,7 +303,7 @@ Comment=Open rn; the backend itself runs as $UNIT
 Exec=xdg-open $url
 Icon=applications-system
 Terminal=false
-Categories=Utility;
+Categories=Development;Utility;
 Keywords=rn;automation;jobs;webhooks;scheduler;
 StartupNotify=false
 EOF
