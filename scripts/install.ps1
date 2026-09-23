@@ -340,6 +340,49 @@ if ($FromRelease) {
 }
 
 # ---------------------------------------------------------------------------
+# Where the package comes from when nothing said
+#
+# Building is the wrong default for two of the three ways this file is reached,
+# and it was the only one. The Linux twin installs the package it sits in and
+# has to be asked to do anything else; this one went to the toolchain check and
+# died on a missing cargo — for a tree that is already built, or for a file
+# with no tree at all.
+#
+#   - Unpacked rn-windows-x64.zip and ran the install.ps1 inside it. That is
+#     what the README says to do with a package, and it needed
+#     `-SkipBuild -Out .` to work. Now the package beside the script is found
+#     and installed, which is what the Linux twin does by default.
+#   - Saved install.ps1 on its own, as the README offers for reading before
+#     running. "cargo is not on PATH" names a toolchain nobody wanted; the
+#     remedy is one switch, so the switch is what it names.
+#
+# The three files are package.sh's own marks of a Windows package. A checkout
+# is told apart by what only a checkout has, and neither test asks the person
+# anything.
+# ---------------------------------------------------------------------------
+
+if (-not $SkipBuild -and -not $FromRelease) {
+    $beside = if ([string]::IsNullOrEmpty($PSScriptRoot)) { $null } else { $PSScriptRoot }
+    $isPackage = $beside -and
+                 (Test-Path (Join-Path $beside "rn.exe")) -and
+                 (Test-Path (Join-Path $beside "runtime\bin\node.exe")) -and
+                 (Test-Path (Join-Path $beside "app\src\server.ts"))
+    $isCheckout = (Test-Path (Join-Path $RepoRoot "launcher\Cargo.toml")) -and
+                  (Test-Path (Join-Path $RepoRoot "be\package.json"))
+    if ($isPackage) {
+        $Out = $beside
+        $SkipBuild = $true
+        Write-Log "package: $Out (the tree this script sits in)"
+    } elseif (-not $isCheckout) {
+        Die ("this is install.ps1 on its own: no rn package sits beside it, and it is not`n" +
+             "       inside a checkout either. Install the latest published release, which`n" +
+             "       needs no toolchain and nothing cloned:`n" +
+             "         .\install.ps1 -FromRelease`n" +
+             "       Or, from a package you downloaded and unpacked, run the install.ps1 in it.")
+    }
+}
+
+# ---------------------------------------------------------------------------
 # Build — the half that package.sh does on Linux
 # ---------------------------------------------------------------------------
 
