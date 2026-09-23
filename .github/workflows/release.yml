@@ -369,6 +369,13 @@ jobs:
           if-no-files-found: warn
 
       - name: Install silently, check, uninstall
+        # A hang here used to take the whole job with it: the job timeout
+        # cancels, and a cancelled job finalises no logs, so the one record of
+        # what it was doing is destroyed. Bounded well under the job's 20, so a
+        # hang fails this step and leaves the two steps below — which stop rn
+        # and upload the logs — to run and say how far it got. v0.1.14 hung
+        # here for over twenty minutes and told nobody anything.
+        timeout-minutes: 8
         shell: pwsh
         env:
           SIGNED: ${{ needs.windows.outputs.signed }}
