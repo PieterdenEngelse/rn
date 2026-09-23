@@ -36,9 +36,34 @@
   US$10,000 a year, which rn is, but accepting an agreement is the owner's
   decision, and v5 needs none.
 
-  No $ appears in a command below. The WiX preprocessor treats $( as a
-  variable, and the PowerShell here is written without variables so there is
-  nothing for it to misread — the wixl build silently dropped every $.
+  Two characters in a command below are not the character you typed. Both were
+  found the hard way, and both fail silently.
+
+  No $ appears in one. The WiX preprocessor treats $( as a variable, and the
+  PowerShell here is written without variables so there is nothing for it to
+  misread — the wixl build silently dropped every $.
+
+  A { } group is eaten by MSI, but only when it contains a property reference.
+  ExeCommand is a Formatted field, and in one of those a brace group holding
+  [Property] or [%EnvVar] is emitted with its braces removed, or dropped whole
+  if a property inside is undefined. With no reference inside, it is passed
+  through untouched. Measured against a real installer session on 2026-09-23:
+
+      a { b } c                 ->  a { b } c
+      x {[ProductName]} y       ->  x rn y
+      x {[NOSUCHPROPERTY]} y    ->  x  y
+      ForEach-Object [\{] b [\}]  ->  ForEach-Object { b }
+
+  So a PowerShell script block survives here exactly as long as nobody puts a
+  property inside it. StopRunning's re-check loop wrapped [INSTALLFOLDER] and
+  was therefore never a loop — ForEach-Object took Start-Sleep as a -MemberName
+  and ran the body once with no delay, from its first build, while passing every
+  test because the kills sat outside the braces. It is unrolled now.
+
+  OpenPage below still has four brace pairs and is correct, because nothing
+  inside them is a property reference. That is luck, not design: adding an
+  [INSTALLFOLDER] inside that loop would break it the same silent way. Escaping
+  as [\{] and [\}] works if a brace is genuinely needed.
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package Name="rn"
@@ -126,8 +151,10 @@
          dialog to show and is where a silent install stalls instead.
 
          Unrolled, with no braces anywhere, because this is a Formatted field
-         and MSI strips { and } from one at runtime. The 1..40 loop that stood
-         here was therefore never a loop: ForEach-Object took Start-Sleep as a
+         and a brace group in one is eaten when it contains a property — see the
+         rule and the measurements at the top of this file. The loop that stood
+         here wrapped [INSTALLFOLDER], so it qualified, and was therefore never
+         a loop: ForEach-Object took Start-Sleep as a
          -MemberName, errored, and ran the body once with no delay. It was
          written on 2026-09-23 and inert from the first build — visible only
          because a watch window that should have spanned 2000ms finished in
