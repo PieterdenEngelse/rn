@@ -150,6 +150,19 @@
          InstallValidate runs — the files-in-use path, which under /qn has no
          dialog to show and is where a silent install stalls instead.
 
+         Supervisors are waited on, not slept on. Stop-Process only asks for
+         the kill, and the 250ms that used to follow it was a guess that the
+         launcher was gone by then; if it was not — the kill slow, or refused
+         once — the sweep below was back to killing node under a live
+         supervisor, the exact race this ordering exists to prevent. Now each
+         launcher kill is followed by Wait-Process, which returns the moment
+         the launcher has exited, so the sweep cannot start before it has, and
+         the kill is tried twice. Waiting on nothing returns at once, so the
+         usual cost is less than the sleep it replaced. A launcher still alive
+         after both, up to four seconds later, cannot be stopped from here at
+         all; the snapshot that follows records it in stop.log, and the
+         install fails on files in use, which the CI wait now bounds.
+
          Unrolled, with no braces anywhere, because this is a Formatted field
          and a brace group in one is eaten when it contains a property — see the
          rule and the measurements at the top of this file. The loop that stood
@@ -163,10 +176,11 @@
          string to mean what it says, so it now contains nothing that needs
          interpreting.
 
-         Four rounds at 250ms covers the 500ms restart in main.rs twice over.
-         They are unconditional: a snapshot of nothing writes nothing, and a
-         kill of nothing does nothing, so the cost is a flat second in place of
-         the 800ms sleep this replaced.
+         Three sweeps at 250ms cover the 500ms restart in main.rs, as a second
+         line behind the supervisors already being gone. They are
+         unconditional: a snapshot of nothing writes nothing, and a kill of
+         nothing does nothing, so the cost is under a second in place of the
+         800ms sleep this replaced.
 
          Naming the processes is what keeps that affordable. Path on a
          protected process throws, and swallowing that for every process on the
@@ -176,7 +190,7 @@
          select; the Path match is still what decides. -->
     <CustomAction Id="StopRunning"
                   Directory="System64Folder"
-                  ExeCommand="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -WindowStyle Hidden -Command &quot;New-Item -ItemType Directory -Force '[%USERPROFILE]\.local\state\rn' | Out-Null; Add-Content -Path '[%USERPROFILE]\.local\state\rn\stop.log' -Value ('=== StopRunning ' + (Get-Date -Format o)); Get-Process -Name rn,rnw,node,bun,deno -ErrorAction SilentlyContinue | Where-Object Path -like '[INSTALLFOLDER]*' | Select-Object Id,ProcessName,StartTime | Out-String | Add-Content -Path '[%USERPROFILE]\.local\state\rn\stop.log'; Get-Process -Name rn,rnw,node,bun,deno -ErrorAction SilentlyContinue | Where-Object Path -like '[INSTALLFOLDER]*' | Where-Object ProcessName -in 'rn','rnw' | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 250; Get-Process -Name rn,rnw,node,bun,deno -ErrorAction SilentlyContinue | Where-Object Path -like '[INSTALLFOLDER]*' | Select-Object Id,ProcessName,StartTime | Out-String | Add-Content -Path '[%USERPROFILE]\.local\state\rn\stop.log'; Get-Process -Name rn,rnw,node,bun,deno -ErrorAction SilentlyContinue | Where-Object Path -like '[INSTALLFOLDER]*' | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 250; Get-Process -Name rn,rnw,node,bun,deno -ErrorAction SilentlyContinue | Where-Object Path -like '[INSTALLFOLDER]*' | Select-Object Id,ProcessName,StartTime | Out-String | Add-Content -Path '[%USERPROFILE]\.local\state\rn\stop.log'; Get-Process -Name rn,rnw,node,bun,deno -ErrorAction SilentlyContinue | Where-Object Path -like '[INSTALLFOLDER]*' | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 250; Get-Process -Name rn,rnw,node,bun,deno -ErrorAction SilentlyContinue | Where-Object Path -like '[INSTALLFOLDER]*' | Select-Object Id,ProcessName,StartTime | Out-String | Add-Content -Path '[%USERPROFILE]\.local\state\rn\stop.log'; Get-Process -Name rn,rnw,node,bun,deno -ErrorAction SilentlyContinue | Where-Object Path -like '[INSTALLFOLDER]*' | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 250; Get-Process -Name rn,rnw,node,bun,deno -ErrorAction SilentlyContinue | Where-Object Path -like '[INSTALLFOLDER]*' | Select-Object Id,ProcessName,StartTime | Out-String | Add-Content -Path '[%USERPROFILE]\.local\state\rn\stop.log'; Add-Content -Path '[%USERPROFILE]\.local\state\rn\stop.log' -Value ('=== done ' + (Get-Date -Format o))&quot;"
+                  ExeCommand="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -WindowStyle Hidden -Command &quot;New-Item -ItemType Directory -Force '[%USERPROFILE]\.local\state\rn' | Out-Null; Add-Content -Path '[%USERPROFILE]\.local\state\rn\stop.log' -Value ('=== StopRunning ' + (Get-Date -Format o)); Get-Process -Name rn,rnw,node,bun,deno -ErrorAction SilentlyContinue | Where-Object Path -like '[INSTALLFOLDER]*' | Select-Object Id,ProcessName,StartTime | Out-String | Add-Content -Path '[%USERPROFILE]\.local\state\rn\stop.log'; Get-Process -Name rn,rnw -ErrorAction SilentlyContinue | Where-Object Path -like '[INSTALLFOLDER]*' | Stop-Process -Force -ErrorAction SilentlyContinue; Get-Process -Name rn,rnw -ErrorAction SilentlyContinue | Where-Object Path -like '[INSTALLFOLDER]*' | Wait-Process -Timeout 2 -ErrorAction SilentlyContinue; Get-Process -Name rn,rnw -ErrorAction SilentlyContinue | Where-Object Path -like '[INSTALLFOLDER]*' | Stop-Process -Force -ErrorAction SilentlyContinue; Get-Process -Name rn,rnw -ErrorAction SilentlyContinue | Where-Object Path -like '[INSTALLFOLDER]*' | Wait-Process -Timeout 2 -ErrorAction SilentlyContinue; Get-Process -Name rn,rnw,node,bun,deno -ErrorAction SilentlyContinue | Where-Object Path -like '[INSTALLFOLDER]*' | Select-Object Id,ProcessName,StartTime | Out-String | Add-Content -Path '[%USERPROFILE]\.local\state\rn\stop.log'; Get-Process -Name rn,rnw,node,bun,deno -ErrorAction SilentlyContinue | Where-Object Path -like '[INSTALLFOLDER]*' | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 250; Get-Process -Name rn,rnw,node,bun,deno -ErrorAction SilentlyContinue | Where-Object Path -like '[INSTALLFOLDER]*' | Select-Object Id,ProcessName,StartTime | Out-String | Add-Content -Path '[%USERPROFILE]\.local\state\rn\stop.log'; Get-Process -Name rn,rnw,node,bun,deno -ErrorAction SilentlyContinue | Where-Object Path -like '[INSTALLFOLDER]*' | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 250; Get-Process -Name rn,rnw,node,bun,deno -ErrorAction SilentlyContinue | Where-Object Path -like '[INSTALLFOLDER]*' | Select-Object Id,ProcessName,StartTime | Out-String | Add-Content -Path '[%USERPROFILE]\.local\state\rn\stop.log'; Get-Process -Name rn,rnw,node,bun,deno -ErrorAction SilentlyContinue | Where-Object Path -like '[INSTALLFOLDER]*' | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 250; Get-Process -Name rn,rnw,node,bun,deno -ErrorAction SilentlyContinue | Where-Object Path -like '[INSTALLFOLDER]*' | Select-Object Id,ProcessName,StartTime | Out-String | Add-Content -Path '[%USERPROFILE]\.local\state\rn\stop.log'; Add-Content -Path '[%USERPROFILE]\.local\state\rn\stop.log' -Value ('=== done ' + (Get-Date -Format o))&quot;"
                   Execute="immediate"
                   Return="ignore" />
 
