@@ -144,11 +144,11 @@ habit with anything that installs software:
 |---|---|---|---|
 | Windows | [`scripts/msi/rn.wxs`](scripts/msi/rn.wxs) | what the MSI installs and shows, and why | built by [`scripts/package-msi.ps1`](scripts/package-msi.ps1) |
 | Windows | [`scripts/install-rn.cmd`](scripts/install-rn.cmd) | the double-clickable script | [download](https://github.com/PieterdenEngelse/rn/releases/latest/download/install-rn.cmd) |
-| Windows | [`scripts/install-gui.ps1`](scripts/install-gui.ps1) | the dialogs around it | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install-gui.ps1) |
-| Windows | [`scripts/install.ps1`](scripts/install.ps1) | what does the work | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install.ps1) |
-| Linux | [`scripts/install.sh`](scripts/install.sh) | what does the work | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install.sh) |
-| Linux | [`scripts/install-gui.sh`](scripts/install-gui.sh) | the dialogs around it | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/install-gui.sh) |
-| Linux | [`scripts/rn-install.desktop`](scripts/rn-install.desktop) | the menu entry | [download](https://raw.githubusercontent.com/PieterdenEngelse/rn/main/scripts/rn-install.desktop) |
+| Windows | [`scripts/install-gui.ps1`](scripts/install-gui.ps1) | the dialogs around it | [download](https://github.com/PieterdenEngelse/rn/releases/latest/download/install-gui.ps1) |
+| Windows | [`scripts/install.ps1`](scripts/install.ps1) | what does the work | [download](https://github.com/PieterdenEngelse/rn/releases/latest/download/install.ps1) |
+| Linux | [`scripts/install.sh`](scripts/install.sh) | what does the work | [download](https://github.com/PieterdenEngelse/rn/releases/latest/download/install.sh) |
+| Linux | [`scripts/install-gui.sh`](scripts/install-gui.sh) | the dialogs around it | [download](https://github.com/PieterdenEngelse/rn/releases/latest/download/install-gui.sh) |
+| Linux | [`scripts/rn-install.desktop`](scripts/rn-install.desktop) | the menu entry | [download](https://github.com/PieterdenEngelse/rn/releases/latest/download/rn-install.desktop) |
 
 Either one is enough on its own: both download a published package and install
 it, needing no toolchain, no clone and nothing else on the machine, and both

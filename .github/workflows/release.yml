@@ -559,8 +559,10 @@ jobs:
           SIGNED: ${{ needs.windows.outputs.signed == 'true' && 'yes' || 'no' }}
         run: |
           set -euo pipefail
-          # install-rn.cmd rides along for the links that already point at it
-          # (releases/latest/download/install-rn.cmd). CRLF, which cmd.exe needs.
+          # install-rn.cmd and the install scripts ride along for the README's
+          # download links (releases/latest/download/<name>): a release asset is
+          # served as an attachment, where a raw.githubusercontent link opens as
+          # text in the browser. install-rn.cmd needs CRLF for cmd.exe.
           grep -q $'\r$' scripts/install-rn.cmd || { echo "::error::scripts/install-rn.cmd lost its CRLF endings"; exit 1; }
           scripts/release-notes.sh --tag "$TAG" --commit "$GITHUB_SHA" --build out/linux/BUILD \
               --signed "$SIGNED" --repo "$GITHUB_REPOSITORY" > notes.md
@@ -569,5 +571,7 @@ jobs:
               out/linux/rn-linux-x64.tar.gz out/linux/rn-linux-x64.tar.gz.sha256 \
               out/windows/rn-windows-x64.zip out/windows/rn-windows-x64.zip.sha256 \
               out/windows/rn-windows-x64.msi out/windows/rn-windows-x64.msi.sha256 \
-              scripts/install-rn.cmd
+              scripts/install-rn.cmd \
+              scripts/install-gui.ps1 scripts/install.ps1 \
+              scripts/install.sh scripts/install-gui.sh scripts/rn-install.desktop
           echo "published $TAG (Windows files signed: $SIGNED)"
